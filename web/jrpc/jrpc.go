@@ -320,7 +320,7 @@ func (s *Service) unary(w http.ResponseWriter, r *http.Request) {
 
 		err = unmarshalOpts.Unmarshal(buf, msg)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			http.Error(w, apperror.Wrap(err).Error(), http.StatusBadRequest)
 			return
 		}
 	}
@@ -426,7 +426,10 @@ func WithHTTPContext(ctx context.Context, w http.ResponseWriter, r *http.Request
 //
 // Returns the enriched context containing the WebSocket connection.
 func WithWebSocketContext(ctx context.Context, w http.ResponseWriter, r *http.Request, conn *websocket.Conn) context.Context {
-	return context.WithValue(ctx, ContextKeyWebSocketConn, conn)
+	ctx = context.WithValue(ctx, ContextKeyWebSocketConn, conn)
+	ctx = context.WithValue(ctx, ContextKeyResponseWriter, w)
+	ctx = context.WithValue(ctx, ContextKeyRequest, r)
+	return ctx
 }
 
 // GetResponseWriter extracts the HTTP ResponseWriter from the context.
