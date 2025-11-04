@@ -100,14 +100,6 @@ func (s *smtpSender) validateMessage(message *Message) error {
 		return apperror.NewError("at least one recipient is required")
 	}
 
-	if message.Subject == "" {
-		return apperror.NewError("subject is required")
-	}
-
-	if message.TextBody == "" && message.HTMLBody == "" && message.Template == "" {
-		return apperror.NewError("message body or template is required")
-	}
-
 	return nil
 }
 
