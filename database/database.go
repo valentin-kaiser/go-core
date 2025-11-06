@@ -120,6 +120,27 @@ func Execute(call func(db *gorm.DB) error) error {
 	return nil
 }
 
+// Transaction executes a function within a database transaction.
+// It will return an error if the database is not connected or if the function returns an error.
+// If the function returns an error, the transaction will be rolled back.
+func Transaction(call func(tx *gorm.DB) error) error {
+	dbMutex.RLock()
+	dbInstance := db
+	dbMutex.RUnlock()
+
+	if !connected.Load() || dbInstance == nil {
+		return apperror.NewErrorf("database is not connected")
+	}
+
+	err := dbInstance.Transaction(func(tx *gorm.DB) error {
+		return call(tx)
+	})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 // Connected returns true if the database is connected, false otherwise
 func Connected() bool {
 	return connected.Load()
@@ -267,7 +288,7 @@ func connect(config Config) (*gorm.DB, error) {
 
 	switch config.Driver {
 	case "sqlite":
-		dbPath := ":memory:?cache=shared"
+		dsn := "file:memdb1?mode=memory&cache=shared&_busy_timeout=5000"
 		if config.Name != ":memory:" {
 			if _, err := os.Stat(flag.Path); os.IsNotExist(err) {
 				err := os.Mkdir(flag.Path, 0750)
@@ -275,51 +296,70 @@ func connect(config Config) (*gorm.DB, error) {
 					return nil, err
 				}
 			}
-			dbPath = filepath.Join(flag.Path, config.Name+".db?cache=shared")
+			dsn = fmt.Sprintf("file:%s?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000", filepath.Join(flag.Path, config.Name+".db"))
 		}
 
 		var err error
-		gormDB, err := gorm.Open(sqlite.Open(dbPath), cfg)
+		conn, err := gorm.Open(sqlite.Open(dsn), cfg)
 		if err != nil {
 			return nil, err
 		}
 
-		sqlDB, err := gormDB.DB()
+		sqlDB, err := conn.DB()
 		if err != nil {
 			return nil, err
 		}
 
-		sqlDB.SetMaxIdleConns(10)
-		sqlDB.SetMaxOpenConns(100)
+		sqlDB.SetMaxOpenConns(16)
+		sqlDB.SetMaxIdleConns(8)
 
 		// Set global db with proper locking
 		dbMutex.Lock()
-		db = gormDB
+		db = conn
 		dbMutex.Unlock()
 
-		return gormDB, nil
+		return conn, nil
 	case "mysql", "mariadb":
-		dsn := fmt.Sprintf(
+		create, err := gorm.Open(mysql.Open(fmt.Sprintf(
+			"%v:%v@tcp(%v:%v)/?charset=utf8mb4&parseTime=True&loc=Local",
+			config.User,
+			config.Password,
+			config.Host,
+			config.Port,
+		)), cfg)
+		if err != nil {
+			return nil, err
+		}
+
+		err = create.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", config.Name)).Error
+		if err != nil {
+			return nil, err
+		}
+
+		sdb, err := create.DB()
+		if err != nil {
+			return nil, err
+		}
+		sdb.Close()
+
+		conn, err := gorm.Open(mysql.Open(fmt.Sprintf(
 			"%v:%v@tcp(%v:%v)/%v?charset=utf8mb4&parseTime=True&loc=Local",
 			config.User,
 			config.Password,
 			config.Host,
 			config.Port,
 			config.Name,
-		)
-
-		var err error
-		gormDB, err := gorm.Open(mysql.Open(dsn), cfg)
+		)), cfg)
 		if err != nil {
 			return nil, err
 		}
 
 		// Set global db with proper locking
 		dbMutex.Lock()
-		db = gormDB
+		db = conn
 		dbMutex.Unlock()
 
-		return gormDB, nil
+		return conn, nil
 	default:
 		return nil, apperror.NewErrorf("unsupported database driver: %v", config.Driver)
 	}
