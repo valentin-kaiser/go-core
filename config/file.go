@@ -58,7 +58,7 @@ func (m *manager) watch(onChange func(fsnotify.Event)) error {
 				if !ok {
 					return
 				}
-				if event.Name == configFile && (event.Op&fsnotify.Write == fsnotify.Write) {
+				if event.Name == configFile && event.Has(fsnotify.Write) {
 					onChange(event)
 				}
 			case err, ok := <-m.watcher.Errors:
@@ -70,12 +70,12 @@ func (m *manager) watch(onChange func(fsnotify.Event)) error {
 		}
 	}()
 
-	return m.watcher.Add(filepath.Clean(filepath.Dir(configFile)))
+	return m.watcher.Add(filepath.Clean(configFile))
 }
 
 // save saves the configuration to the file
 // If the file does not exist, it creates a new one with the default values
-func (m *manager) save() error {
+func (m *manager) save(c Config) error {
 	// Ensure the directory exists before trying to create the file
 	if err := os.MkdirAll(m.path, 0750); err != nil {
 		return apperror.NewError("creating configuration directory failed").AddError(err)
@@ -92,7 +92,7 @@ func (m *manager) save() error {
 
 	mutex.RLock()
 	defer mutex.RUnlock()
-	data, err := yaml.Marshal(m.config)
+	data, err := yaml.Marshal(c)
 	if err != nil {
 		return apperror.NewError("marshalling configuration data failed").AddError(err)
 	}

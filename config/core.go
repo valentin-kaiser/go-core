@@ -215,7 +215,7 @@ func Read() error {
 			return apperror.NewError("creating configuration directory failed").AddError(err)
 		}
 
-		err = cm.save()
+		err = cm.save(cm.config)
 		if err != nil {
 			return apperror.NewError("writing default configuration file failed").AddError(err)
 		}
@@ -274,8 +274,7 @@ func Write(change Config) error {
 		return apperror.Wrap(err)
 	}
 
-	cm.set(change)
-	err = cm.save()
+	err = cm.save(change)
 	if err != nil {
 		return apperror.Wrap(err)
 	}
