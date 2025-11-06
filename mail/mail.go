@@ -100,6 +100,7 @@ package mail
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"sync"
 	"sync/atomic"
@@ -309,6 +310,7 @@ func (m *Manager) SendAsync(ctx context.Context, message *Message) error {
 	}
 
 	job := queue.NewJob("mail").
+		WithID(message.ID).
 		WithPayload(jobData).
 		WithPriority(queue.Priority(message.Priority)).
 		WithMaxAttempts(m.config.Queue.MaxAttempts)
@@ -545,6 +547,36 @@ func (m *Manager) jobDataToMessage(jobData map[string]interface{}) *Message {
 	if scheduleAt, ok := jobData["schedule_at"].(string); ok && scheduleAt != "" {
 		if t, err := time.Parse(time.RFC3339, scheduleAt); err == nil {
 			message.ScheduleAt = &t
+		}
+	}
+	if attachments, ok := jobData["attachments"].([]interface{}); ok {
+		message.Attachments = make([]Attachment, 0, len(attachments))
+		for _, att := range attachments {
+			if attMap, ok := att.(map[string]interface{}); ok {
+				attachment := Attachment{}
+				if filename, ok := attMap["filename"].(string); ok {
+					attachment.Filename = filename
+				}
+				if contentType, ok := attMap["content_type"].(string); ok {
+					attachment.ContentType = contentType
+				}
+				if content, ok := attMap["content"].(string); ok {
+					// Content is base64 encoded in JSON
+					if decoded, err := base64.StdEncoding.DecodeString(content); err == nil {
+						attachment.Content = decoded
+					}
+				}
+				if size, ok := attMap["size"].(float64); ok {
+					attachment.Size = int64(size)
+				}
+				if inline, ok := attMap["inline"].(bool); ok {
+					attachment.Inline = inline
+				}
+				if contentID, ok := attMap["content_id"].(string); ok {
+					attachment.ContentID = contentID
+				}
+				message.Attachments = append(message.Attachments, attachment)
+			}
 		}
 	}
 
