@@ -2,6 +2,7 @@ package mail
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -30,6 +31,17 @@ func NewTemplateManager(config TemplateConfig) *TemplateManager {
 	tm := &TemplateManager{
 		config:    config,
 		templates: make(map[string]*template.Template),
+	}
+
+	// Add global functions if provided
+	if config.GlobalFuncs != nil {
+		for key, fn := range config.GlobalFuncs {
+			tm.WithTemplateFunc(key, fn)
+		}
+	}
+
+	if config.WithDefaultFuncs {
+		tm.WithDefaultFuncs()
 	}
 
 	// Load templates on initialization if filesystem is configured
@@ -134,27 +146,35 @@ func (tm *TemplateManager) RenderTemplate(name string, data interface{}, funcs .
 	}
 
 	// Load template content from source
-	var content []byte
-	var err error
+	content, err := func() ([]byte, error) {
+		path := filepath.Clean(name)
+		// Try reading from TemplatesPath first
+		if tm.config.TemplatesPath != "" {
+			customPath := filepath.Join(tm.config.TemplatesPath, path)
+			_, err := os.Stat(customPath)
+			if err == nil {
+				content, err := os.ReadFile(customPath)
+				if err != nil {
+					return nil, apperror.NewError("failed to read template file from TemplatesPath").AddError(err)
+				}
+				return content, nil
+			}
+		}
 
-	switch {
-	case tm.config.FileSystem != nil:
-		content, err = fs.ReadFile(tm.config.FileSystem, name)
-		if err != nil {
-			return "", apperror.NewError("template not found in filesystem").AddError(err)
-		}
-	case tm.config.TemplatesPath != "":
-		customPath := filepath.Clean(filepath.Join(tm.config.TemplatesPath, name))
-		if _, err := os.Stat(customPath); err != nil {
-			return "", apperror.NewError("template not found in templates path").AddError(err)
+		// Fallback to FileSystem if configured
+		if tm.config.FileSystem != nil {
+			content, err := fs.ReadFile(tm.config.FileSystem, path)
+			if err != nil {
+				return nil, apperror.NewError("failed to read template file from FileSystem").AddError(err)
+			}
+			return content, nil
 		}
 
-		content, err = os.ReadFile(customPath)
-		if err != nil {
-			return "", apperror.NewError("failed to read template file").AddError(err)
-		}
-	default:
-		return "", apperror.NewError("no template source configured - use WithFS or WithFileServer")
+		// Neither TemplatesPath nor FileSystem configured
+		return nil, apperror.NewError("no template source configured")
+	}()
+	if err != nil {
+		return "", apperror.Wrap(err)
 	}
 
 	// Build function map: start with global functions, then apply custom functions
@@ -396,18 +416,14 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 			return cases.Title(lang, cases.NoLower).String(s)
 		},
 		"trim": strings.TrimSpace,
-		"replace": func(old, replacement, s string) string {
+		"replace": func(s, old, replacement string) string {
 			return strings.ReplaceAll(s, old, replacement)
 		},
 		"contains":  strings.Contains,
 		"hasPrefix": strings.HasPrefix,
 		"hasSuffix": strings.HasSuffix,
-		"join": func(sep string, elems []string) string {
-			return strings.Join(elems, sep)
-		},
-		"split": func(sep, s string) []string {
-			return strings.Split(s, sep)
-		},
+		"join":      strings.Join,
+		"split":     strings.Split,
 		"default": func(defaultValue, value interface{}) interface{} {
 			if value == nil || value == "" {
 				return defaultValue
@@ -427,6 +443,9 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 				dict[key] = values[i+1]
 			}
 			return dict
+		},
+		"now": func() time.Time {
+			return time.Now()
 		},
 		"date": func(format string, date interface{}) string {
 			// Handle different date types and formats
@@ -457,6 +476,17 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 				return fmt.Sprintf("%v", date)
 			}
 		},
+		"unix": func(t int64, nsec int) time.Time {
+			return time.Unix(t, int64(nsec))
+		},
+		"unmarshal": func(object []byte) (interface{}, error) {
+			var data map[string]interface{}
+			err := json.Unmarshal(object, &data)
+			return data, err
+		},
+		"marshal": func(v interface{}) ([]byte, error) {
+			return json.Marshal(v)
+		},
 	}
 
 	tm.mutex.Lock()
@@ -466,6 +496,5 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 			tm.funcs[key] = fn
 		}
 	}
-
 	return tm
 }

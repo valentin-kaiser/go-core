@@ -2,6 +2,7 @@ package mail
 
 import (
 	"crypto/tls"
+	"html/template"
 	"io/fs"
 	"time"
 
@@ -144,6 +145,10 @@ type TemplateConfig struct {
 	FileSystem fs.FS `yaml:"-" json:"-"`
 	// TemplatesPath is the path to custom email templates (used with WithFileServer)
 	TemplatesPath string `yaml:"templates_path" json:"templates_path"`
+	// WithDefaultFuncs indicates if default template functions should be included
+	WithDefaultFuncs bool `yaml:"-" json:"-"`
+	// GlobalFuncs defines additional global template functions
+	GlobalFuncs template.FuncMap `yaml:"-" json:"-"`
 }
 
 // DefaultConfig returns a default configuration

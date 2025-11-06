@@ -101,7 +101,6 @@ package mail
 import (
 	"context"
 	"encoding/json"
-	"io/fs"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -168,7 +167,7 @@ func NewManager(config *Config, queueManager *queue.Manager) *Manager {
 }
 
 // Start starts the mail manager
-func (m *Manager) Start(_ context.Context) error {
+func (m *Manager) Start() error {
 	if !atomic.CompareAndSwapInt32(&m.running, 0, 1) {
 		return apperror.NewError("mail manager is already running")
 	}
@@ -550,46 +549,6 @@ func (m *Manager) jobDataToMessage(jobData map[string]interface{}) *Message {
 	}
 
 	return message
-}
-
-// WithFS configures the template manager to load templates from a filesystem
-func (m *Manager) WithFS(filesystem fs.FS) *Manager {
-	if m.TemplateManager != nil {
-		m.TemplateManager.WithFS(filesystem)
-	}
-	return m
-}
-
-// WithFileServer configures the template manager to load templates from a file path
-func (m *Manager) WithFileServer(templatesPath string) *Manager {
-	if m.TemplateManager != nil {
-		m.TemplateManager.WithFileServer(templatesPath)
-	}
-	return m
-}
-
-// WithTemplateFunc adds a template function to the template manager
-func (m *Manager) WithTemplateFunc(key string, fn interface{}) *Manager {
-	if m.TemplateManager != nil {
-		m.TemplateManager.WithTemplateFunc(key, fn)
-	}
-	return m
-}
-
-// WithDefaultFuncs adds default template functions to the template manager
-func (m *Manager) WithDefaultFuncs() *Manager {
-	if m.TemplateManager != nil {
-		m.TemplateManager.WithDefaultFuncs()
-	}
-	return m
-}
-
-// ReloadTemplates reloads all templates
-func (m *Manager) ReloadTemplates() error {
-	if m.TemplateManager != nil {
-		return m.TemplateManager.ReloadTemplates()
-	}
-	return apperror.NewError("template manager is not initialized")
 }
 
 // convertToStringSlice safely converts various types to []string
