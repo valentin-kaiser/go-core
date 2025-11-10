@@ -203,3 +203,7 @@ func (s *StandardAdapter) WithPackage(pkg string) Adapter {
 		pkg:    pkg,
 	}
 }
+
+func (s *StandardAdapter) Enabled() bool {
+	return s.level != DisabledLevel
+}

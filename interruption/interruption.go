@@ -73,6 +73,15 @@ func Catch() {
 			caller = fmt.Sprintf("%s/%s", filepath.Base(filepath.Dir(file)), strings.Trim(filepath.Base(file), filepath.Ext(file)))
 		}
 
+		if !logger.Enabled() {
+			if flag.Debug {
+				fmt.Fprintf(os.Stderr, "%v code: %v => %v \n %v", caller, line, err, string(debug.Stack()))
+				return
+			}
+			fmt.Fprintf(os.Stderr, "%v code: %v => %v", caller, line, err)
+			return
+		}
+
 		if flag.Debug {
 			logger.Error().Msgf("%v code: %v => %v \n %v", caller, line, err, string(debug.Stack()))
 			return

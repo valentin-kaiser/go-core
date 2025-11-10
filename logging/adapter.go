@@ -73,6 +73,8 @@ type Adapter interface {
 
 	// Package-specific logger
 	WithPackage(pkg string) Adapter
+
+	Enabled() bool
 }
 
 // Field represents a structured log field
