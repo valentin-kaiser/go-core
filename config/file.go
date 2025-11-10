@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/valentin-kaiser/go-core/apperror"
 
 	"gopkg.in/yaml.v2"
@@ -34,43 +33,6 @@ func (m *manager) read() error {
 	m.values = make(map[string]interface{})
 	m.flatten(yamlData, "")
 	return nil
-}
-
-func (m *manager) watch(onChange func(fsnotify.Event)) error {
-	mutex.Lock()
-	defer mutex.Unlock()
-
-	if m.watcher != nil {
-		m.watcher.Close()
-	}
-
-	var err error
-	m.watcher, err = fsnotify.NewWatcher()
-	if err != nil {
-		return apperror.NewError("creating file watcher failed").AddError(err)
-	}
-
-	configFile := filepath.Join(m.path, m.name+".yaml")
-	go func() {
-		for {
-			select {
-			case event, ok := <-m.watcher.Events:
-				if !ok {
-					return
-				}
-				if event.Name == configFile && event.Has(fsnotify.Write) {
-					onChange(event)
-				}
-			case err, ok := <-m.watcher.Errors:
-				if !ok {
-					return
-				}
-				logger.Error().Err(err).Msg("config file watcher error")
-			}
-		}
-	}()
-
-	return m.watcher.Add(filepath.Clean(configFile))
 }
 
 // save saves the configuration to the file

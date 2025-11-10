@@ -535,6 +535,8 @@ func TestReadConfigFileOperations(t *testing.T) {
 }
 
 func TestWriteConfig(t *testing.T) {
+	defer config.Reset() // Ensure clean state for other tests
+
 	tempDir := t.TempDir()
 	originalPath := flag.Path
 	defer func() { flag.Path = originalPath }()
@@ -547,7 +549,7 @@ func TestWriteConfig(t *testing.T) {
 		DatabaseURL:     "sqlite:///test.db",
 	}
 
-	err := config.Manager().WithName("write-test").Register(cfg)
+	err := config.Manager().WithPath(tempDir).WithName("write-test").Register(cfg)
 	if err != nil {
 		t.Fatalf("Register failed: %v", err)
 	}
@@ -565,13 +567,19 @@ func TestWriteConfig(t *testing.T) {
 		t.Errorf("Write() should succeed with valid config: %v", err)
 	}
 
-	// Verify the config was updated
+	// Verify the config was updated in memory by Write()
 	current, ok := config.Get().(*TestConfig)
 	if !ok {
 		t.Fatal("Expected config to be *TestConfig")
 	}
 	if current.ApplicationName != "updated-app" {
-		t.Error("Config should have been updated")
+		t.Error("Write() should have updated the in-memory config")
+	}
+
+	// Verify the file was written correctly
+	configFile := filepath.Join(tempDir, "write-test.yaml")
+	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+		t.Error("Write() should have created the config file")
 	}
 }
 
@@ -603,85 +611,6 @@ func TestWriteConfigWithInvalidConfig(t *testing.T) {
 }
 
 func TestOnChangeCallbacks(t *testing.T) {
-	cfg := &TestConfig{
-		ApplicationName: "test-app",
-		ServerPort:      8080,
-		EnableVerbose:   true,
-		DatabaseURL:     "sqlite:///test.db",
-	}
-
-	err := config.Manager().WithName("onchange-test").Register(cfg)
-	if err != nil {
-		t.Fatalf("Register failed: %v", err)
-	}
-
-	callbackCalled := false
-	config.OnChange(func(_, _ config.Config) error {
-		callbackCalled = true
-		return nil
-	})
-
-	// Trigger a change
-	newCfg := &TestConfig{
-		ApplicationName: "updated-app",
-		ServerPort:      9090,
-		EnableVerbose:   false,
-		DatabaseURL:     "postgres://localhost",
-	}
-
-	err = config.Write(newCfg)
-	if err != nil {
-		t.Errorf("Write() failed: %v", err)
-	}
-
-	err = config.Read()
-	if err != nil {
-		t.Errorf("Read() failed: %v", err)
-	}
-
-	if !callbackCalled {
-		t.Error("OnChange callback should have been called")
-	}
-}
-
-func TestOnChangeCallbackError(t *testing.T) {
-	defer config.Reset()
-	cfg := &TestConfig{
-		ApplicationName: "test-app",
-		ServerPort:      8080,
-		EnableVerbose:   true,
-		DatabaseURL:     "sqlite:///test.db",
-	}
-
-	err := config.Manager().WithName("onchange-error-test").Register(cfg)
-	if err != nil {
-		t.Fatalf("Register failed: %v", err)
-	}
-
-	config.OnChange(func(_, _ config.Config) error {
-		return errors.New("callback error")
-	})
-
-	// Trigger a change
-	newCfg := &TestConfig{
-		ApplicationName: "updated-app",
-		ServerPort:      9090,
-		EnableVerbose:   false,
-		DatabaseURL:     "postgres://localhost",
-	}
-
-	err = config.Write(newCfg)
-	if err != nil {
-		t.Errorf("Write() failed: %v", err)
-	}
-
-	err = config.Read()
-	if err == nil {
-		t.Error("Read() should fail when callback returns error")
-	}
-}
-
-func TestWatchConfigFile(t *testing.T) {
 	tempDir := t.TempDir()
 	originalPath := flag.Path
 	defer func() { flag.Path = originalPath }()
@@ -694,7 +623,103 @@ func TestWatchConfigFile(t *testing.T) {
 		DatabaseURL:     "sqlite:///test.db",
 	}
 
-	err := config.Manager().WithPath(tempDir).WithName("watch-test").Register(cfg)
+	err := config.Manager().WithPath(tempDir).WithName("onchange-test").Register(cfg)
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	callbackCalled := false
+	var oldConfig, newConfig config.Config
+	config.OnChange(func(o, n config.Config) error {
+		callbackCalled = true
+		oldConfig = o
+		newConfig = n
+		return nil
+	})
+
+	// Trigger a change via Write() - this should now call onChange handlers
+	newCfg := &TestConfig{
+		ApplicationName: "updated-app",
+		ServerPort:      9090,
+		EnableVerbose:   false,
+		DatabaseURL:     "postgres://localhost",
+	}
+
+	err = config.Write(newCfg)
+	if err != nil {
+		t.Errorf("Write() failed: %v", err)
+	}
+
+	if !callbackCalled {
+		t.Error("OnChange callback should have been called during Write()")
+	}
+
+	// Verify the callback received the correct old and new configs
+	if oldConfig == nil {
+		t.Error("Old config should not be nil")
+	}
+	if newConfig == nil {
+		t.Error("New config should not be nil")
+	}
+
+	// Verify that the in-memory config was updated
+	current := config.Get().(*TestConfig)
+	if current.ApplicationName != "updated-app" {
+		t.Error("In-memory config should have been updated by Write()")
+	}
+}
+
+func TestOnChangeCallbackError(t *testing.T) {
+	defer config.Reset()
+	tempDir := t.TempDir()
+	originalPath := flag.Path
+	defer func() { flag.Path = originalPath }()
+	flag.Path = tempDir
+
+	cfg := &TestConfig{
+		ApplicationName: "test-app",
+		ServerPort:      8080,
+		EnableVerbose:   true,
+		DatabaseURL:     "sqlite:///test.db",
+	}
+
+	err := config.Manager().WithPath(tempDir).WithName("onchange-error-test").Register(cfg)
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	config.OnChange(func(_, _ config.Config) error {
+		return errors.New("callback error")
+	})
+
+	// Trigger a change via Write() - this should now call onChange handlers and fail
+	newCfg := &TestConfig{
+		ApplicationName: "updated-app",
+		ServerPort:      9090,
+		EnableVerbose:   false,
+		DatabaseURL:     "postgres://localhost",
+	}
+
+	err = config.Write(newCfg)
+	if err == nil {
+		t.Error("Write() should fail when callback returns error")
+	}
+}
+
+func TestBasicConfigOperations(t *testing.T) {
+	tempDir := t.TempDir()
+	originalPath := flag.Path
+	defer func() { flag.Path = originalPath }()
+	flag.Path = tempDir
+
+	cfg := &TestConfig{
+		ApplicationName: "test-app",
+		ServerPort:      8080,
+		EnableVerbose:   true,
+		DatabaseURL:     "sqlite:///test.db",
+	}
+
+	err := config.Manager().WithPath(tempDir).WithName("basic-test").Register(cfg)
 	if err != nil {
 		t.Fatalf("Register failed: %v", err)
 	}
@@ -705,13 +730,11 @@ func TestWatchConfigFile(t *testing.T) {
 		t.Fatalf("Read() failed: %v", err)
 	}
 
-	config.Watch()
-
-	// Give the watcher time to start
+	// Give time for setup
 	time.Sleep(100 * time.Millisecond)
 
-	// Note: File watching tests are inherently flaky and platform-dependent
-	// This test mainly ensures the Watch function doesn't panic
+	// Note: This test mainly ensures the basic functionality doesn't panic
+	// File watching has been removed from the config package
 }
 
 func TestConcurrentConfigOperations(t *testing.T) {
@@ -921,5 +944,143 @@ func BenchmarkRead(b *testing.B) {
 		if err := config.Read(); err != nil {
 			b.Logf("Failed to read config: %v", err)
 		}
+	}
+}
+
+func TestReadAlwaysLoadsFromDisk(t *testing.T) {
+	defer config.Reset() // Ensure clean state for other tests
+
+	tempDir := t.TempDir()
+	originalPath := flag.Path
+	defer func() { flag.Path = originalPath }()
+	flag.Path = tempDir
+
+	cfg := &TestConfig{
+		ApplicationName: "initial-app",
+		ServerPort:      8080,
+		EnableVerbose:   true,
+		DatabaseURL:     "sqlite:///test.db",
+	}
+
+	err := config.Manager().WithPath(tempDir).WithName("read-disk-test").Register(cfg)
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	// Create initial config file with Read()
+	err = config.Read()
+	if err != nil {
+		t.Fatalf("Initial Read() failed: %v", err)
+	}
+
+	// Verify initial state
+	current := config.Get().(*TestConfig)
+	if current.ApplicationName != "initial-app" {
+		t.Errorf("Expected initial state to be 'initial-app', got %s", current.ApplicationName)
+	}
+
+	// Manually modify the file on disk
+	configFile := filepath.Join(tempDir, "read-disk-test.yaml")
+	manualYAML := `application_name: "disk-modified"
+server_port: 7777
+enable_verbose: false
+database_url: "modified://disk"`
+
+	err = os.WriteFile(configFile, []byte(manualYAML), 0600)
+	if err != nil {
+		t.Fatalf("Failed to write modified config to disk: %v", err)
+	}
+
+	// Read() again - this should load the modified config from disk
+	err = config.Read()
+	if err != nil {
+		t.Fatalf("Read() after manual modification failed: %v", err)
+	}
+
+	// Verify that Read() loaded the changes from disk
+	current = config.Get().(*TestConfig)
+	if current.ApplicationName != "disk-modified" {
+		t.Errorf("Read() should load from disk, expected 'disk-modified', got %s", current.ApplicationName)
+	}
+	if current.ServerPort != 7777 {
+		t.Errorf("Read() should load from disk, expected port 7777, got %d", current.ServerPort)
+	}
+	if current.EnableVerbose != false {
+		t.Errorf("Read() should load from disk, expected EnableVerbose=false, got %v", current.EnableVerbose)
+	}
+}
+
+func TestWriteTriggersOnChange(t *testing.T) {
+	defer config.Reset() // Ensure clean state for other tests
+
+	tempDir := t.TempDir()
+	originalPath := flag.Path
+	defer func() { flag.Path = originalPath }()
+	flag.Path = tempDir
+
+	cfg := &TestConfig{
+		ApplicationName: "initial-app",
+		ServerPort:      8080,
+		EnableVerbose:   true,
+		DatabaseURL:     "sqlite:///test.db",
+	}
+
+	err := config.Manager().WithPath(tempDir).WithName("write-onchange-test").Register(cfg)
+	if err != nil {
+		t.Fatalf("Register failed: %v", err)
+	}
+
+	callbackCalled := false
+	var receivedOldConfig, receivedNewConfig config.Config
+
+	// Register onChange handler
+	config.OnChange(func(oldConf, newConf config.Config) error {
+		callbackCalled = true
+		receivedOldConfig = oldConf
+		receivedNewConfig = newConf
+		return nil
+	})
+
+	// Write a new config - this should trigger the onChange handler
+	newCfg := &TestConfig{
+		ApplicationName: "updated-by-write",
+		ServerPort:      9090,
+		EnableVerbose:   false,
+		DatabaseURL:     "postgres://localhost",
+	}
+
+	err = config.Write(newCfg)
+	if err != nil {
+		t.Errorf("Write() should succeed: %v", err)
+	}
+
+	// Verify that onChange was called
+	if !callbackCalled {
+		t.Error("Write() should have triggered onChange handlers")
+	}
+
+	// Verify the callback received the correct configs
+	if receivedOldConfig == nil {
+		t.Error("onChange handler should receive old config")
+	} else {
+		oldTyped := receivedOldConfig.(*TestConfig)
+		if oldTyped.ApplicationName != "initial-app" {
+			t.Errorf("onChange old config should be 'initial-app', got %s", oldTyped.ApplicationName)
+		}
+	}
+
+	if receivedNewConfig == nil {
+		t.Error("onChange handler should receive new config")
+	} else {
+		newTyped := receivedNewConfig.(*TestConfig)
+		if newTyped.ApplicationName != "updated-by-write" {
+			t.Errorf("onChange new config should be 'updated-by-write', got %s", newTyped.ApplicationName)
+		}
+	}
+
+	// Verify in-memory config was updated
+	current := config.Get().(*TestConfig)
+	if current.ApplicationName != "updated-by-write" {
+		t.Errorf("In-memory config should be updated by Write(), got %s", current.ApplicationName)
 	}
 }

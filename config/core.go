@@ -2,7 +2,7 @@
 // application configuration in Go.
 //
 // It builds upon the Viper library and adds
-// powerful features like validation, dynamic watching, default value registration,
+// powerful features like validation, default value registration,
 // environment and flag integration, and structured config registration.
 //
 // Key Features:
@@ -11,8 +11,8 @@
 //   - Parse YAML configuration files and bind fields to CLI flags and environment variables.
 //   - Automatically generate flags based on struct field tags.
 //   - Validate configuration using custom logic (via `Validate()` method).
-//   - Watch configuration files for changes and hot-reload updated values.
-//   - Write current configuration back to disk.
+//   - Write current configuration back to disk and trigger onChange handlers.
+//   - Load configuration from disk on each Read() call.
 //   - Automatically fallbacks to default config creation if no file is found.
 //
 // All configuration structs must implement the `Config` interface:
@@ -29,7 +29,6 @@
 //	    "fmt"
 //	    "github.com/valentin-kaiser/go-core/config"
 //	    "github.com/valentin-kaiser/go-core/flag"
-//	    "github.com/fsnotify/fsnotify"
 //	)
 //
 //	type ServerConfig struct {
@@ -70,18 +69,19 @@
 //	    // Parse flags (including --path and config-specific flags)
 //	    flag.Init()
 //
-//	    // Read config using the parsed --path flag
+//	    // Read config using the parsed --path flag - loads from disk each time
 //	    if err := config.Read(); err != nil {
 //	        fmt.Println("Error reading config:", err)
 //	        return
 //	    }
 //
-//	    config.Watch(func(e fsnotify.Event) {
-//	        if err := config.Read(); err != nil {
-//	            fmt.Println("Error reloading config:", err)
-//	        }
+//	    // Register onChange handler to be called when Write() is used
+//	    config.OnChange(func(o, n config.Config) error {
+//	        fmt.Println("Configuration changed")
+//	        return nil
 //	    })
 //
+//	    // Update configuration - this will trigger onChange handlers
 //	    if err := config.Write(cfg); err != nil {
 //	        fmt.Println("Error writing config:", err)
 //	    }
@@ -89,24 +89,20 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"reflect"
 	"strings"
 	"sync"
-	"sync/atomic"
-	"time"
 
-	"github.com/fsnotify/fsnotify"
 	"github.com/spf13/pflag"
 	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/flag"
-	"github.com/valentin-kaiser/go-core/logging"
 )
 
 var (
-	logger = logging.GetPackageLogger("config")
-	mutex  = &sync.RWMutex{}
-	cm     = &manager{
+	mutex = &sync.RWMutex{}
+	cm    = &manager{
 		name:     "config",
 		defaults: make(map[string]interface{}),
 		values:   make(map[string]interface{}),
@@ -121,16 +117,14 @@ type Config interface {
 }
 
 type manager struct {
-	path       string
-	name       string
-	config     Config
-	lastChange atomic.Int64
-	prefix     string
-	defaults   map[string]interface{}
-	values     map[string]interface{}
-	flags      map[string]*pflag.Flag
-	onChange   []func(o Config, n Config) error
-	watcher    *fsnotify.Watcher
+	path     string
+	name     string
+	config   Config
+	prefix   string
+	defaults map[string]interface{}
+	values   map[string]interface{}
+	flags    map[string]*pflag.Flag
+	onChange []func(o Config, n Config) error
 }
 
 func new() *manager {
@@ -198,6 +192,7 @@ func Get() Config {
 }
 
 // Read reads the configuration from the file, validates it and applies it
+// This function always loads the configuration from disk
 // If the file does not exist, it creates a new one with the default values
 // The config path is resolved from flag.Path when this function is called
 func Read() error {
@@ -254,9 +249,9 @@ func Read() error {
 }
 
 // Write writes the configuration to the file, validates it and applies it
-// If the file does not exist, it creates a new one with the default values
+// If the file does not exist, it creates a new one
 // The config path is resolved from flag.Path when this function is called
-// Write will not trigger any OnChange handlers unless the configuration is Read again
+// Write will trigger onChange handlers and update the in-memory configuration
 func Write(change Config) error {
 	if change == nil {
 		return apperror.NewError("the configuration provided is nil")
@@ -279,27 +274,17 @@ func Write(change Config) error {
 		return apperror.Wrap(err)
 	}
 
-	return nil
-}
-
-// Watch watches the configuration file for changes and calls Read when it changes
-// It ignores changes that happen within 1 second of each other
-// This is to prevent multiple calls when the file is saved
-func Watch() {
-	err := cm.watch(func(_ fsnotify.Event) {
-		if time.Now().UnixMilli()-cm.lastChange.Load() < 1000 {
-			return
-		}
-		cm.lastChange.Store(time.Now().UnixMilli())
-		err := Read()
+	// After saving, update the in-memory config and trigger onChange handlers
+	o := Get()
+	cm.set(change)
+	for _, f := range cm.onChange {
+		err = f(o, change)
 		if err != nil {
-			logger.Error().Err(err).Msg("failed to read configuration")
-			return
+			return apperror.Wrap(err)
 		}
-	})
-	if err != nil {
-		logger.Error().Err(err).Msg("failed to setup config watcher")
 	}
+
+	return nil
 }
 
 // Reset clears the config package state
@@ -307,11 +292,6 @@ func Watch() {
 func Reset() {
 	mutex.Lock()
 	defer mutex.Unlock()
-
-	if cm.watcher != nil {
-		cm.watcher.Close()
-		cm.watcher = nil
-	}
 
 	cm = new()
 }
@@ -325,8 +305,11 @@ func Changed(o, n any) bool {
 	}
 
 	if o == nil || n == nil {
+		fmt.Println("\n\nOne value is nil while the other is not\n\n") // --- IGNORE ---
 		return true
 	}
+
+	fmt.Printf("\n\nComparing values: \n %#v \n %#v\n\n", o, n) // --- IGNORE ---
 
 	ov := reflect.ValueOf(o)
 	nv := reflect.ValueOf(n)
@@ -339,6 +322,7 @@ func Changed(o, n any) bool {
 	}
 
 	if ov.Kind() != nv.Kind() {
+		fmt.Println("\n\nKinds differ\n\n") // --- IGNORE ---
 		return true
 	}
 
