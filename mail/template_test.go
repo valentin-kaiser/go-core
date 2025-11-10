@@ -1,8 +1,10 @@
 package mail_test
 
 import (
+	"html/template"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,6 +90,66 @@ func TestTemplateManager_RenderTemplate_NoSource(t *testing.T) {
 	_, err := tm.RenderTemplate("test.html", map[string]string{"name": "test"})
 	if err == nil {
 		t.Error("Expected error when rendering non-existent template")
+	}
+}
+
+func TestTemplateManager_RenderTemplateContent(t *testing.T) {
+	config := mail.TemplateConfig{
+		WithDefaultFuncs: true,
+	}
+
+	tm := mail.NewTemplateManager(config)
+
+	templateContent := "<h1>Hello {{.Name}}</h1><p>Welcome to {{.Company}}!</p>"
+	data := map[string]interface{}{
+		"Name":    "John Doe",
+		"Company": "Example Corp",
+	}
+
+	result, err := tm.RenderTemplateContent(templateContent, data)
+	if err != nil {
+		t.Errorf("Expected no error when rendering template content, got: %v", err)
+	}
+
+	expected := "<h1>Hello John Doe</h1><p>Welcome to Example Corp!</p>"
+	if result != expected {
+		t.Errorf("Expected rendered template to be '%s', got '%s'", expected, result)
+	}
+}
+
+func TestTemplateManager_RenderTemplateContent_EmptyContent(t *testing.T) {
+	config := mail.TemplateConfig{}
+	tm := mail.NewTemplateManager(config)
+
+	_, err := tm.RenderTemplateContent("", map[string]string{"name": "test"})
+	if err == nil {
+		t.Error("Expected error when rendering empty template content")
+	}
+}
+
+func TestTemplateManager_RenderTemplateContent_WithCustomFuncs(t *testing.T) {
+	config := mail.TemplateConfig{}
+	tm := mail.NewTemplateManager(config)
+
+	templateContent := "<h1>{{uppercase .Name}}</h1>"
+	data := map[string]interface{}{
+		"Name": "john doe",
+	}
+
+	customFuncs := template.FuncMap{
+		"uppercase": func(s string) string {
+			return strings.ToUpper(s)
+		},
+	}
+
+	result, err := tm.RenderTemplateContent(templateContent, data, customFuncs)
+	if err != nil {
+		t.Errorf("Expected no error when rendering template content with custom funcs, got: %v", err)
+	}
+
+	expected := "<h1>JOHN DOE</h1>"
+	if result != expected {
+		t.Errorf("Expected rendered template to be '%s', got '%s'", expected, result)
 	}
 }
 

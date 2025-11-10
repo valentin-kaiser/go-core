@@ -185,7 +185,7 @@ func (s *smtpServer) Start(_ context.Context) error {
 			err = s.ListenAndServe()
 		}
 
-		if err != nil && err != ErrServerClosed {
+		if err != nil && !errors.Is(err, ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			logger.Error().Err(err).Msg("SMTP server error")
 			select {
 			case serverReady <- err:

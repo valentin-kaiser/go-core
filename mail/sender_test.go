@@ -415,3 +415,67 @@ func TestSMTPSender_ContextCancellation(t *testing.T) {
 		t.Errorf("Send took too long despite context cancellation: %v", duration)
 	}
 }
+
+func TestSMTPSender_SendWithTemplateContent(t *testing.T) {
+	config := mail.ClientConfig{
+		Host:       "smtp.example.com",
+		Port:       587,
+		From:       "sender@example.com",
+		Auth:       false,
+		Encryption: "NONE",
+		Timeout:    30 * time.Second,
+		MaxRetries: 0, // Disable retries for faster tests
+		RetryDelay: time.Millisecond,
+		Enabled:    true, // Enable the SMTP sender
+	}
+
+	templateConfig := mail.TemplateConfig{
+		WithDefaultFuncs: true,
+		Enabled:          true, // Explicitly enable template processing
+	}
+
+	tm := mail.NewTemplateManager(templateConfig)
+	sender := mail.NewSMTPSender(config, tm)
+
+	templateContent := "<h1>Hello {{.Name}}</h1><p>Welcome to {{.Company}}!</p><p>Your order #{{.OrderID}} has been confirmed.</p>"
+	templateData := map[string]interface{}{
+		"Name":    "Jane Doe",
+		"Company": "ACME Corp",
+		"OrderID": "12345",
+	}
+
+	message, err := mail.NewMessage().
+		From("noreply@acme.com").
+		To("jane.doe@example.com").
+		Subject("Order Confirmation").
+		TemplateContent(templateContent, templateData).
+		Build()
+
+	if err != nil {
+		t.Fatalf("Failed to build message: %v", err)
+	}
+
+	// Verify the message was built correctly
+	if message.TemplateContent != templateContent {
+		t.Errorf("Expected template content to be set correctly")
+	}
+
+	if message.Template != "" {
+		t.Error("Expected Template field to be empty when using TemplateContent")
+	}
+
+	// The actual send will fail due to fake SMTP server, but the template processing should work
+	ctx := context.Background()
+	err = sender.Send(ctx, message)
+
+	// We expect an error here due to fake SMTP server, but we want to check that
+	// the template was processed and HTMLBody was set
+	if message.HTMLBody == "" {
+		t.Error("Expected HTMLBody to be populated after template processing")
+	}
+
+	expectedHTML := "<h1>Hello Jane Doe</h1><p>Welcome to ACME Corp!</p><p>Your order #12345 has been confirmed.</p>"
+	if message.HTMLBody != expectedHTML {
+		t.Errorf("Expected HTMLBody to be '%s', got '%s'", expectedHTML, message.HTMLBody)
+	}
+}

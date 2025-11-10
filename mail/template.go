@@ -210,6 +210,49 @@ func (tm *TemplateManager) RenderTemplate(name string, data interface{}, funcs .
 	return buf.String(), nil
 }
 
+// RenderTemplateContent renders template content directly with the given data and optional custom functions
+func (tm *TemplateManager) RenderTemplateContent(content string, data interface{}, funcs ...template.FuncMap) (string, error) {
+	if tm.Error != nil {
+		return "", tm.Error
+	}
+
+	if content == "" {
+		return "", apperror.NewError("template content cannot be empty")
+	}
+
+	// Build function map: start with global functions, then apply custom functions
+	funcMap := make(template.FuncMap)
+
+	// Thread-safe access to global functions
+	tm.mutex.RLock()
+	if tm.funcs != nil {
+		for key, fn := range tm.funcs {
+			funcMap[key] = fn
+		}
+	}
+	tm.mutex.RUnlock()
+
+	// Apply custom functions (later ones override earlier ones)
+	for _, customFunc := range funcs {
+		for key, fn := range customFunc {
+			funcMap[key] = fn
+		}
+	}
+
+	// Parse and execute template
+	tmpl, err := template.New("inline-template").Funcs(funcMap).Parse(content)
+	if err != nil {
+		return "", apperror.NewError("failed to parse template content").AddError(err)
+	}
+
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, data); err != nil {
+		return "", apperror.NewError("failed to execute template content").AddError(err)
+	}
+
+	return buf.String(), nil
+}
+
 // ReloadTemplates reloads all templates
 func (tm *TemplateManager) ReloadTemplates() error {
 	if tm.Error != nil {
@@ -479,14 +522,17 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 		"unix": func(t int64, nsec int) time.Time {
 			return time.Unix(t, int64(nsec))
 		},
-		"unmarshal": func(object []byte) (interface{}, error) {
+		"unmarshal": func(object string) (interface{}, error) {
 			var data map[string]interface{}
-			err := json.Unmarshal(object, &data)
+			err := json.Unmarshal([]byte(object), &data)
 			return data, err
 		},
-		"marshal": func(v interface{}) ([]byte, error) {
-			return json.Marshal(v)
+		"marshal": func(v interface{}) (string, error) {
+			bytes, err := json.Marshal(v)
+			return string(bytes), err
 		},
+		"print":  fmt.Sprint,
+		"printf": fmt.Sprintf,
 	}
 
 	tm.mutex.Lock()

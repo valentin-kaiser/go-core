@@ -105,12 +105,20 @@ func (s *smtpSender) validateMessage(message *Message) error {
 
 // processTemplate processes the email template if specified
 func (s *smtpSender) processTemplate(message *Message) error {
-	if message.Template == "" {
+	// Skip if neither template name nor template content is provided
+	if message.Template == "" && message.TemplateContent == "" {
 		return nil
 	}
 
 	var err error
-	message.HTMLBody, err = s.templateManager.RenderTemplate(message.Template, message.TemplateData, message.TemplateFuncs)
+	if message.TemplateContent != "" {
+		// Use direct template content
+		message.HTMLBody, err = s.templateManager.RenderTemplateContent(message.TemplateContent, message.TemplateData, message.TemplateFuncs)
+	} else {
+		// Use template file
+		message.HTMLBody, err = s.templateManager.RenderTemplate(message.Template, message.TemplateData, message.TemplateFuncs)
+	}
+
 	if err != nil {
 		return apperror.Wrap(err)
 	}

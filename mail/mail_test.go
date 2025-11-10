@@ -62,6 +62,38 @@ func TestMessageBuilder(t *testing.T) {
 	}
 }
 
+func TestMessageBuilderWithTemplateContent(t *testing.T) {
+	templateContent := "<h1>Hello {{.Name}}</h1><p>Welcome to {{.Company}}!</p>"
+	templateData := map[string]interface{}{
+		"Name":    "John Doe",
+		"Company": "Example Corp",
+	}
+
+	message, err := mail.NewMessage().
+		From("sender@example.com").
+		To("recipient@example.com").
+		Subject("Test Template").
+		TemplateContent(templateContent, templateData).
+		Build()
+
+	if err != nil {
+		t.Errorf("Expected no error when building message with template content, got: %v", err)
+	}
+
+	if message.TemplateContent != templateContent {
+		t.Errorf("Expected template content to be '%s', got '%s'", templateContent, message.TemplateContent)
+	}
+
+	if message.TemplateData == nil {
+		t.Error("Expected template data to be set")
+	}
+
+	// Verify that TemplateContent and Template are different fields
+	if message.Template != "" {
+		t.Error("Expected Template field to be empty when using TemplateContent")
+	}
+}
+
 func TestTemplateManager(t *testing.T) {
 	config := mail.TemplateConfig{
 		DefaultTemplate: "default.html",
