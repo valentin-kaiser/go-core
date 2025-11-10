@@ -647,14 +647,6 @@ func (s *TaskScheduler) runTask(ctx context.Context, task *Task) {
 		}
 
 		lastError = err
-		if !task.Quiet || task.ConsecutiveFailures == 0 && task.MaxRetries > 0 {
-			logger.Warn().
-				Err(err).
-				Field("task_name", task.Name).
-				Field("attempt", attempt+1).
-				Msg("task execution failed")
-		}
-
 		if attempt < task.MaxRetries {
 			select {
 			case <-taskCtx.Done():
