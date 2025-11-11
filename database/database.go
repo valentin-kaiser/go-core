@@ -104,6 +104,8 @@ var (
 // It will return an error if the database is not connected or if the function returns an error.
 // The function will be executed with a new session, so it will not affect the current transaction.
 func Execute(call func(db *gorm.DB) error) error {
+	defer interruption.Catch()
+
 	dbMutex.RLock()
 	dbInstance := db
 	dbMutex.RUnlock()
