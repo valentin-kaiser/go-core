@@ -89,7 +89,6 @@
 package config
 
 import (
-	"fmt"
 	"os"
 	"reflect"
 	"strings"
@@ -305,11 +304,8 @@ func Changed(o, n any) bool {
 	}
 
 	if o == nil || n == nil {
-		fmt.Println("\n\nOne value is nil while the other is not\n\n") // --- IGNORE ---
 		return true
 	}
-
-	fmt.Printf("\n\nComparing values: \n %#v \n %#v\n\n", o, n) // --- IGNORE ---
 
 	ov := reflect.ValueOf(o)
 	nv := reflect.ValueOf(n)
@@ -322,7 +318,6 @@ func Changed(o, n any) bool {
 	}
 
 	if ov.Kind() != nv.Kind() {
-		fmt.Println("\n\nKinds differ\n\n") // --- IGNORE ---
 		return true
 	}
 
