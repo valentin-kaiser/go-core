@@ -58,6 +58,10 @@ func TestLoggerInit(t *testing.T) {
 }
 
 func TestLoggerWithConsole(t *testing.T) {
+	zlog.SetModeDetector(func() bool {
+		return true
+	})
+
 	logger := zlog.Logger()
 	initialOutputs := len(logger.GetOutputs())
 
