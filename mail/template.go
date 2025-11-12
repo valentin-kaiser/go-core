@@ -495,7 +495,7 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 			}
 			return dict
 		},
-		"now": time.Now(),
+		"now": time.Now,
 		"date": func(format string, date interface{}) string {
 			// Handle different date types and formats
 			switch v := date.(type) {
