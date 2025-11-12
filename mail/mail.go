@@ -402,7 +402,10 @@ func (m *Manager) handleMailJob(ctx context.Context, job *queue.Job) error {
 	}
 
 	// Convert job data back to message
-	message := m.jobDataToMessage(jobData)
+	message, err := m.jobDataToMessage(jobData)
+	if err != nil {
+		return apperror.Wrap(err)
+	}
 
 	// Send the message
 	if err := m.sender.Send(ctx, message); err != nil {
@@ -484,49 +487,62 @@ func (m *Manager) updateLastReceived() {
 }
 
 // jobDataToMessage converts job data back to a Message
-func (m *Manager) jobDataToMessage(jobData map[string]interface{}) *Message {
+func (m *Manager) jobDataToMessage(jobData map[string]interface{}) (*Message, error) {
 	message := &Message{}
 
-	if id, ok := jobData["id"].(string); ok {
+	id, ok := jobData["id"].(string)
+	if ok {
 		message.ID = id
 	}
-	if from, ok := jobData["from"].(string); ok {
+	from, ok := jobData["from"].(string)
+	if ok {
 		message.From = from
 	}
-	if to := jobData["to"]; to != nil {
+	to, ok := jobData["to"]
+	if ok {
 		message.To = convertToStringSlice(to)
 	}
-	if cc := jobData["cc"]; cc != nil {
+	cc, ok := jobData["cc"]
+	if ok {
 		message.CC = convertToStringSlice(cc)
 	}
-	if bcc := jobData["bcc"]; bcc != nil {
+	bcc, ok := jobData["bcc"]
+	if ok {
 		message.BCC = convertToStringSlice(bcc)
 	}
-	if replyTo, ok := jobData["reply_to"].(string); ok {
+	replyTo, ok := jobData["reply_to"].(string)
+	if ok {
 		message.ReplyTo = replyTo
 	}
-	if subject, ok := jobData["subject"].(string); ok {
+	subject, ok := jobData["subject"].(string)
+	if ok {
 		message.Subject = subject
 	}
-	if textBody, ok := jobData["text_body"].(string); ok {
+	textBody, ok := jobData["text_body"].(string)
+	if ok {
 		message.TextBody = textBody
 	}
-	if htmlBody, ok := jobData["html_body"].(string); ok {
+	htmlBody, ok := jobData["html_body"].(string)
+	if ok {
 		message.HTMLBody = htmlBody
 	}
-	if template, ok := jobData["template"].(string); ok {
+	template, ok := jobData["template"].(string)
+	if ok {
 		message.Template = template
 	}
-	if templateData, ok := jobData["template_data"]; ok {
+	templateData, ok := jobData["template_data"]
+	if ok {
 		message.TemplateData = templateData
 	}
-	if priority, ok := jobData["priority"].(float64); ok {
+	priority, ok := jobData["priority"].(float64)
+	if ok {
 		message.Priority = Priority(int(priority))
 	}
 	if headers, ok := jobData["headers"].(map[string]interface{}); ok {
 		message.Headers = make(map[string]string)
 		for k, v := range headers {
-			if s, ok := v.(string); ok {
+			s, ok := v.(string)
+			if ok {
 				message.Headers[k] = s
 			}
 		}
@@ -534,45 +550,57 @@ func (m *Manager) jobDataToMessage(jobData map[string]interface{}) *Message {
 	if metadata, ok := jobData["metadata"].(map[string]interface{}); ok {
 		message.Metadata = make(map[string]string)
 		for k, v := range metadata {
-			if s, ok := v.(string); ok {
+			s, ok := v.(string)
+			if ok {
 				message.Metadata[k] = s
 			}
 		}
 	}
 	if createdAt, ok := jobData["created_at"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
-			message.CreatedAt = t
+		t, err := time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			return nil, apperror.NewError("invalid created_at format").AddError(err)
 		}
+		message.CreatedAt = t
 	}
 	if scheduleAt, ok := jobData["schedule_at"].(string); ok && scheduleAt != "" {
-		if t, err := time.Parse(time.RFC3339, scheduleAt); err == nil {
-			message.ScheduleAt = &t
+		t, err := time.Parse(time.RFC3339, scheduleAt)
+		if err != nil {
+			return nil, apperror.NewError("invalid schedule_at format").AddError(err)
 		}
+		message.ScheduleAt = &t
 	}
 	if attachments, ok := jobData["attachments"].([]interface{}); ok {
 		message.Attachments = make([]Attachment, 0, len(attachments))
 		for _, att := range attachments {
 			if attMap, ok := att.(map[string]interface{}); ok {
 				attachment := Attachment{}
-				if filename, ok := attMap["filename"].(string); ok {
+				filename, ok := attMap["filename"].(string)
+				if ok {
 					attachment.Filename = filename
 				}
-				if contentType, ok := attMap["content_type"].(string); ok {
+				contentType, ok := attMap["content_type"].(string)
+				if ok {
 					attachment.ContentType = contentType
 				}
-				if content, ok := attMap["content"].(string); ok {
-					// Content is base64 encoded in JSON
-					if decoded, err := base64.StdEncoding.DecodeString(content); err == nil {
-						attachment.Content = decoded
+				content, ok := attMap["content"].(string)
+				if ok {
+					decoded, err := base64.StdEncoding.DecodeString(content)
+					if err != nil {
+						return nil, apperror.NewError("failed to decode attachment content").AddError(err)
 					}
+					attachment.Content = decoded
 				}
-				if size, ok := attMap["size"].(float64); ok {
+				size, ok := attMap["size"].(float64)
+				if ok {
 					attachment.Size = int64(size)
 				}
-				if inline, ok := attMap["inline"].(bool); ok {
+				inline, ok := attMap["inline"].(bool)
+				if ok {
 					attachment.Inline = inline
 				}
-				if contentID, ok := attMap["content_id"].(string); ok {
+				contentID, ok := attMap["content_id"].(string)
+				if ok {
 					attachment.ContentID = contentID
 				}
 				message.Attachments = append(message.Attachments, attachment)
@@ -580,7 +608,7 @@ func (m *Manager) jobDataToMessage(jobData map[string]interface{}) *Message {
 		}
 	}
 
-	return message
+	return message, nil
 }
 
 // convertToStringSlice safely converts various types to []string
