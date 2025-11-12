@@ -337,7 +337,7 @@ func connect(config Config) (*gorm.DB, error) {
 		if err != nil {
 			return nil, err
 		}
-		defer sdb.Close()
+		defer apperror.Catch(sdb.Close, "closing temporary database connection failed")
 
 		err = create.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", config.Name)).Error
 		if err != nil {
