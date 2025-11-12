@@ -8,6 +8,14 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
+// DeriveKey derives a 64-byte cryptographic key from the given secret and salt using PBKDF2.
+// Parameters:
+//   - secret: the source material (e.g., password) to derive the key from.
+//   - salt: a cryptographic salt to ensure uniqueness of the derived key.
+// Returns:
+//   - a 64-byte derived key as a byte slice.
+// Security parameters:
+//   - 500,000 iterations of PBKDF2 using SHA-512 as the hash function.
 func DeriveKey(secret, salt string) []byte {
 	return pbkdf2.Key([]byte(secret), []byte(salt), 500000, 64, sha512.New)
 }
