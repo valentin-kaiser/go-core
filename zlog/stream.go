@@ -1,9 +1,13 @@
 package zlog
 
-import "strings"
+import (
+	"strings"
+	"sync"
+)
 
 // StreamWriter is an io.Writer that streams log entries to listeners
 type StreamWriter struct {
+	mu        sync.RWMutex
 	listeners []chan string
 	buffer    []string
 	bufferMax int
@@ -28,9 +32,48 @@ func (sw *StreamWriter) Write(p []byte) (n int, err error) {
 		return len(p), nil
 	}
 
+	sw.mu.Lock()
 	sw.addToBuffer(logEntry)
 	sw.broadcast(logEntry)
+	sw.mu.Unlock()
 	return len(p), nil
+}
+
+// AddListener adds a new listener channel and sends buffered entries
+func (sw *StreamWriter) AddListener(ch chan string) {
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
+
+	// Send buffered entries to new listener
+	sw.sendBufferedEntries(ch)
+	sw.listeners = append(sw.listeners, ch)
+}
+
+// RemoveListener removes a specific listener channel
+func (sw *StreamWriter) RemoveListener(ch chan string) {
+	sw.mu.Lock()
+	defer sw.mu.Unlock()
+
+	for i, listener := range sw.listeners {
+		if listener == ch {
+			sw.removeListener(i)
+			break
+		}
+	}
+}
+
+// HasListeners returns true if there are active listeners
+func (sw *StreamWriter) HasListeners() bool {
+	sw.mu.RLock()
+	defer sw.mu.RUnlock()
+	return len(sw.listeners) > 0
+}
+
+// GetListenerCount returns the number of active listeners
+func (sw *StreamWriter) GetListenerCount() int {
+	sw.mu.RLock()
+	defer sw.mu.RUnlock()
+	return len(sw.listeners)
 }
 
 // addToBuffer adds an entry to the buffer, maintaining max size
@@ -64,13 +107,6 @@ func (sw *StreamWriter) removeListener(index int) {
 	sw.listeners = append(sw.listeners[:index], sw.listeners[index+1:]...)
 }
 
-// AddListener adds a new listener channel and sends buffered entries
-func (sw *StreamWriter) AddListener(ch chan string) {
-	// Send buffered entries to new listener
-	sw.sendBufferedEntries(ch)
-	sw.listeners = append(sw.listeners, ch)
-}
-
 // sendBufferedEntries sends all buffered entries to a channel, stopping if channel is full
 func (sw *StreamWriter) sendBufferedEntries(ch chan string) {
 	for i := len(sw.buffer) - 1; i >= 0; i-- {
@@ -82,24 +118,4 @@ func (sw *StreamWriter) sendBufferedEntries(ch chan string) {
 			return
 		}
 	}
-}
-
-// RemoveListener removes a specific listener channel
-func (sw *StreamWriter) RemoveListener(ch chan string) {
-	for i, listener := range sw.listeners {
-		if listener == ch {
-			sw.removeListener(i)
-			break
-		}
-	}
-}
-
-// HasListeners returns true if there are active listeners
-func (sw *StreamWriter) HasListeners() bool {
-	return len(sw.listeners) > 0
-}
-
-// GetListenerCount returns the number of active listeners
-func (sw *StreamWriter) GetListenerCount() int {
-	return len(sw.listeners)
 }
