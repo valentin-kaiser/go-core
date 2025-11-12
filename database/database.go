@@ -333,16 +333,16 @@ func connect(config Config) (*gorm.DB, error) {
 			return nil, err
 		}
 
-		err = create.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", config.Name)).Error
-		if err != nil {
-			return nil, err
-		}
-
 		sdb, err := create.DB()
 		if err != nil {
 			return nil, err
 		}
-		sdb.Close()
+		defer sdb.Close()
+
+		err = create.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", config.Name)).Error
+		if err != nil {
+			return nil, err
+		}
 
 		conn, err := gorm.Open(mysql.Open(fmt.Sprintf(
 			"%v:%v@tcp(%v:%v)/%v?charset=utf8mb4&parseTime=True&loc=Local",
