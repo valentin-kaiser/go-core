@@ -94,7 +94,7 @@ func (l *logger) Init(logname string, loglevel zerolog.Level) {
 // WithConsole adds a console writer to the logger outputs.
 // It uses the zerolog.ConsoleWriter to format the log output for the console.
 func (l *logger) WithConsole() *logger {
-	// Add console output when not running in interactive mode
+	// Add console output when running in interactive mode
 	if Interactive() {
 		l.outputs = append(l.outputs, zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
 	}
