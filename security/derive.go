@@ -16,6 +16,13 @@ func DeriveBase64Key(secret, salt string) string {
 	return base64.StdEncoding.EncodeToString(pbkdf2.Key([]byte(secret), []byte(salt), 500000, 64, sha512.New))
 }
 
+// DeriveArgon2Key derives a key from the given secret and salt using Argon2id.
+//
+// - Uses Argon2id, the recommended variant of Argon2 for password hashing and key derivation.
+// - Parameters: 4 iterations, 64 MB memory (64*1024 KB), 4 threads, 64-byte output.
+// - Prefer Argon2 over PBKDF2 when higher resistance to GPU/ASIC attacks is required,
+//   as Argon2 is designed to be memory-hard and more secure against such attacks,
+//   but note that it requires significantly more memory than PBKDF2.
 func DeriveArgon2Key(secret string, salt string) []byte {
 	return argon2.IDKey([]byte(secret), []byte(salt), 4, 64*1024, 4, 64)
 }
