@@ -47,35 +47,6 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
-// ModeDetector is a function type for detecting interactive mode
-type ModeDetector func() bool
-
-// detector can be set customly to detect interactive mode
-var detector ModeDetector
-
-// MultiWriter is like io.MultiWriter but continues writing to other writers even if one fails
-type MultiWriter struct {
-	writers []io.Writer
-}
-
-func newMultiWriter(writers ...io.Writer) *MultiWriter {
-	return &MultiWriter{writers: writers}
-}
-
-func (mw *MultiWriter) Write(p []byte) (n int, err error) {
-	var lastErr error
-	n = len(p)
-
-	for _, writer := range mw.writers {
-		_, writeErr := writer.Write(p)
-		if writeErr != nil {
-			lastErr = writeErr
-		}
-	}
-
-	return n, lastErr
-}
-
 type logger struct {
 	level   zerolog.Level
 	file    *lumberjack.Logger
@@ -84,27 +55,6 @@ type logger struct {
 
 var instance = &logger{
 	outputs: []io.Writer{},
-}
-
-// Interactive checks if the application is running in interactive mode
-// by checking if stdout is available.
-func Interactive() bool {
-	if detector != nil {
-		return detector()
-	}
-
-	// Fallback: Try to get file info for stdout
-	stat, err := os.Stdout.Stat()
-	if err != nil {
-		return false
-	}
-
-	return (stat.Mode() & os.ModeCharDevice) != 0
-}
-
-// SetModeDetector allows the user to provide a custom function to detect interactive mode
-func SetModeDetector(d ModeDetector) {
-	detector = d
 }
 
 // init initializes the logger with default settings.
@@ -144,8 +94,8 @@ func (l *logger) Init(logname string, loglevel zerolog.Level) {
 // WithConsole adds a console writer to the logger outputs.
 // It uses the zerolog.ConsoleWriter to format the log output for the console.
 func (l *logger) WithConsole() *logger {
-	// Don't add console output when not running in interactive mode
-	if !Interactive() {
+	// Add console output when not running in interactive mode
+	if Interactive() {
 		l.outputs = append(l.outputs, zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
 	}
 	return l
@@ -169,6 +119,14 @@ func (l *logger) WithLogFile() *logger {
 func (l *logger) With(writers ...io.Writer) *logger {
 	l.outputs = append(l.outputs, writers...)
 	return l
+}
+
+// WithStream adds a StreamWriter to the logger outputs and returns both the logger and the StreamWriter.
+// This allows real-time streaming of log entries to listeners.
+func (l *logger) WithStream(bufferMax int) (*logger, *StreamWriter) {
+	streamWriter := NewStreamWriter(bufferMax)
+	l.outputs = append(l.outputs, streamWriter)
+	return l, streamWriter
 }
 
 // Stop closes the log file.
