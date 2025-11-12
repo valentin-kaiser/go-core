@@ -170,12 +170,12 @@ func GenerateSelfSignedCertificate(subject pkix.Name) (tls.Certificate, *x509.Ce
 
 // WriteCertificate writes the given certificate and key to the specified file paths.
 func WriteCertificate(cert tls.Certificate, certPath, keyPath string) error {
-	err := os.MkdirAll(filepath.Dir(certPath), 0755)
+	err := os.MkdirAll(filepath.Dir(certPath), 0700)
 	if err != nil {
 		return apperror.NewError("failed to create certificate directory").AddError(err)
 	}
 
-	err = os.MkdirAll(filepath.Dir(keyPath), 0755)
+	err = os.MkdirAll(filepath.Dir(keyPath), 0700)
 	if err != nil {
 		return apperror.NewError("failed to create key directory").AddError(err)
 	}
@@ -196,7 +196,7 @@ func WriteCertificate(cert tls.Certificate, certPath, keyPath string) error {
 		}
 	}
 
-	keyOut, err := os.Create(filepath.Clean(keyPath))
+	keyOut, err := os.OpenFile(filepath.Clean(keyPath), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return apperror.NewError("failed to create key file").AddError(err)
 	}
