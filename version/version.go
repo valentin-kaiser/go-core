@@ -253,7 +253,8 @@ func Get() *Release {
 
 	var parsedVersion *ParsedVersion
 	if parser != nil {
-		if pv, err := parser.Parse(GitTag); err == nil {
+		pv, err := parser.Parse(GitTag)
+		if err == nil {
 			parsedVersion = pv
 		}
 	}
@@ -280,7 +281,8 @@ func Major() int {
 	// For CalVer formats, try to return year as major
 	parser := GetParser(DetectFormat(GitTag))
 	if parser != nil {
-		if pv, err := parser.Parse(GitTag); err == nil {
+		pv, err := parser.Parse(GitTag)
+		if err == nil {
 			if pv.Year > 0 {
 				return pv.Year
 			}
@@ -299,7 +301,8 @@ func Minor() int {
 	// For CalVer formats, try to return month as minor
 	parser := GetParser(DetectFormat(GitTag))
 	if parser != nil {
-		if pv, err := parser.Parse(GitTag); err == nil {
+		pv, err := parser.Parse(GitTag)
+		if err == nil {
 			if pv.Month > 0 {
 				return pv.Month
 			}

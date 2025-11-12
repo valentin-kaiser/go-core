@@ -126,7 +126,7 @@ type manager struct {
 	onChange []func(o Config, n Config) error
 }
 
-func new() *manager {
+func newManager() *manager {
 	return &manager{
 		name:     "config",
 		defaults: make(map[string]interface{}),
@@ -135,12 +135,14 @@ func new() *manager {
 	}
 }
 
+// Manager returns the singleton configuration manager instance
 func Manager() *manager {
 	mutex.Lock()
 	defer mutex.Unlock()
 	return cm
 }
 
+// WithPath sets the configuration path for the manager
 func (m *manager) WithPath(path string) *manager {
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -148,6 +150,7 @@ func (m *manager) WithPath(path string) *manager {
 	return m
 }
 
+// WithName sets the configuration name for the manager
 func (m *manager) WithName(name string) *manager {
 	mutex.Lock()
 	defer mutex.Unlock()
@@ -292,7 +295,7 @@ func Reset() {
 	mutex.Lock()
 	defer mutex.Unlock()
 
-	cm = new()
+	cm = newManager()
 }
 
 // Changed checks if two configuration values are different by comparing their reflection values.

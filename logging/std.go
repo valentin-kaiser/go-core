@@ -204,6 +204,7 @@ func (s *StandardAdapter) WithPackage(pkg string) Adapter {
 	}
 }
 
+// Enabled returns true if the adapter's log level is not DisabledLevel
 func (s *StandardAdapter) Enabled() bool {
 	return s.level != DisabledLevel
 }

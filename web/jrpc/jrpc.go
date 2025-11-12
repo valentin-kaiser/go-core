@@ -112,7 +112,7 @@ var (
 
 // upgrader is the WebSocket upgrader with default options
 var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
+	CheckOrigin: func(_ *http.Request) bool {
 		return true // Allow connections from any origin
 	},
 }
@@ -256,9 +256,12 @@ func (s *Service) HandlerFunc(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to upgrade to WebSocket", http.StatusBadRequest)
 			return
 		}
-		defer conn.Close()
 
 		s.websocket(w, r, conn)
+		err = conn.Close()
+		if err != nil {
+			log.Error().Err(err).Msg("failed to close websocket connection")
+		}
 		return
 	}
 
@@ -302,7 +305,11 @@ func (s *Service) unary(w http.ResponseWriter, r *http.Request) {
 
 	if r.ContentLength > 0 {
 		// Use buffer pool for body reading
-		buf := bufferPool.Get().([]byte)
+		buf, ok := bufferPool.Get().([]byte)
+		if !ok {
+			http.Error(w, "failed to get buffer from pool", http.StatusInternalServerError)
+			return
+		}
 		defer bufferPool.Put(buf[:0])
 
 		// Ensure buffer is large enough
@@ -519,7 +526,10 @@ func (s *Service) call(ctx context.Context, service, method string, req proto.Me
 	if !reqVal.Type().AssignableTo(wanted) {
 		// Convert via JSON round-trip using protojson to the expected type.
 		// Use buffer pool for better performance
-		buf := bufferPool.Get().([]byte)
+		buf, ok := bufferPool.Get().([]byte)
+		if !ok {
+			return nil, errors.New("failed to get buffer from pool")
+		}
 		defer bufferPool.Put(buf[:0])
 
 		reqPtr := reflect.New(wanted.Elem())
@@ -531,7 +541,8 @@ func (s *Service) call(ctx context.Context, service, method string, req proto.Me
 		if !ok {
 			return nil, errExpectedProtoMessage
 		}
-		if err := unmarshalOpts.Unmarshal(b, pm); err != nil {
+		err = unmarshalOpts.Unmarshal(b, pm)
+		if err != nil {
 			return nil, err
 		}
 		reqVal = reqPtr
@@ -655,8 +666,13 @@ func (s *Service) handleServerStream(ctx context.Context, conn *websocket.Conn, 
 	}
 
 	if reqPtr.IsValid() && len(reflect.ValueOf(msg).Elem().String()) > 0 {
-		// Copy from read message to the expected message type
-		b, err := marshalOpts.Marshal(reqPtr.Interface().(proto.Message))
+		msg, ok := reqPtr.Interface().(proto.Message)
+		if !ok {
+			s.closeWS(conn, websocket.CloseInternalServerErr, apperror.NewError("expected proto.Message for request"))
+			return
+		}
+
+		b, err := marshalOpts.Marshal(msg)
 		if err != nil {
 			s.closeWS(conn, websocket.CloseInternalServerErr, apperror.Wrap(err))
 			return
@@ -723,7 +739,7 @@ func (s *Service) handleClientStream(ctx context.Context, conn *websocket.Conn, 
 	}, 1)
 	go func() {
 		outs := m.Call([]reflect.Value{reflect.ValueOf(ctx), in})
-		var res any = outs[0].Interface()
+		res := outs[0].Interface()
 		e := outs[1].Interface()
 		if e != nil {
 			err, ok := e.(error)
@@ -844,7 +860,10 @@ func (s *Service) writeWSMessage(conn *websocket.Conn, val reflect.Value, t refl
 		return apperror.Wrap(err)
 	}
 
-	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	err = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	if err != nil {
+		return apperror.Wrap(err)
+	}
 	err = conn.WriteMessage(websocket.TextMessage, data)
 	if err != nil {
 		return apperror.Wrap(err)
@@ -902,10 +921,15 @@ func (s *Service) closeWS(conn *websocket.Conn, code int, err error) {
 type StreamingType int
 
 const (
+	// StreamingTypeUnary represents a unary (non-streaming) method
 	StreamingTypeUnary StreamingType = iota
+	// StreamingTypeBidirectional represents a bidirectional streaming method
 	StreamingTypeBidirectional
+	// StreamingTypeServerStream represents a server streaming method
 	StreamingTypeServerStream
+	// StreamingTypeClientStream represents a client streaming method
 	StreamingTypeClientStream
+	// StreamingTypeInvalid represents an invalid method signature
 	StreamingTypeInvalid
 )
 
@@ -920,14 +944,8 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 	}
 
 	// Get expected message types from proto descriptor
-	inputType, err := s.getProtoMessageType(md.Input())
-	if err != nil {
-		return StreamingTypeInvalid, apperror.NewError("failed to resolve input message type: " + err.Error())
-	}
-	outputType, err := s.getProtoMessageType(md.Output())
-	if err != nil {
-		return StreamingTypeInvalid, apperror.NewError("failed to resolve output message type: " + err.Error())
-	}
+	inputType := s.getProtoMessageType(md.Input())
+	outputType := s.getProtoMessageType(md.Output())
 
 	// Determine streaming type based on proto descriptor and validate signature
 	isServerStreaming := md.IsStreamingServer()
@@ -1048,14 +1066,13 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 }
 
 // getProtoMessageType resolves a proto message descriptor to its Go reflect.Type
-func (s *Service) getProtoMessageType(msgDesc protoreflect.MessageDescriptor) (reflect.Type, error) {
+func (s *Service) getProtoMessageType(msgDesc protoreflect.MessageDescriptor) reflect.Type {
 	mt, err := protoregistry.GlobalTypes.FindMessageByName(msgDesc.FullName())
 	if err != nil {
-		// Fallback to dynamic message
 		dynMsg := dynamicpb.NewMessage(msgDesc)
-		return reflect.TypeOf(dynMsg).Elem(), nil
+		return reflect.TypeOf(dynMsg).Elem()
 	}
-	return reflect.TypeOf(mt.New().Interface()).Elem(), nil
+	return reflect.TypeOf(mt.New().Interface()).Elem()
 }
 
 // typesMatch checks if two reflect.Types represent the same proto message type

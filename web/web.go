@@ -294,7 +294,8 @@ func (s *Server) Start() *Server {
 		})
 	}
 
-	if err := group.Wait(); err != nil {
+	err := group.Wait()
+	if err != nil {
 		s.Error = err
 	}
 	return s
@@ -542,6 +543,9 @@ func (s *Server) WithWebsocket(path string, handler func(http.ResponseWriter, *h
 	return s
 }
 
+// WithJRPC adds a JSON-RPC service handler to the server
+// It will return an error in the Error field if the path is already registered as a handler or a websocket
+// The service will be accessible at path/{service}/{method}
 func (s *Server) WithJRPC(path string, service *jrpc.Service) *Server {
 	if s.Error != nil {
 		return s

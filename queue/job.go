@@ -179,7 +179,8 @@ func (bm *BatchManager) CreateBatch(ctx context.Context, name string, jobs []*Jo
 		}
 		job.Metadata["batch_id"] = batch.ID
 
-		if err := bm.manager.Enqueue(ctx, job); err != nil {
+		err := bm.manager.Enqueue(ctx, job)
+		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
 

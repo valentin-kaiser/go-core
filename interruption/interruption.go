@@ -117,7 +117,8 @@ func OnSignal(handlers []func() error, signals ...os.Signal) context.Context {
 		for _, handler := range handlers {
 			func() {
 				defer Catch()
-				if err := handler(); err != nil {
+				err := handler()
+				if err != nil {
 					logger.Error().Err(err).Msgf("handler failed")
 				}
 			}()

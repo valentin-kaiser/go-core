@@ -26,7 +26,8 @@ func (m *manager) read() error {
 	}
 
 	var yamlData map[string]interface{}
-	if err := yaml.Unmarshal(data, &yamlData); err != nil {
+	err = yaml.Unmarshal(data, &yamlData)
+	if err != nil {
 		return apperror.NewError("unmarshalling configuration file failed").AddError(err)
 	}
 
@@ -39,7 +40,8 @@ func (m *manager) read() error {
 // If the file does not exist, it creates a new one with the default values
 func (m *manager) save(c Config) error {
 	// Ensure the directory exists before trying to create the file
-	if err := os.MkdirAll(m.path, 0750); err != nil {
+	err := os.MkdirAll(m.path, 0750)
+	if err != nil {
 		return apperror.NewError("creating configuration directory failed").AddError(err)
 	}
 

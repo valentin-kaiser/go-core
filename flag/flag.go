@@ -88,6 +88,7 @@ func PrintHelp() {
 	pflag.PrintDefaults()
 }
 
+// Arguments returns the non-flag command-line arguments
 func Arguments() []string {
 	return pflag.Args()
 }

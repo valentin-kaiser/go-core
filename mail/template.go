@@ -153,7 +153,7 @@ func (tm *TemplateManager) RenderTemplate(name string, data interface{}, funcs .
 			customPath := filepath.Join(tm.config.TemplatesPath, path)
 			_, err := os.Stat(customPath)
 			if err == nil {
-				content, err := os.ReadFile(customPath)
+				content, err := os.ReadFile(filepath.Clean(customPath))
 				if err != nil {
 					return nil, apperror.NewError("failed to read template file from TemplatesPath").AddError(err)
 				}
@@ -458,10 +458,8 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 
 			return cases.Title(lang, cases.NoLower).String(s)
 		},
-		"trim": strings.TrimSpace,
-		"replace": func(s, old, replacement string) string {
-			return strings.ReplaceAll(s, old, replacement)
-		},
+		"trim":      strings.TrimSpace,
+		"replace":   strings.ReplaceAll,
 		"contains":  strings.Contains,
 		"hasPrefix": strings.HasPrefix,
 		"hasSuffix": strings.HasSuffix,
@@ -487,9 +485,7 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 			}
 			return dict
 		},
-		"now": func() time.Time {
-			return time.Now()
-		},
+		"now": time.Now(),
 		"date": func(format string, date interface{}) string {
 			// Handle different date types and formats
 			switch v := date.(type) {

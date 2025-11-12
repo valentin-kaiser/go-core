@@ -184,7 +184,7 @@ func WriteCertificate(cert tls.Certificate, certPath, keyPath string) error {
 	if err != nil {
 		return apperror.NewError("failed to create certificate file").AddError(err)
 	}
-	defer certOut.Close()
+	defer apperror.Catch(certOut.Close, "failed to close certificate file")
 
 	for _, c := range cert.Certificate {
 		err = pem.Encode(certOut, &pem.Block{
@@ -200,7 +200,7 @@ func WriteCertificate(cert tls.Certificate, certPath, keyPath string) error {
 	if err != nil {
 		return apperror.NewError("failed to create key file").AddError(err)
 	}
-	defer keyOut.Close()
+	defer apperror.Catch(keyOut.Close, "failed to close key file")
 
 	privBytes, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
 	if err != nil {
