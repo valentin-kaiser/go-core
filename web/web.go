@@ -190,7 +190,7 @@ func (s *Server) Start() *Server {
 	}
 
 	if len(s.ports) == 0 {
-		s.Error = apperror.NewError("no ports configured - use WithPort() to configure at least one port")
+		s.Error = apperror.NewError("no ports configured - use WithPort(), WithHTTPPort(), or WithHTTPSPort() to configure at least one port")
 		return s
 	}
 
