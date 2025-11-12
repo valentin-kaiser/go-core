@@ -298,16 +298,20 @@ func (c *TemplateConfig) Validate() error {
 
 // Validate checks the configuration for errors
 func (c *Config) Validate() error {
-	if err := c.Client.Validate(); err != nil {
+	err := c.Client.Validate()
+	if err != nil {
 		return apperror.Wrap(err)
 	}
-	if err := c.Server.Validate(); err != nil {
+	err = c.Server.Validate()
+	if err != nil {
 		return apperror.Wrap(err)
 	}
-	if err := c.Queue.Validate(); err != nil {
+	err = c.Queue.Validate()
+	if err != nil {
 		return apperror.Wrap(err)
 	}
-	if err := c.Templates.Validate(); err != nil {
+	err = c.Templates.Validate()
+	if err != nil {
 		return apperror.Wrap(err)
 	}
 	return nil

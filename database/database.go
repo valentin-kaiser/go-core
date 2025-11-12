@@ -292,7 +292,8 @@ func connect(config Config) (*gorm.DB, error) {
 	case "sqlite":
 		dsn := "file:memdb1?mode=memory&cache=shared&_busy_timeout=5000"
 		if config.Name != ":memory:" {
-			if _, err := os.Stat(flag.Path); os.IsNotExist(err) {
+			_, err := os.Stat(flag.Path)
+			if os.IsNotExist(err) {
 				err := os.Mkdir(flag.Path, 0750)
 				if err != nil {
 					return nil, err

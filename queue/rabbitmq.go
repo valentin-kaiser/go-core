@@ -284,7 +284,8 @@ func (rq *RabbitMQ) Dequeue(ctx context.Context, timeout time.Duration) (*Job, e
 	}
 
 	var job Job
-	if err := json.Unmarshal(msg.Body, &job); err != nil {
+	err = json.Unmarshal(msg.Body, &job)
+	if err != nil {
 		apperror.Handle(msg.Nack(false, false), "failed to nack message")
 		return nil, apperror.Wrap(err)
 	}
@@ -323,7 +324,8 @@ func (rq *RabbitMQ) UpdateJob(_ context.Context, job *Job) error {
 
 	if job.Metadata != nil {
 		if deliveryTagStr, exists := job.Metadata["delivery_tag"]; exists {
-			if deliveryTag, err := strconv.ParseUint(deliveryTagStr, 10, 64); err == nil {
+			deliveryTag, err := strconv.ParseUint(deliveryTagStr, 10, 64)
+			if err == nil {
 				switch job.Status {
 				case StatusCompleted:
 					return rq.channel.Ack(deliveryTag, false)

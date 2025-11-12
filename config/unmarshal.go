@@ -246,7 +246,8 @@ func setFieldValue(field reflect.Value, value interface{}) error {
 			return nil
 		}
 		if str, ok := value.(string); ok {
-			if f, err := strconv.ParseFloat(str, 64); err == nil {
+			f, err := strconv.ParseFloat(str, 64)
+			if err == nil {
 				field.SetFloat(f)
 			}
 		}
@@ -257,7 +258,8 @@ func setFieldValue(field reflect.Value, value interface{}) error {
 			return nil
 		}
 		if str, ok := value.(string); ok {
-			if b, err := strconv.ParseBool(str); err == nil {
+			b, err := strconv.ParseBool(str)
+			if err == nil {
 				field.SetBool(b)
 			}
 		}

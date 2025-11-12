@@ -186,7 +186,8 @@ func (m *Manager) Start() error {
 		m.wg.Add(1)
 		go func() {
 			defer m.wg.Done()
-			if err := m.server.Start(m.ctx); err != nil {
+			err := m.server.Start(m.ctx)
+			if err != nil {
 				logger.Error().Err(err).Msg("failed to start SMTP server")
 			}
 		}()
@@ -205,13 +206,15 @@ func (m *Manager) Stop(ctx context.Context) error {
 
 	m.cancel()
 	if m.server != nil && m.server.IsRunning() {
-		if err := m.server.Stop(ctx); err != nil {
+		err := m.server.Stop(ctx)
+		if err != nil {
 			logger.Error().Err(err).Msg("failed to stop SMTP server")
 		}
 	}
 
 	if m.config.Queue.Enabled && m.queueManager != nil {
-		if err := m.queueManager.Stop(); err != nil {
+		err := m.queueManager.Stop()
+		if err != nil {
 			logger.Error().Err(err).Msg("failed to stop queue manager")
 		}
 	}
@@ -397,7 +400,8 @@ func (m *Manager) handleMailJob(ctx context.Context, job *queue.Job) error {
 
 	// Decode the message from job payload
 	var jobData map[string]interface{}
-	if err := json.Unmarshal(job.Payload, &jobData); err != nil {
+	err := json.Unmarshal(job.Payload, &jobData)
+	if err != nil {
 		return apperror.Wrap(err)
 	}
 
@@ -408,7 +412,8 @@ func (m *Manager) handleMailJob(ctx context.Context, job *queue.Job) error {
 	}
 
 	// Send the message
-	if err := m.sender.Send(ctx, message); err != nil {
+	err = m.sender.Send(ctx, message)
+	if err != nil {
 		m.incrementFailedCount()
 		return apperror.Wrap(err)
 	}

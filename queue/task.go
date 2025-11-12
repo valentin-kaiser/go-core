@@ -153,7 +153,8 @@ func (s *TaskScheduler) RegisterCronTaskWithOptions(name, cronSpec string, fn Ta
 		return apperror.NewError("task function cannot be nil")
 	}
 
-	if err := s.ValidateCronSpec(cronSpec); err != nil {
+	err := s.ValidateCronSpec(cronSpec)
+	if err != nil {
 		return apperror.NewError(fmt.Sprintf("invalid cron specification: %v", err))
 	}
 
@@ -291,7 +292,8 @@ func (s *TaskScheduler) RegisterOrRescheduleCronTaskWithOptions(name, cronSpec s
 		return apperror.NewError("task function cannot be nil")
 	}
 
-	if err := s.ValidateCronSpec(cronSpec); err != nil {
+	err := s.ValidateCronSpec(cronSpec)
+	if err != nil {
 		return apperror.NewError(fmt.Sprintf("invalid cron specification: %v", err))
 	}
 
@@ -873,7 +875,8 @@ func (s *TaskScheduler) RescheduleTaskWithCron(name, cronSpec string) error {
 		return apperror.NewError("cron specification cannot be empty")
 	}
 
-	if err := s.ValidateCronSpec(cronSpec); err != nil {
+	err := s.ValidateCronSpec(cronSpec)
+	if err != nil {
 		return apperror.NewError(fmt.Sprintf("invalid cron specification: %v", err))
 	}
 

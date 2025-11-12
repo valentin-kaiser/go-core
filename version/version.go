@@ -324,7 +324,8 @@ func Patch() int {
 	// For CalVer formats, try to return day as patch
 	parser := GetParser(DetectFormat(GitTag))
 	if parser != nil {
-		if pv, err := parser.Parse(GitTag); err == nil {
+		pv, err := parser.Parse(GitTag)
+		if err == nil {
 			if pv.Day > 0 {
 				return pv.Day
 			}

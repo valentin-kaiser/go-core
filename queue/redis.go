@@ -96,7 +96,8 @@ func (rq *RedisQueue) Dequeue(ctx context.Context, timeout time.Duration) (*Job,
 	}
 
 	var job Job
-	if err := json.Unmarshal([]byte(jobData), &job); err != nil {
+	err = json.Unmarshal([]byte(jobData), &job)
+	if err != nil {
 		return nil, apperror.Wrap(err)
 	}
 
@@ -145,7 +146,8 @@ func (rq *RedisQueue) GetJob(ctx context.Context, id string) (*Job, error) {
 	}
 
 	var job Job
-	if err := json.Unmarshal([]byte(jobData), &job); err != nil {
+	err = json.Unmarshal([]byte(jobData), &job)
+	if err != nil {
 		return nil, apperror.Wrap(err)
 	}
 
@@ -269,7 +271,8 @@ func (rq *RedisQueue) scanJobsByStatus(ctx context.Context, status Status, limit
 			}
 
 			var job Job
-			if err := json.Unmarshal([]byte(jobData), &job); err != nil {
+			unmarshalErr := json.Unmarshal([]byte(jobData), &job)
+			if unmarshalErr != nil {
 				continue
 			}
 
@@ -324,7 +327,8 @@ func (rq *RedisQueue) GetStats(ctx context.Context) (*Stats, error) {
 			}
 
 			var job Job
-			if err := json.Unmarshal([]byte(jobData), &job); err != nil {
+			unmarshalErr := json.Unmarshal([]byte(jobData), &job)
+			if unmarshalErr != nil {
 				continue
 			}
 
@@ -401,7 +405,8 @@ func (rq *RedisQueue) MoveScheduledToPending(ctx context.Context) error {
 		job.Status = StatusPending
 		job.ScheduleAt = time.Time{}
 
-		if err := rq.UpdateJob(ctx, job); err != nil {
+		updateErr := rq.UpdateJob(ctx, job)
+		if updateErr != nil {
 			continue
 		}
 	}

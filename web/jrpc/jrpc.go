@@ -192,8 +192,9 @@ func Register(s Server) *Service {
 			mt := rm.Type()
 
 			var pm proto.Message
-			if mt, err := protoregistry.GlobalTypes.FindMessageByName(md.Input().FullName()); err == nil {
-				pm = mt.New().Interface()
+			protoMsgType, err := protoregistry.GlobalTypes.FindMessageByName(md.Input().FullName())
+			if err == nil {
+				pm = protoMsgType.New().Interface()
 				service.types[md.Input().FullName()] = pm
 			} else {
 				pm = dynamicpb.NewMessage(md.Input())

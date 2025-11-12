@@ -46,7 +46,8 @@ func NewTemplateManager(config TemplateConfig) *TemplateManager {
 
 	// Load templates on initialization if filesystem is configured
 	if config.FileSystem != nil || config.TemplatesPath != "" {
-		if err := tm.ReloadTemplates(); err != nil {
+		err := tm.ReloadTemplates()
+		if err != nil {
 			tm.Error = apperror.Wrap(err)
 		}
 	}
@@ -64,7 +65,8 @@ func (tm *TemplateManager) WithFS(filesystem fs.FS) *TemplateManager {
 	tm.config.TemplatesPath = ""
 
 	// Reload templates from the new filesystem
-	if err := tm.ReloadTemplates(); err != nil {
+	err := tm.ReloadTemplates()
+	if err != nil {
 		tm.Error = apperror.Wrap(err)
 	}
 
@@ -78,7 +80,8 @@ func (tm *TemplateManager) WithFileServer(templatesPath string) *TemplateManager
 	}
 
 	if templatesPath != "" {
-		if _, err := os.Stat(templatesPath); os.IsNotExist(err) {
+		_, err := os.Stat(templatesPath)
+		if os.IsNotExist(err) {
 			tm.Error = apperror.NewError("templates path does not exist").AddDetail("path", templatesPath).AddError(err)
 			return tm
 		}
@@ -88,7 +91,8 @@ func (tm *TemplateManager) WithFileServer(templatesPath string) *TemplateManager
 	tm.config.FileSystem = nil
 
 	// Reload templates from the new path
-	if err := tm.ReloadTemplates(); err != nil {
+	err := tm.ReloadTemplates()
+	if err != nil {
 		tm.Error = apperror.Wrap(err)
 	}
 
@@ -203,7 +207,8 @@ func (tm *TemplateManager) RenderTemplate(name string, data interface{}, funcs .
 	}
 
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
+	err = tmpl.Execute(&buf, data)
+	if err != nil {
 		return "", apperror.NewError("failed to execute template").AddError(err)
 	}
 
@@ -246,7 +251,8 @@ func (tm *TemplateManager) RenderTemplateContent(content string, data interface{
 	}
 
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
+	err = tmpl.Execute(&buf, data)
+	if err != nil {
 		return "", apperror.NewError("failed to execute template content").AddError(err)
 	}
 
@@ -264,13 +270,15 @@ func (tm *TemplateManager) ReloadTemplates() error {
 
 	tm.templates = make(map[string]*template.Template)
 	if tm.config.FileSystem != nil {
-		if err := tm.loadTemplatesFromFS(tm.config.FileSystem); err != nil {
+		err := tm.loadTemplatesFromFS(tm.config.FileSystem)
+		if err != nil {
 			return apperror.Wrap(err)
 		}
 	}
 
 	if tm.config.TemplatesPath != "" {
-		if err := tm.loadTemplatesFromPath(tm.config.TemplatesPath); err != nil {
+		err := tm.loadTemplatesFromPath(tm.config.TemplatesPath)
+		if err != nil {
 			return apperror.Wrap(err)
 		}
 	}
@@ -317,7 +325,8 @@ func (tm *TemplateManager) loadTemplatesFromPath(templatesPath string) error {
 		return tm.Error
 	}
 
-	if _, err := os.Stat(templatesPath); os.IsNotExist(err) {
+	_, err := os.Stat(templatesPath)
+	if os.IsNotExist(err) {
 		return apperror.NewError("templates path does not exist").AddError(err)
 	}
 
@@ -373,8 +382,9 @@ func (tm *TemplateManager) loadTemplateFromDisk(name string) (*template.Template
 	case tm.config.TemplatesPath != "":
 		// Try to load from custom path
 		customPath := filepath.Clean(filepath.Join(tm.config.TemplatesPath, name))
-		if _, err := os.Stat(customPath); err != nil {
-			return nil, apperror.NewError("template not found in templates path").AddError(err)
+		_, statErr := os.Stat(customPath)
+		if statErr != nil {
+			return nil, apperror.NewError("template not found in templates path").AddError(statErr)
 		}
 
 		content, err = os.ReadFile(customPath)
@@ -504,7 +514,8 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 				return v.Format(format)
 			case string:
 				// Try to parse string as time
-				if t, err := time.Parse(time.RFC3339, v); err == nil {
+				t, parseErr := time.Parse(time.RFC3339, v)
+				if parseErr == nil {
 					if format == "" {
 						format = "2006-01-02 15:04:05"
 					}

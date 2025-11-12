@@ -40,13 +40,15 @@ func (s *smtpSender) Send(ctx context.Context, message *Message) error {
 	}
 
 	// Validate message
-	if err := s.validateMessage(message); err != nil {
+	err := s.validateMessage(message)
+	if err != nil {
 		return apperror.Wrap(err)
 	}
 
 	// Process template if specified
 	if s.templateManager != nil && s.templateManager.config.Enabled {
-		if err := s.processTemplate(message); err != nil {
+		err = s.processTemplate(message)
+		if err != nil {
 			return apperror.Wrap(err)
 		}
 	}
@@ -181,7 +183,8 @@ func (s *smtpSender) createEmail(message *Message) (*email.Email, error) {
 
 	// Add attachments
 	for _, attachment := range message.Attachments {
-		if err := s.addAttachment(emailMsg, attachment); err != nil {
+		err := s.addAttachment(emailMsg, attachment)
+		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
 	}

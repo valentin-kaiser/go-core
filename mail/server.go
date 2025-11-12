@@ -247,7 +247,8 @@ func (s *smtpServer) Stop(ctx context.Context) error {
 	// Close SMTP server
 	s.mutex.Lock()
 	if s.listener != nil {
-		if err := s.listener.Close(); err != nil {
+		err := s.listener.Close()
+		if err != nil {
 			logger.Error().Err(err).Msg("failed to close SMTP server")
 			s.mutex.Unlock()
 			return apperror.Wrap(err)
@@ -294,8 +295,10 @@ func (s *smtpServer) loadTLSConfig() (*tls.Config, error) {
 
 	// Try to load existing certificates
 	if s.config.CertFile != "" && s.config.KeyFile != "" {
-		if _, err := os.Stat(s.config.CertFile); err == nil {
-			if _, err := os.Stat(s.config.KeyFile); err == nil {
+		_, certErr := os.Stat(s.config.CertFile)
+		if certErr == nil {
+			_, keyErr := os.Stat(s.config.KeyFile)
+			if keyErr == nil {
 				cert, err := tls.LoadX509KeyPair(s.config.CertFile, s.config.KeyFile)
 				if err == nil {
 					tlsConfig.Certificates = []tls.Certificate{cert}
@@ -348,28 +351,33 @@ func (s *smtpServer) generateSelfSignedCert() (tls.Certificate, error) {
 
 	// Encode certificate
 	certPEM := &bytes.Buffer{}
-	if err := pem.Encode(certPEM, &pem.Block{Type: "CERTIFICATE", Bytes: certDER}); err != nil {
+	err = pem.Encode(certPEM, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
+	if err != nil {
 		return tls.Certificate{}, apperror.NewError("failed to encode certificate").AddError(err)
 	}
 
 	// Encode private key
 	keyPEM := &bytes.Buffer{}
-	if err := pem.Encode(keyPEM, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)}); err != nil {
+	err = pem.Encode(keyPEM, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
+	if err != nil {
 		return tls.Certificate{}, apperror.NewError("failed to encode private key").AddError(err)
 	}
 
 	// Save certificates if paths are specified
 	if s.config.CertFile != "" && s.config.KeyFile != "" {
-		if err := os.MkdirAll(filepath.Dir(s.config.CertFile), 0750); err != nil {
+		err = os.MkdirAll(filepath.Dir(s.config.CertFile), 0750)
+		if err != nil {
 			logger.Warn().Err(err).Msg("failed to create certificate directory")
 			goto createTLS
 		}
 
-		if err := os.WriteFile(s.config.CertFile, certPEM.Bytes(), 0600); err != nil {
+		err = os.WriteFile(s.config.CertFile, certPEM.Bytes(), 0600)
+		if err != nil {
 			logger.Warn().Err(err).Msg("failed to save certificate file")
 		}
 
-		if err := os.WriteFile(s.config.KeyFile, keyPEM.Bytes(), 0600); err != nil {
+		err = os.WriteFile(s.config.KeyFile, keyPEM.Bytes(), 0600)
+		if err != nil {
 			logger.Warn().Err(err).Msg("failed to save key file")
 		}
 	}
@@ -443,9 +451,10 @@ func (s *smtpServer) startWorkerPool() {
 				select {
 				case task := <-s.handlerQueue:
 					// Process the handler task
-					if err := task.handler(task.ctx, task.from, task.to, task.data); err != nil {
+					handlerErr := task.handler(task.ctx, task.from, task.to, task.data)
+					if handlerErr != nil {
 						logger.Error().
-							Err(err).
+							Err(handlerErr).
 							Field("from", task.from).
 							Field("to", task.to).
 							Field("worker_id", workerID).
@@ -480,7 +489,8 @@ func (s *session) validateHeloIfNeeded() error {
 	// The internal SMTP implementation stores this in the connection's Hostname() method
 	hostname := s.conn.Hostname()
 
-	if err := s.server.security.ValidateHelo(hostname, s.remoteAddr); err != nil {
+	err := s.server.security.ValidateHelo(hostname, s.remoteAddr)
+	if err != nil {
 		logger.Warn().
 			Field("remote_addr", s.remoteAddr).
 			Field("hostname", hostname).
@@ -496,12 +506,14 @@ func (s *session) validateHeloIfNeeded() error {
 // AuthPlain handles PLAIN authentication
 func (s *session) AuthPlain(username, password string) error {
 	// Validate HELO first if needed
-	if err := s.validateHeloIfNeeded(); err != nil {
+	err := s.validateHeloIfNeeded()
+	if err != nil {
 		return err
 	}
 
 	// Check rate limiting first
-	if err := s.server.security.CheckRateLimit(s.remoteAddr); err != nil {
+	err = s.server.security.CheckRateLimit(s.remoteAddr)
+	if err != nil {
 		logger.Warn().
 			Field("remote_addr", s.remoteAddr).
 			Field("username", username).
@@ -537,12 +549,14 @@ func (s *session) AuthPlain(username, password string) error {
 // Mail handles the MAIL FROM command
 func (s *session) Mail(from string, _ *Options) error {
 	// Validate HELO first if needed
-	if err := s.validateHeloIfNeeded(); err != nil {
+	err := s.validateHeloIfNeeded()
+	if err != nil {
 		return err
 	}
 
 	// Check rate limiting
-	if err := s.server.security.CheckRateLimit(s.remoteAddr); err != nil {
+	err = s.server.security.CheckRateLimit(s.remoteAddr)
+	if err != nil {
 		logger.Warn().
 			Field("remote_addr", s.remoteAddr).
 			Field("from", from).
@@ -563,12 +577,14 @@ func (s *session) Mail(from string, _ *Options) error {
 // Rcpt handles the RCPT TO command
 func (s *session) Rcpt(to string, _ *RcptOptions) error {
 	// Validate HELO first if needed
-	if err := s.validateHeloIfNeeded(); err != nil {
+	err := s.validateHeloIfNeeded()
+	if err != nil {
 		return err
 	}
 
 	// Check rate limiting
-	if err := s.server.security.CheckRateLimit(s.remoteAddr); err != nil {
+	err = s.server.security.CheckRateLimit(s.remoteAddr)
+	if err != nil {
 		logger.Warn().
 			Field("remote_addr", s.remoteAddr).
 			Field("to", to).
@@ -588,7 +604,8 @@ func (s *session) Rcpt(to string, _ *RcptOptions) error {
 // Data handles the email data
 func (s *session) Data(r io.Reader) error {
 	// Validate HELO first if needed
-	if err := s.validateHeloIfNeeded(); err != nil {
+	err := s.validateHeloIfNeeded()
+	if err != nil {
 		return err
 	}
 
@@ -688,7 +705,8 @@ func (s *smtpServer) Serve(listener net.Listener) error {
 // handleConnection handles a single SMTP connection
 func (s *smtpServer) handleConnection(netConn net.Conn) {
 	defer func() {
-		if err := netConn.Close(); err != nil {
+		err := netConn.Close()
+		if err != nil {
 			// Check if this is a normal connection close/reset
 			if isConnectionClosed(err) {
 				logger.Trace().Err(err).Msg("connection closed")
@@ -700,7 +718,8 @@ func (s *smtpServer) handleConnection(netConn net.Conn) {
 
 	// Set timeouts
 	if s.config.ReadTimeout > 0 {
-		if err := netConn.SetReadDeadline(time.Now().Add(s.config.ReadTimeout)); err != nil {
+		err := netConn.SetReadDeadline(time.Now().Add(s.config.ReadTimeout))
+		if err != nil {
 			if isConnectionClosed(err) {
 				logger.Trace().Err(err).Msg("connection closed while setting read deadline")
 				return
@@ -710,7 +729,8 @@ func (s *smtpServer) handleConnection(netConn net.Conn) {
 		}
 	}
 	if s.config.WriteTimeout > 0 {
-		if err := netConn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout)); err != nil {
+		err := netConn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
+		if err != nil {
 			if isConnectionClosed(err) {
 				logger.Trace().Err(err).Msg("connection closed while setting write deadline")
 				return
@@ -748,7 +768,8 @@ func (s *smtpServer) NewSession(conn *Conn) (Session, error) {
 		Msg("new SMTP session")
 
 	// Validate connection using security manager
-	if err := s.security.ValidateConnection(remoteAddr); err != nil {
+	err := s.security.ValidateConnection(remoteAddr)
+	if err != nil {
 		logger.Warn().
 			Field("remote_addr", remoteAddr).
 			Err(err).
@@ -768,7 +789,8 @@ func (s *smtpServer) handleCommands(conn *Conn, session Session) {
 	for {
 		// Update read deadline
 		if s.config.ReadTimeout > 0 {
-			if err := conn.SetReadDeadline(time.Now().Add(s.config.ReadTimeout)); err != nil {
+			err := conn.SetReadDeadline(time.Now().Add(s.config.ReadTimeout))
+			if err != nil {
 				if isConnectionClosed(err) {
 					logger.Trace().Err(err).Field("remote_addr", conn.RemoteAddr()).Msg("connection closed while updating read deadline")
 					return
@@ -779,13 +801,14 @@ func (s *smtpServer) handleCommands(conn *Conn, session Session) {
 		}
 
 		if !conn.scanner.Scan() {
-			if err := conn.scanner.Err(); err != nil {
+			scanErr := conn.scanner.Err()
+			if scanErr != nil {
 				// Check if this is a normal connection close/reset
-				if isConnectionClosed(err) {
-					logger.Trace().Err(err).Field("remote_addr", conn.RemoteAddr()).Msg("connection closed")
+				if isConnectionClosed(scanErr) {
+					logger.Trace().Err(scanErr).Field("remote_addr", conn.RemoteAddr()).Msg("connection closed")
 					return
 				}
-				logger.Error().Err(err).Field("remote_addr", conn.RemoteAddr()).Msg("connection read error")
+				logger.Error().Err(scanErr).Field("remote_addr", conn.RemoteAddr()).Msg("connection read error")
 			}
 			return
 		}
@@ -855,7 +878,8 @@ func (s *smtpServer) writeMultiResponse(conn *Conn, code int, messages []string)
 // writeRaw writes raw data to the connection
 func (s *smtpServer) writeRaw(conn *Conn, data string) {
 	if s.config.WriteTimeout > 0 {
-		if err := conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout)); err != nil {
+		err := conn.SetWriteDeadline(time.Now().Add(s.config.WriteTimeout))
+		if err != nil {
 			if isConnectionClosed(err) {
 				logger.Trace().Err(err).Msg("connection closed while setting write deadline")
 				return
@@ -970,7 +994,8 @@ func (s *smtpServer) handleStartTLS(conn *Conn) {
 
 	// Upgrade connection to TLS
 	tlsConn := tls.Server(conn, tlsConfig)
-	if err := tlsConn.Handshake(); err != nil {
+	err = tlsConn.Handshake()
+	if err != nil {
 		logger.Error().Err(err).Msg("TLS handshake failed")
 		return
 	}
@@ -1029,7 +1054,8 @@ func (s *smtpServer) handleAuthPlain(conn *Conn, session Session, parts []string
 		username, password = decoded[0], decoded[1]
 	}
 
-	if err := session.AuthPlain(username, password); err != nil {
+	err := session.AuthPlain(username, password)
+	if err != nil {
 		switch {
 		case errors.Is(err, ErrAuthFailed):
 			s.writeResponse(conn, StatusAuthFailed, "Authentication failed")
@@ -1075,7 +1101,8 @@ func (s *smtpServer) handleMail(conn *Conn, session Session, args string) {
 	from = strings.Trim(from, "<>")
 
 	opts := &Options{}
-	if err := session.Mail(from, opts); err != nil {
+	err := session.Mail(from, opts)
+	if err != nil {
 		if errors.Is(err, ErrAuthRequired) {
 			s.writeResponse(conn, StatusAuthRequired, "Authentication required")
 		} else {
@@ -1098,7 +1125,8 @@ func (s *smtpServer) handleRcpt(conn *Conn, session Session, args string) {
 	to = strings.Trim(to, "<>")
 
 	opts := &RcptOptions{}
-	if err := session.Rcpt(to, opts); err != nil {
+	err := session.Rcpt(to, opts)
+	if err != nil {
 		if errors.Is(err, ErrAuthRequired) {
 			s.writeResponse(conn, StatusAuthRequired, "Authentication required")
 		} else {
@@ -1133,7 +1161,8 @@ func (s *smtpServer) handleData(conn *Conn, session Session) {
 		data.WriteString("\r\n")
 	}
 
-	if err := session.Data(strings.NewReader(data.String())); err != nil {
+	err := session.Data(strings.NewReader(data.String()))
+	if err != nil {
 		if errors.Is(err, ErrAuthRequired) {
 			s.writeResponse(conn, StatusAuthRequired, "Authentication required")
 		} else {
