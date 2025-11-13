@@ -73,6 +73,15 @@ func Catch() {
 			caller = fmt.Sprintf("%s/%s", filepath.Base(filepath.Dir(file)), strings.Trim(filepath.Base(file), filepath.Ext(file)))
 		}
 
+		if !logger.Enabled() {
+			if flag.Debug {
+				fmt.Fprintf(os.Stderr, "%v code: %v => %v \n %v", caller, line, err, string(debug.Stack()))
+				return
+			}
+			fmt.Fprintf(os.Stderr, "%v code: %v => %v", caller, line, err)
+			return
+		}
+
 		if flag.Debug {
 			logger.Error().Msgf("%v code: %v => %v \n %v", caller, line, err, string(debug.Stack()))
 			return
@@ -108,7 +117,8 @@ func OnSignal(handlers []func() error, signals ...os.Signal) context.Context {
 		for _, handler := range handlers {
 			func() {
 				defer Catch()
-				if err := handler(); err != nil {
+				err := handler()
+				if err != nil {
 					logger.Error().Err(err).Msgf("handler failed")
 				}
 			}()

@@ -2,6 +2,7 @@ package mail
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io/fs"
@@ -32,9 +33,21 @@ func NewTemplateManager(config TemplateConfig) *TemplateManager {
 		templates: make(map[string]*template.Template),
 	}
 
+	// Add global functions if provided
+	if config.GlobalFuncs != nil {
+		for key, fn := range config.GlobalFuncs {
+			tm.WithTemplateFunc(key, fn)
+		}
+	}
+
+	if config.WithDefaultFuncs {
+		tm.WithDefaultFuncs()
+	}
+
 	// Load templates on initialization if filesystem is configured
 	if config.FileSystem != nil || config.TemplatesPath != "" {
-		if err := tm.ReloadTemplates(); err != nil {
+		err := tm.ReloadTemplates()
+		if err != nil {
 			tm.Error = apperror.Wrap(err)
 		}
 	}
@@ -52,7 +65,8 @@ func (tm *TemplateManager) WithFS(filesystem fs.FS) *TemplateManager {
 	tm.config.TemplatesPath = ""
 
 	// Reload templates from the new filesystem
-	if err := tm.ReloadTemplates(); err != nil {
+	err := tm.ReloadTemplates()
+	if err != nil {
 		tm.Error = apperror.Wrap(err)
 	}
 
@@ -66,7 +80,8 @@ func (tm *TemplateManager) WithFileServer(templatesPath string) *TemplateManager
 	}
 
 	if templatesPath != "" {
-		if _, err := os.Stat(templatesPath); os.IsNotExist(err) {
+		_, err := os.Stat(templatesPath)
+		if os.IsNotExist(err) {
 			tm.Error = apperror.NewError("templates path does not exist").AddDetail("path", templatesPath).AddError(err)
 			return tm
 		}
@@ -76,7 +91,8 @@ func (tm *TemplateManager) WithFileServer(templatesPath string) *TemplateManager
 	tm.config.FileSystem = nil
 
 	// Reload templates from the new path
-	if err := tm.ReloadTemplates(); err != nil {
+	err := tm.ReloadTemplates()
+	if err != nil {
 		tm.Error = apperror.Wrap(err)
 	}
 
@@ -134,27 +150,35 @@ func (tm *TemplateManager) RenderTemplate(name string, data interface{}, funcs .
 	}
 
 	// Load template content from source
-	var content []byte
-	var err error
+	content, err := func() ([]byte, error) {
+		path := filepath.Clean(name)
+		// Try reading from TemplatesPath first
+		if tm.config.TemplatesPath != "" {
+			customPath := filepath.Join(tm.config.TemplatesPath, path)
+			_, err := os.Stat(customPath)
+			if err == nil {
+				content, err := os.ReadFile(filepath.Clean(customPath))
+				if err != nil {
+					return nil, apperror.NewError("failed to read template file from TemplatesPath").AddError(err)
+				}
+				return content, nil
+			}
+		}
 
-	switch {
-	case tm.config.FileSystem != nil:
-		content, err = fs.ReadFile(tm.config.FileSystem, name)
-		if err != nil {
-			return "", apperror.NewError("template not found in filesystem").AddError(err)
-		}
-	case tm.config.TemplatesPath != "":
-		customPath := filepath.Clean(filepath.Join(tm.config.TemplatesPath, name))
-		if _, err := os.Stat(customPath); err != nil {
-			return "", apperror.NewError("template not found in templates path").AddError(err)
+		// Fallback to FileSystem if configured
+		if tm.config.FileSystem != nil {
+			content, err := fs.ReadFile(tm.config.FileSystem, path)
+			if err != nil {
+				return nil, apperror.NewError("failed to read template file from FileSystem").AddError(err)
+			}
+			return content, nil
 		}
 
-		content, err = os.ReadFile(customPath)
-		if err != nil {
-			return "", apperror.NewError("failed to read template file").AddError(err)
-		}
-	default:
-		return "", apperror.NewError("no template source configured - use WithFS or WithFileServer")
+		// Neither TemplatesPath nor FileSystem configured
+		return nil, apperror.NewError("no template source configured")
+	}()
+	if err != nil {
+		return "", apperror.Wrap(err)
 	}
 
 	// Build function map: start with global functions, then apply custom functions
@@ -183,8 +207,53 @@ func (tm *TemplateManager) RenderTemplate(name string, data interface{}, funcs .
 	}
 
 	var buf bytes.Buffer
-	if err := tmpl.Execute(&buf, data); err != nil {
+	err = tmpl.Execute(&buf, data)
+	if err != nil {
 		return "", apperror.NewError("failed to execute template").AddError(err)
+	}
+
+	return buf.String(), nil
+}
+
+// RenderTemplateContent renders template content directly with the given data and optional custom functions
+func (tm *TemplateManager) RenderTemplateContent(content string, data interface{}, funcs ...template.FuncMap) (string, error) {
+	if tm.Error != nil {
+		return "", tm.Error
+	}
+
+	if content == "" {
+		return "", apperror.NewError("template content cannot be empty")
+	}
+
+	// Build function map: start with global functions, then apply custom functions
+	funcMap := make(template.FuncMap)
+
+	// Thread-safe access to global functions
+	tm.mutex.RLock()
+	if tm.funcs != nil {
+		for key, fn := range tm.funcs {
+			funcMap[key] = fn
+		}
+	}
+	tm.mutex.RUnlock()
+
+	// Apply custom functions (later ones override earlier ones)
+	for _, customFunc := range funcs {
+		for key, fn := range customFunc {
+			funcMap[key] = fn
+		}
+	}
+
+	// Parse and execute template
+	tmpl, err := template.New("inline-template").Funcs(funcMap).Parse(content)
+	if err != nil {
+		return "", apperror.NewError("failed to parse template content").AddError(err)
+	}
+
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, data)
+	if err != nil {
+		return "", apperror.NewError("failed to execute template content").AddError(err)
 	}
 
 	return buf.String(), nil
@@ -201,13 +270,15 @@ func (tm *TemplateManager) ReloadTemplates() error {
 
 	tm.templates = make(map[string]*template.Template)
 	if tm.config.FileSystem != nil {
-		if err := tm.loadTemplatesFromFS(tm.config.FileSystem); err != nil {
+		err := tm.loadTemplatesFromFS(tm.config.FileSystem)
+		if err != nil {
 			return apperror.Wrap(err)
 		}
 	}
 
 	if tm.config.TemplatesPath != "" {
-		if err := tm.loadTemplatesFromPath(tm.config.TemplatesPath); err != nil {
+		err := tm.loadTemplatesFromPath(tm.config.TemplatesPath)
+		if err != nil {
 			return apperror.Wrap(err)
 		}
 	}
@@ -254,7 +325,8 @@ func (tm *TemplateManager) loadTemplatesFromPath(templatesPath string) error {
 		return tm.Error
 	}
 
-	if _, err := os.Stat(templatesPath); os.IsNotExist(err) {
+	_, err := os.Stat(templatesPath)
+	if os.IsNotExist(err) {
 		return apperror.NewError("templates path does not exist").AddError(err)
 	}
 
@@ -310,8 +382,9 @@ func (tm *TemplateManager) loadTemplateFromDisk(name string) (*template.Template
 	case tm.config.TemplatesPath != "":
 		// Try to load from custom path
 		customPath := filepath.Clean(filepath.Join(tm.config.TemplatesPath, name))
-		if _, err := os.Stat(customPath); err != nil {
-			return nil, apperror.NewError("template not found in templates path").AddError(err)
+		_, statErr := os.Stat(customPath)
+		if statErr != nil {
+			return nil, apperror.NewError("template not found in templates path").AddError(statErr)
 		}
 
 		content, err = os.ReadFile(customPath)
@@ -395,19 +468,13 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 
 			return cases.Title(lang, cases.NoLower).String(s)
 		},
-		"trim": strings.TrimSpace,
-		"replace": func(old, replacement, s string) string {
-			return strings.ReplaceAll(s, old, replacement)
-		},
+		"trim":      strings.TrimSpace,
+		"replace":   strings.ReplaceAll,
 		"contains":  strings.Contains,
 		"hasPrefix": strings.HasPrefix,
 		"hasSuffix": strings.HasSuffix,
-		"join": func(sep string, elems []string) string {
-			return strings.Join(elems, sep)
-		},
-		"split": func(sep, s string) []string {
-			return strings.Split(s, sep)
-		},
+		"join":      strings.Join,
+		"split":     strings.Split,
 		"default": func(defaultValue, value interface{}) interface{} {
 			if value == nil || value == "" {
 				return defaultValue
@@ -428,6 +495,7 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 			}
 			return dict
 		},
+		"now": time.Now,
 		"date": func(format string, date interface{}) string {
 			// Handle different date types and formats
 			switch v := date.(type) {
@@ -446,7 +514,8 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 				return v.Format(format)
 			case string:
 				// Try to parse string as time
-				if t, err := time.Parse(time.RFC3339, v); err == nil {
+				t, parseErr := time.Parse(time.RFC3339, v)
+				if parseErr == nil {
 					if format == "" {
 						format = "2006-01-02 15:04:05"
 					}
@@ -457,6 +526,20 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 				return fmt.Sprintf("%v", date)
 			}
 		},
+		"unix": func(t int64, nsec int) time.Time {
+			return time.Unix(t, int64(nsec))
+		},
+		"unmarshal": func(object string) (interface{}, error) {
+			var data map[string]interface{}
+			err := json.Unmarshal([]byte(object), &data)
+			return data, err
+		},
+		"marshal": func(v interface{}) (string, error) {
+			bytes, err := json.Marshal(v)
+			return string(bytes), err
+		},
+		"print":  fmt.Sprint,
+		"printf": fmt.Sprintf,
 	}
 
 	tm.mutex.Lock()
@@ -466,6 +549,5 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 			tm.funcs[key] = fn
 		}
 	}
-
 	return tm
 }

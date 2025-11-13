@@ -54,8 +54,9 @@ func NewSecurityManager(config SecurityConfig) *SecurityManager {
 
 	// Parse IP allowlist
 	for _, ipStr := range config.IPAllowlist {
-		if _, network, err := net.ParseCIDR(ipStr); err == nil {
-			sm.allowedNetworks = append(sm.allowedNetworks, network)
+		_, parsedNetwork, parseErr := net.ParseCIDR(ipStr)
+		if parseErr == nil {
+			sm.allowedNetworks = append(sm.allowedNetworks, parsedNetwork)
 			continue
 		}
 
@@ -75,8 +76,9 @@ func NewSecurityManager(config SecurityConfig) *SecurityManager {
 
 	// Parse IP blocklist
 	for _, ipStr := range config.IPBlocklist {
-		if _, network, err := net.ParseCIDR(ipStr); err == nil {
-			sm.blockedNetworks = append(sm.blockedNetworks, network)
+		_, blockNetwork, blockErr := net.ParseCIDR(ipStr)
+		if blockErr == nil {
+			sm.blockedNetworks = append(sm.blockedNetworks, blockNetwork)
 			continue
 		}
 
@@ -210,9 +212,10 @@ func (sm *SecurityManager) ValidateHelo(hostname, remoteAddr string) error {
 		defer cancel()
 
 		// Try to resolve the hostname
-		if _, err := net.DefaultResolver.LookupIPAddr(ctx, hostname); err != nil {
+		_, lookupErr := net.DefaultResolver.LookupIPAddr(ctx, hostname)
+		if lookupErr != nil {
 			if sm.config.LogSecurityEvents {
-				logger.Warn().Field("ip", host).Field("hostname", hostname).Err(err).Msg("DNS resolution failed for HELO hostname")
+				logger.Warn().Field("ip", host).Field("hostname", hostname).Err(lookupErr).Msg("DNS resolution failed for HELO hostname")
 			}
 			return &SecurityError{Type: "dns_resolution_failed", Message: "HELO hostname cannot be resolved"}
 		}

@@ -81,13 +81,23 @@ func (l *logger) Init(logname string, loglevel zerolog.Level) {
 	}
 
 	zerolog.SetGlobalLevel(loglevel)
-	log.Logger = log.Output(io.MultiWriter(l.outputs...))
+
+	if len(l.outputs) == 0 {
+		if Interactive() {
+			l.outputs = append(l.outputs, zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
+		}
+	}
+
+	log.Logger = log.Output(newMultiWriter(l.outputs...))
 }
 
 // WithConsole adds a console writer to the logger outputs.
 // It uses the zerolog.ConsoleWriter to format the log output for the console.
 func (l *logger) WithConsole() *logger {
-	l.outputs = append(l.outputs, zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
+	// Add console output when running in interactive mode
+	if Interactive() {
+		l.outputs = append(l.outputs, zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
+	}
 	return l
 }
 
@@ -111,9 +121,18 @@ func (l *logger) With(writers ...io.Writer) *logger {
 	return l
 }
 
+// WithStream adds a StreamWriter to the logger outputs and returns both the logger and the StreamWriter.
+// This allows real-time streaming of log entries to listeners.
+func (l *logger) WithStream(bufferMax int) (*logger, *StreamWriter) {
+	streamWriter := NewStreamWriter(bufferMax)
+	l.outputs = append(l.outputs, streamWriter)
+	return l, streamWriter
+}
+
 // Stop closes the log file.
 // It should be called when the application is shutting down to ensure that all log entries are flushed to the file.
 func (l *logger) Stop() {
+	l.Flush()
 	if l.file == nil {
 		return
 	}
@@ -121,6 +140,22 @@ func (l *logger) Stop() {
 	err := l.file.Close()
 	if err != nil {
 		log.Error().Err(err).Msgf("failed to close log file")
+	}
+}
+
+// Flush ensures all outputs are properly flushed.
+// This is particularly important when running as a service to ensure logs are written.
+func (l *logger) Flush() {
+	for _, output := range l.outputs {
+		if flusher, ok := output.(interface{ Flush() error }); ok {
+			_ = flusher.Flush()
+		}
+		if syncer, ok := output.(interface{ Sync() error }); ok {
+			_ = syncer.Sync()
+		}
+	}
+	if l.file != nil {
+		_, _ = l.file.Write([]byte{})
 	}
 }
 

@@ -88,6 +88,11 @@ func PrintHelp() {
 	pflag.PrintDefaults()
 }
 
+// Arguments returns the non-flag command-line arguments
+func Arguments() []string {
+	return pflag.Args()
+}
+
 // Register registers a new flag with the given name, value and usage
 // It panics if the flag is already registered or if the value is not a pointer
 func Register(name string, value interface{}, usage string) {

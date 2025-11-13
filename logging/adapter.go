@@ -73,6 +73,10 @@ type Adapter interface {
 
 	// Package-specific logger
 	WithPackage(pkg string) Adapter
+
+	// Enabled returns true if logging is enabled for this adapter, false otherwise.
+	// This can be used to skip expensive log message construction when logging is disabled.
+	Enabled() bool
 }
 
 // Field represents a structured log field

@@ -100,8 +100,8 @@ package mail
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
-	"io/fs"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -168,7 +168,7 @@ func NewManager(config *Config, queueManager *queue.Manager) *Manager {
 }
 
 // Start starts the mail manager
-func (m *Manager) Start(_ context.Context) error {
+func (m *Manager) Start() error {
 	if !atomic.CompareAndSwapInt32(&m.running, 0, 1) {
 		return apperror.NewError("mail manager is already running")
 	}
@@ -186,7 +186,8 @@ func (m *Manager) Start(_ context.Context) error {
 		m.wg.Add(1)
 		go func() {
 			defer m.wg.Done()
-			if err := m.server.Start(m.ctx); err != nil {
+			err := m.server.Start(m.ctx)
+			if err != nil {
 				logger.Error().Err(err).Msg("failed to start SMTP server")
 			}
 		}()
@@ -205,13 +206,15 @@ func (m *Manager) Stop(ctx context.Context) error {
 
 	m.cancel()
 	if m.server != nil && m.server.IsRunning() {
-		if err := m.server.Stop(ctx); err != nil {
+		err := m.server.Stop(ctx)
+		if err != nil {
 			logger.Error().Err(err).Msg("failed to stop SMTP server")
 		}
 	}
 
 	if m.config.Queue.Enabled && m.queueManager != nil {
-		if err := m.queueManager.Stop(); err != nil {
+		err := m.queueManager.Stop()
+		if err != nil {
 			logger.Error().Err(err).Msg("failed to stop queue manager")
 		}
 	}
@@ -310,6 +313,7 @@ func (m *Manager) SendAsync(ctx context.Context, message *Message) error {
 	}
 
 	job := queue.NewJob("mail").
+		WithID(message.ID).
 		WithPayload(jobData).
 		WithPriority(queue.Priority(message.Priority)).
 		WithMaxAttempts(m.config.Queue.MaxAttempts)
@@ -396,15 +400,20 @@ func (m *Manager) handleMailJob(ctx context.Context, job *queue.Job) error {
 
 	// Decode the message from job payload
 	var jobData map[string]interface{}
-	if err := json.Unmarshal(job.Payload, &jobData); err != nil {
+	err := json.Unmarshal(job.Payload, &jobData)
+	if err != nil {
 		return apperror.Wrap(err)
 	}
 
 	// Convert job data back to message
-	message := m.jobDataToMessage(jobData)
+	message, err := m.jobDataToMessage(jobData)
+	if err != nil {
+		return apperror.Wrap(err)
+	}
 
 	// Send the message
-	if err := m.sender.Send(ctx, message); err != nil {
+	err = m.sender.Send(ctx, message)
+	if err != nil {
 		m.incrementFailedCount()
 		return apperror.Wrap(err)
 	}
@@ -483,49 +492,62 @@ func (m *Manager) updateLastReceived() {
 }
 
 // jobDataToMessage converts job data back to a Message
-func (m *Manager) jobDataToMessage(jobData map[string]interface{}) *Message {
+func (m *Manager) jobDataToMessage(jobData map[string]interface{}) (*Message, error) {
 	message := &Message{}
 
-	if id, ok := jobData["id"].(string); ok {
+	id, ok := jobData["id"].(string)
+	if ok {
 		message.ID = id
 	}
-	if from, ok := jobData["from"].(string); ok {
+	from, ok := jobData["from"].(string)
+	if ok {
 		message.From = from
 	}
-	if to := jobData["to"]; to != nil {
+	to, ok := jobData["to"]
+	if ok {
 		message.To = convertToStringSlice(to)
 	}
-	if cc := jobData["cc"]; cc != nil {
+	cc, ok := jobData["cc"]
+	if ok {
 		message.CC = convertToStringSlice(cc)
 	}
-	if bcc := jobData["bcc"]; bcc != nil {
+	bcc, ok := jobData["bcc"]
+	if ok {
 		message.BCC = convertToStringSlice(bcc)
 	}
-	if replyTo, ok := jobData["reply_to"].(string); ok {
+	replyTo, ok := jobData["reply_to"].(string)
+	if ok {
 		message.ReplyTo = replyTo
 	}
-	if subject, ok := jobData["subject"].(string); ok {
+	subject, ok := jobData["subject"].(string)
+	if ok {
 		message.Subject = subject
 	}
-	if textBody, ok := jobData["text_body"].(string); ok {
+	textBody, ok := jobData["text_body"].(string)
+	if ok {
 		message.TextBody = textBody
 	}
-	if htmlBody, ok := jobData["html_body"].(string); ok {
+	htmlBody, ok := jobData["html_body"].(string)
+	if ok {
 		message.HTMLBody = htmlBody
 	}
-	if template, ok := jobData["template"].(string); ok {
+	template, ok := jobData["template"].(string)
+	if ok {
 		message.Template = template
 	}
-	if templateData, ok := jobData["template_data"]; ok {
+	templateData, ok := jobData["template_data"]
+	if ok {
 		message.TemplateData = templateData
 	}
-	if priority, ok := jobData["priority"].(float64); ok {
+	priority, ok := jobData["priority"].(float64)
+	if ok {
 		message.Priority = Priority(int(priority))
 	}
 	if headers, ok := jobData["headers"].(map[string]interface{}); ok {
 		message.Headers = make(map[string]string)
 		for k, v := range headers {
-			if s, ok := v.(string); ok {
+			s, ok := v.(string)
+			if ok {
 				message.Headers[k] = s
 			}
 		}
@@ -533,63 +555,65 @@ func (m *Manager) jobDataToMessage(jobData map[string]interface{}) *Message {
 	if metadata, ok := jobData["metadata"].(map[string]interface{}); ok {
 		message.Metadata = make(map[string]string)
 		for k, v := range metadata {
-			if s, ok := v.(string); ok {
+			s, ok := v.(string)
+			if ok {
 				message.Metadata[k] = s
 			}
 		}
 	}
 	if createdAt, ok := jobData["created_at"].(string); ok {
-		if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
-			message.CreatedAt = t
+		t, err := time.Parse(time.RFC3339, createdAt)
+		if err != nil {
+			return nil, apperror.NewError("invalid created_at format").AddError(err)
 		}
+		message.CreatedAt = t
 	}
 	if scheduleAt, ok := jobData["schedule_at"].(string); ok && scheduleAt != "" {
-		if t, err := time.Parse(time.RFC3339, scheduleAt); err == nil {
-			message.ScheduleAt = &t
+		t, err := time.Parse(time.RFC3339, scheduleAt)
+		if err != nil {
+			return nil, apperror.NewError("invalid schedule_at format").AddError(err)
+		}
+		message.ScheduleAt = &t
+	}
+	if attachments, ok := jobData["attachments"].([]interface{}); ok {
+		message.Attachments = make([]Attachment, 0, len(attachments))
+		for _, att := range attachments {
+			if attMap, ok := att.(map[string]interface{}); ok {
+				attachment := Attachment{}
+				filename, ok := attMap["filename"].(string)
+				if ok {
+					attachment.Filename = filename
+				}
+				contentType, ok := attMap["content_type"].(string)
+				if ok {
+					attachment.ContentType = contentType
+				}
+				content, ok := attMap["content"].(string)
+				if ok {
+					decoded, err := base64.StdEncoding.DecodeString(content)
+					if err != nil {
+						return nil, apperror.NewError("failed to decode attachment content").AddError(err)
+					}
+					attachment.Content = decoded
+				}
+				size, ok := attMap["size"].(float64)
+				if ok {
+					attachment.Size = int64(size)
+				}
+				inline, ok := attMap["inline"].(bool)
+				if ok {
+					attachment.Inline = inline
+				}
+				contentID, ok := attMap["content_id"].(string)
+				if ok {
+					attachment.ContentID = contentID
+				}
+				message.Attachments = append(message.Attachments, attachment)
+			}
 		}
 	}
 
-	return message
-}
-
-// WithFS configures the template manager to load templates from a filesystem
-func (m *Manager) WithFS(filesystem fs.FS) *Manager {
-	if m.TemplateManager != nil {
-		m.TemplateManager.WithFS(filesystem)
-	}
-	return m
-}
-
-// WithFileServer configures the template manager to load templates from a file path
-func (m *Manager) WithFileServer(templatesPath string) *Manager {
-	if m.TemplateManager != nil {
-		m.TemplateManager.WithFileServer(templatesPath)
-	}
-	return m
-}
-
-// WithTemplateFunc adds a template function to the template manager
-func (m *Manager) WithTemplateFunc(key string, fn interface{}) *Manager {
-	if m.TemplateManager != nil {
-		m.TemplateManager.WithTemplateFunc(key, fn)
-	}
-	return m
-}
-
-// WithDefaultFuncs adds default template functions to the template manager
-func (m *Manager) WithDefaultFuncs() *Manager {
-	if m.TemplateManager != nil {
-		m.TemplateManager.WithDefaultFuncs()
-	}
-	return m
-}
-
-// ReloadTemplates reloads all templates
-func (m *Manager) ReloadTemplates() error {
-	if m.TemplateManager != nil {
-		return m.TemplateManager.ReloadTemplates()
-	}
-	return apperror.NewError("template manager is not initialized")
+	return message, nil
 }
 
 // convertToStringSlice safely converts various types to []string

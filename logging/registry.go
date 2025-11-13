@@ -106,6 +106,11 @@ func (d *DynamicAdapter) WithPackage(pkg string) Adapter {
 	return d.current().WithPackage(pkg)
 }
 
+// Enabled returns whether logging is enabled for the current active adapter.
+func (d *DynamicAdapter) Enabled() bool {
+	return d.current().Enabled()
+}
+
 // Debug sets whether to use caller tracking
 func Debug(d bool) {
 	debug = d

@@ -179,7 +179,8 @@ func (bm *BatchManager) CreateBatch(ctx context.Context, name string, jobs []*Jo
 		}
 		job.Metadata["batch_id"] = batch.ID
 
-		if err := bm.manager.Enqueue(ctx, job); err != nil {
+		err := bm.manager.Enqueue(ctx, job)
+		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
 
@@ -275,7 +276,8 @@ func (bm *BatchManager) DeleteBatch(ctx context.Context, id string) error {
 	}
 
 	for _, jobID := range batch.JobIDs {
-		if err := bm.manager.queue.DeleteJob(ctx, jobID); err != nil {
+		err := bm.manager.queue.DeleteJob(ctx, jobID)
+		if err != nil {
 			// Log the error but continue with other jobs
 			logger.Error().Err(err).Field("job_id", jobID).Msg("Failed to delete job from batch")
 		}
@@ -326,7 +328,8 @@ func (jc *JobContext) GetPayload(key string) (interface{}, bool) {
 	}
 
 	var payload map[string]interface{}
-	if err := json.Unmarshal(jc.Job.Payload, &payload); err != nil {
+	err := json.Unmarshal(jc.Job.Payload, &payload)
+	if err != nil {
 		return nil, false
 	}
 

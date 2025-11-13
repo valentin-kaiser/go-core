@@ -198,7 +198,8 @@ func (m *manager) parseStructTags(v reflect.Value, labelBase string) error {
 				v.Field(i).Set(reflect.New(field.Type.Elem()))
 			}
 
-			if err := m.parseStructTags(v.Field(i).Elem(), fieldName); err != nil {
+			err := m.parseStructTags(v.Field(i).Elem(), fieldName)
+			if err != nil {
 				return apperror.Wrap(err)
 			}
 			continue
@@ -212,14 +213,16 @@ func (m *manager) parseStructTags(v reflect.Value, labelBase string) error {
 			}
 
 			label := buildLabel(labelBase, fieldName)
-			if err := m.parseStructTags(subv, label); err != nil {
+			err := m.parseStructTags(subv, label)
+			if err != nil {
 				return apperror.Wrap(err)
 			}
 			continue
 		}
 
 		tag := buildLabel(labelBase, fieldName)
-		if err := m.declareFlag(tag, field.Tag.Get("usage"), v.Field(i).Interface()); err != nil {
+		err := m.declareFlag(tag, field.Tag.Get("usage"), v.Field(i).Interface())
+		if err != nil {
 			return apperror.Wrap(err)
 		}
 	}

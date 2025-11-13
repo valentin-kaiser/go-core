@@ -167,3 +167,53 @@ func GenerateSelfSignedCertificate(subject pkix.Name) (tls.Certificate, *x509.Ce
 	}
 	return cert, caPool, nil
 }
+
+// WriteCertificate writes the given certificate and key to the specified file paths.
+func WriteCertificate(cert tls.Certificate, certPath, keyPath string) error {
+	err := os.MkdirAll(filepath.Dir(certPath), 0700)
+	if err != nil {
+		return apperror.NewError("failed to create certificate directory").AddError(err)
+	}
+
+	err = os.MkdirAll(filepath.Dir(keyPath), 0700)
+	if err != nil {
+		return apperror.NewError("failed to create key directory").AddError(err)
+	}
+
+	certOut, err := os.Create(filepath.Clean(certPath))
+	if err != nil {
+		return apperror.NewError("failed to create certificate file").AddError(err)
+	}
+	defer apperror.Catch(certOut.Close, "failed to close certificate file")
+
+	for _, c := range cert.Certificate {
+		err = pem.Encode(certOut, &pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: c,
+		})
+		if err != nil {
+			return apperror.NewError("failed to encode certificate").AddError(err)
+		}
+	}
+
+	keyOut, err := os.OpenFile(filepath.Clean(keyPath), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return apperror.NewError("failed to create key file").AddError(err)
+	}
+	defer apperror.Catch(keyOut.Close, "failed to close key file")
+
+	privBytes, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
+	if err != nil {
+		return apperror.NewError("failed to marshal private key").AddError(err)
+	}
+
+	err = pem.Encode(keyOut, &pem.Block{
+		Type:  "PRIVATE KEY",
+		Bytes: privBytes,
+	})
+	if err != nil {
+		return apperror.NewError("failed to encode private key").AddError(err)
+	}
+
+	return nil
+}

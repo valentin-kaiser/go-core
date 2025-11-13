@@ -33,6 +33,8 @@ type Message struct {
 	HTMLBody string `json:"html_body,omitempty"`
 	// Template is the name of the template to use
 	Template string `json:"template,omitempty"`
+	// TemplateContent is the direct template content to use (alternative to Template)
+	TemplateContent string `json:"template_content,omitempty"`
 	// TemplateData is the data to pass to the template
 	TemplateData interface{} `json:"template_data,omitempty"`
 	// TemplateFuncs contains template functions specific to this message (optional)
@@ -208,6 +210,13 @@ func (b *MessageBuilder) HTMLBody(html string) *MessageBuilder {
 // Template sets the template name and data
 func (b *MessageBuilder) Template(name string, data interface{}) *MessageBuilder {
 	b.message.Template = name
+	b.message.TemplateData = data
+	return b
+}
+
+// TemplateContent sets the template content directly and data
+func (b *MessageBuilder) TemplateContent(content string, data interface{}) *MessageBuilder {
+	b.message.TemplateContent = content
 	b.message.TemplateData = data
 	return b
 }

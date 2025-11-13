@@ -173,3 +173,8 @@ func (z *ZerologAdapter) WithPackage(pkg string) Adapter {
 		level:  z.level,
 	}
 }
+
+// Enabled returns whether logging is enabled
+func (z *ZerologAdapter) Enabled() bool {
+	return z.level != DisabledLevel
+}

@@ -71,7 +71,8 @@ func (m *manager) unmarshalStruct(v reflect.Value, prefix string) error {
 		key := buildLabel(prefix, fieldName)
 
 		if fieldValue.Kind() == reflect.Struct {
-			if err := m.unmarshalStruct(fieldValue, key); err != nil {
+			err := m.unmarshalStruct(fieldValue, key)
+			if err != nil {
 				return err
 			}
 			continue
@@ -81,7 +82,8 @@ func (m *manager) unmarshalStruct(v reflect.Value, prefix string) error {
 			if fieldValue.IsNil() {
 				fieldValue.Set(reflect.New(fieldValue.Type().Elem()))
 			}
-			if err := m.unmarshalStruct(fieldValue, key); err != nil {
+			err := m.unmarshalStruct(fieldValue, key)
+			if err != nil {
 				return err
 			}
 			continue
@@ -92,7 +94,8 @@ func (m *manager) unmarshalStruct(v reflect.Value, prefix string) error {
 			continue
 		}
 
-		if err := setFieldValue(fieldValue, value); err != nil {
+		err := setFieldValue(fieldValue, value)
+		if err != nil {
 			return err
 		}
 	}
@@ -123,7 +126,8 @@ func setFieldValue(field reflect.Value, value interface{}) error {
 			return nil
 		}
 		if str, ok := value.(string); ok {
-			if i, err := strconv.ParseInt(str, 10, 64); err == nil {
+			i, err := strconv.ParseInt(str, 10, 64)
+			if err == nil {
 				field.SetInt(i)
 			}
 		}
@@ -186,7 +190,8 @@ func setFieldValue(field reflect.Value, value interface{}) error {
 			return nil
 		}
 		if str, ok := value.(string); ok {
-			if i, err := strconv.ParseUint(str, 10, 64); err == nil {
+			i, err := strconv.ParseUint(str, 10, 64)
+			if err == nil {
 				field.SetUint(i)
 			}
 		}
@@ -241,7 +246,8 @@ func setFieldValue(field reflect.Value, value interface{}) error {
 			return nil
 		}
 		if str, ok := value.(string); ok {
-			if f, err := strconv.ParseFloat(str, 64); err == nil {
+			f, err := strconv.ParseFloat(str, 64)
+			if err == nil {
 				field.SetFloat(f)
 			}
 		}
@@ -252,7 +258,8 @@ func setFieldValue(field reflect.Value, value interface{}) error {
 			return nil
 		}
 		if str, ok := value.(string); ok {
-			if b, err := strconv.ParseBool(str); err == nil {
+			b, err := strconv.ParseBool(str)
+			if err == nil {
 				field.SetBool(b)
 			}
 		}

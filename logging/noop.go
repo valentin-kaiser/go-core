@@ -85,3 +85,8 @@ func (n *NoOpAdapter) Printf(_ string, _ ...interface{}) {}
 func (n *NoOpAdapter) WithPackage(_ string) Adapter {
 	return n
 }
+
+// Enabled returns false indicating logging is disabled
+func (n *NoOpAdapter) Enabled() bool {
+	return false
+}

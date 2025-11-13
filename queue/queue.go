@@ -237,7 +237,8 @@ type JobProgress struct {
 
 // WithRabbitMQ sets the queue to use RabbitMQ with the given configuration
 func (m *Manager) WithRabbitMQ(config RabbitMQConfig) *Manager {
-	if queue, err := NewRabbitMQ(config); err == nil {
+	queue, err := NewRabbitMQ(config)
+	if err == nil {
 		m.queue = queue
 	}
 	return m
@@ -245,7 +246,8 @@ func (m *Manager) WithRabbitMQ(config RabbitMQConfig) *Manager {
 
 // WithRabbitMQFromURL sets the queue to use RabbitMQ with the given URL
 func (m *Manager) WithRabbitMQFromURL(url string) *Manager {
-	if queue, err := NewRabbitMQFromURL(url); err == nil {
+	queue, err := NewRabbitMQFromURL(url)
+	if err == nil {
 		m.queue = queue
 	}
 	return m
@@ -412,7 +414,8 @@ func (m *Manager) GetStats() *Stats {
 	defer m.statsMutex.RUnlock()
 
 	ctx := context.Background()
-	if queueStats, err := m.queue.GetStats(ctx); err == nil {
+	queueStats, err := m.queue.GetStats(ctx)
+	if err == nil {
 		queueStats.WorkersActive = atomic.LoadInt64(&m.stats.WorkersActive)
 		queueStats.WorkersBusy = atomic.LoadInt64(&m.stats.WorkersBusy)
 		return queueStats
@@ -477,7 +480,8 @@ func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
 	job.Status = StatusRunning
 	job.Attempts++
 	job.UpdatedAt = time.Now()
-	if err := m.queue.UpdateJob(ctx, job); err != nil {
+	err := m.queue.UpdateJob(ctx, job)
+	if err != nil {
 		logger.Error().Err(err).Field("job_id", job.ID).Msg("failed to update job status to running")
 	}
 
@@ -489,7 +493,8 @@ func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
 		job.Status = StatusFailed
 		job.Error = "no handler registered for job type: " + job.Type
 		job.UpdatedAt = time.Now()
-		if err := m.queue.UpdateJob(ctx, job); err != nil {
+		err = m.queue.UpdateJob(ctx, job)
+		if err != nil {
 			logger.Error().Err(err).Field("job_id", job.ID).Msg("failed to update job status to failed")
 		}
 		atomic.AddInt64(&m.stats.JobsFailed, 1)
@@ -497,14 +502,15 @@ func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
 		return
 	}
 
-	err := handler(ctx, job)
+	err = handler(ctx, job)
 	if err != nil {
 		if retryErr, ok := err.(*RetryableError); ok && job.Attempts < job.MaxAttempts {
 			job.Status = StatusRetrying
 			job.Error = retryErr.Error()
 			job.RetryAt = time.Now().Add(m.calculateRetryDelay(job.Attempts))
 			job.UpdatedAt = time.Now()
-			if err := m.queue.UpdateJob(ctx, job); err != nil {
+			err = m.queue.UpdateJob(ctx, job)
+			if err != nil {
 				logger.Error().Err(err).Field("job_id", job.ID).Msg("failed to update job status to retrying")
 			}
 			atomic.AddInt64(&m.stats.JobsRetried, 1)
@@ -519,8 +525,9 @@ func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
 				time.Sleep(m.calculateRetryDelay(job.Attempts))
 				job.Status = StatusPending
 				job.RetryAt = time.Time{}
-				if err := m.queue.Enqueue(ctx, job); err != nil {
-					logger.Error().Err(err).Field("job_id", job.ID).Msg("failed to re-enqueue job for retry")
+				enqueueErr := m.queue.Enqueue(ctx, job)
+				if enqueueErr != nil {
+					logger.Error().Err(enqueueErr).Field("job_id", job.ID).Msg("failed to re-enqueue job for retry")
 				}
 			}()
 			return
@@ -529,8 +536,9 @@ func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
 		job.Status = StatusFailed
 		job.Error = err.Error()
 		job.UpdatedAt = time.Now()
-		if err := m.queue.UpdateJob(ctx, job); err != nil {
-			logger.Error().Err(err).Field("job_id", job.ID).Msg("failed to update job status to failed")
+		updateErr := m.queue.UpdateJob(ctx, job)
+		if updateErr != nil {
+			logger.Error().Err(updateErr).Field("job_id", job.ID).Msg("failed to update job status to failed")
 		}
 		atomic.AddInt64(&m.stats.JobsFailed, 1)
 
@@ -547,7 +555,8 @@ func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
 	job.CompletedAt = time.Now()
 	job.Progress = 1.0
 	job.UpdatedAt = time.Now()
-	if err := m.queue.UpdateJob(ctx, job); err != nil {
+	err = m.queue.UpdateJob(ctx, job)
+	if err != nil {
 		logger.Error().Err(err).Field("job_id", job.ID).Msg("failed to update job status to completed")
 	}
 	atomic.AddInt64(&m.stats.JobsProcessed, 1)
@@ -589,8 +598,9 @@ func (m *Manager) scheduleProcessor(ctx context.Context) {
 				if job.ScheduleAt.Before(now) || job.ScheduleAt.Equal(now) {
 					job.Status = StatusPending
 					job.ScheduleAt = time.Time{}
-					if err := m.queue.Enqueue(ctx, job); err != nil {
-						logger.Error().Err(err).Field("job_id", job.ID).Msg("failed to enqueue scheduled job")
+					enqueueErr := m.queue.Enqueue(ctx, job)
+					if enqueueErr != nil {
+						logger.Error().Err(enqueueErr).Field("job_id", job.ID).Msg("failed to enqueue scheduled job")
 					}
 				}
 			}

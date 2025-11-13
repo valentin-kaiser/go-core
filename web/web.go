@@ -9,6 +9,8 @@
 //   - Middleware support including security headers, CORS, gzip compression, and request logging
 //   - Easy registration of HTTP handlers and handler functions
 //   - WebSocket support with connection management and custom handlers
+//   - Multi-port support with HTTP and HTTPS protocols
+//   - Configurable redirect rules between ports and routes
 //   - Graceful shutdown and restart capabilities
 //
 // Example usage:
@@ -27,8 +29,10 @@
 //		done := make(chan error)
 //		web.Instance().
 //			WithHost("localhost").
-//			WithPort(8088).
-//			WithCacheControl("max-age=3600, s-maxage=7200").
+//			WithHTTPPort(8080).
+//			WithHTTPSPort(8443).
+//			WithSelfSignedTLS().
+//			Redirect(8080, 8443, "/", "/").  // Redirect HTTP root to HTTPS
 //			WithSecurityHeaders().
 //			WithCORSHeaders().
 //			WithGzip().
@@ -88,17 +92,45 @@ var (
 	logger   = logging.GetPackageLogger("web")
 )
 
+// Protocol represents the protocol type for a server port
+type Protocol string
+
+const (
+	// ProtocolHTTP represents HTTP protocol
+	ProtocolHTTP Protocol = "http"
+	// ProtocolHTTPS represents HTTPS protocol
+	ProtocolHTTPS Protocol = "https"
+)
+
+// ServerPort represents a port configuration with protocol
+type ServerPort struct {
+	Port     uint16
+	Protocol Protocol
+}
+
+// RedirectRule represents a redirect configuration
+type RedirectRule struct {
+	SourcePort  uint16
+	TargetPort  uint16
+	SourceRoute string
+	TargetRoute string
+	Code        int                        // HTTP status code for the redirect
+	Exceptions  []string                   // List of paths that should not be redirected
+	Conditions  []func(*http.Request) bool // List of conditions that must be met for the redirect to occur
+}
+
 // Server represents a web server with a set of middlewares and handlers
 type Server struct {
 	// Error is the error that occurred during the server's operation
 	// It will be nil if no error occurred
 	Error             error
-	server            *http.Server
-	redirect          *http.Server // Server for protocol redirects (HTTP to HTTPS)
+	servers           map[string]*http.Server // Map of "protocol:port" -> server
 	router            *Router
 	mutex             sync.RWMutex
 	host              string
-	port              uint16
+	ports             []ServerPort   // Multiple ports with protocols
+	redirectRules     []RedirectRule // Configured redirect rules
+	https             bool
 	upgrader          websocket.Upgrader
 	tlsConfig         *tls.Config
 	readTimeout       time.Duration
@@ -128,8 +160,8 @@ func New() *Server {
 	mutex.Lock()
 	defer mutex.Unlock()
 	instance = &Server{
-		port:   80,
-		router: NewRouter(),
+		servers: make(map[string]*http.Server),
+		router:  NewRouter(),
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(_ *http.Request) bool {
 				return true
@@ -157,68 +189,115 @@ func (s *Server) Start() *Server {
 		return s
 	}
 
-	s.mutex.Lock()
-	s.server = &http.Server{
-		ErrorLog:          s.errorLog,
-		ReadTimeout:       s.readTimeout,
-		ReadHeaderTimeout: s.readHeaderTimeout,
-		WriteTimeout:      s.writeTimeout,
-		IdleTimeout:       s.idleTimeout,
-		Handler:           s.router,
-	}
-	s.mutex.Unlock()
-
-	if s.tlsConfig != nil {
-		g, _ := errgroup.WithContext(context.Background())
-		if s.redirect != nil {
-			g.Go(func() error {
-				logger.Debug().Fields(logging.F("addr", s.redirect.Addr)).Msg("redirecting HTTP to HTTPS")
-				err := s.redirect.ListenAndServe()
-				if err != nil && err != http.ErrServerClosed {
-					return apperror.NewError("failed to start redirect server").AddError(err)
-				}
-				return nil
-			})
-		}
-
-		g.Go(func() error {
-			s.mutex.Lock()
-			s.server.TLSConfig = s.tlsConfig
-			s.server.Addr = net.JoinHostPort(s.host, strconv.FormatUint(uint64(s.port), 10))
-			server := s.server
-			s.mutex.Unlock()
-
-			logger.Info().Fields(logging.F("addr", server.Addr)).Msg("listening on https")
-
-			err := server.ListenAndServeTLS("", "")
-			if err != nil && err != http.ErrServerClosed {
-				return apperror.NewError("failed to start webserver").AddError(err)
-			}
-			return nil
-		})
-
-		if err := g.Wait(); err != nil {
-			s.Error = err
-		}
+	if len(s.ports) == 0 {
+		s.Error = apperror.NewError("no ports configured - use WithPort(), WithHTTPPort(), or WithHTTPSPort() to configure at least one port")
 		return s
 	}
 
-	logger.Info().Fields(logging.F("host", s.host), logging.F("port", s.port)).Msg("listening on http")
-
-	s.mutex.Lock()
-	s.server.Addr = net.JoinHostPort(s.host, strconv.FormatUint(uint64(s.port), 10))
-	s.mutex.Unlock()
-
-	// Get a reference to the server while holding the lock
-	s.mutex.RLock()
-	server := s.server
-	s.mutex.RUnlock()
-
-	err := server.ListenAndServe()
-	if err != nil && err != http.ErrServerClosed {
-		s.Error = apperror.NewError("failed to start webserver").AddError(err)
+	if s.https && s.tlsConfig == nil {
+		s.Error = apperror.NewError("HTTPS ports configured but no TLS configuration provided - use WithTLS() or WithSelfSignedTLS()")
+		return s
 	}
 
+	group, _ := errgroup.WithContext(context.Background())
+
+	s.mutex.Lock()
+	s.servers = make(map[string]*http.Server)
+	for _, config := range s.ports {
+		serverKey := fmt.Sprintf("%s:%d", config.Protocol, config.Port)
+
+		server := &http.Server{
+			Addr:              net.JoinHostPort(s.host, strconv.FormatUint(uint64(config.Port), 10)),
+			ErrorLog:          s.errorLog,
+			ReadTimeout:       s.readTimeout,
+			ReadHeaderTimeout: s.readHeaderTimeout,
+			WriteTimeout:      s.writeTimeout,
+			IdleTimeout:       s.idleTimeout,
+		}
+
+		if config.Protocol == ProtocolHTTP {
+			server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				rule := s.redirect(config.Port, r.URL.Path)
+				if rule != nil {
+					for _, exception := range rule.Exceptions {
+						if strings.HasPrefix(r.URL.Path, exception) {
+							s.router.ServeHTTP(w, r)
+							return
+						}
+					}
+
+					for _, condition := range rule.Conditions {
+						if !condition(r) {
+							s.router.ServeHTTP(w, r)
+							return
+						}
+					}
+
+					h, _, err := net.SplitHostPort(r.Host)
+					if err != nil {
+						logger.Error().Fields(logging.F("error", err)).Msg("failed to split host and port from request")
+						http.Error(w, "Bad Request", http.StatusBadRequest)
+						return
+					}
+					ip := net.ParseIP(h)
+					if ip != nil && ip.To16() != nil && ip.To4() == nil {
+						h = "[" + ip.String() + "]"
+					}
+
+					targetProtocol := s.getProtocolForPort(rule.TargetPort)
+					targetURL := fmt.Sprintf("%s://%s:%d%s", targetProtocol, h, rule.TargetPort, rule.TargetRoute)
+
+					logger.Trace().Fields(
+						logging.F("source_path", r.URL.Path),
+						logging.F("target_url", targetURL),
+						logging.F("redirect_code", rule.Code),
+					).Msg("redirecting request")
+
+					http.Redirect(w, r, targetURL, rule.Code)
+					return
+				}
+
+				s.router.ServeHTTP(w, r)
+			})
+
+			s.servers[serverKey] = server
+			continue
+		}
+
+		server.Handler = s.router
+		server.TLSConfig = s.tlsConfig
+		s.servers[serverKey] = server
+	}
+	s.mutex.Unlock()
+
+	for key, server := range s.servers {
+		group.Go(func() error {
+			protocol := strings.Split(key, ":")[0]
+			addr := server.Addr
+
+			logger.Info().Fields(logging.F("addr", addr), logging.F("protocol", protocol)).Msgf("listening on %s", protocol)
+
+			var err error
+			if protocol == "https" {
+				err = server.ListenAndServeTLS("", "")
+				if err != nil && err != http.ErrServerClosed {
+					return apperror.NewErrorf("failed to start https server").AddError(err)
+				}
+				return nil
+			}
+
+			err = server.ListenAndServe()
+			if err != nil && err != http.ErrServerClosed {
+				return apperror.NewErrorf("failed to start http server").AddError(err)
+			}
+			return nil
+		})
+	}
+
+	err := group.Wait()
+	if err != nil {
+		s.Error = err
+	}
 	return s
 }
 
@@ -250,17 +329,16 @@ func (s *Server) Stop() error {
 	defer interruption.Catch()
 
 	s.mutex.RLock()
-	server := s.server
-	s.mutex.RUnlock()
-
-	if server != nil {
-		err := server.Close()
-		if err != nil {
-			return apperror.NewError("failed to stop webserver").AddError(err)
+	defer s.mutex.RUnlock()
+	for serverKey, server := range s.servers {
+		if server != nil {
+			err := server.Close()
+			if err != nil {
+				return apperror.NewErrorf("failed to stop %s server", serverKey).AddError(err)
+			}
 		}
-
-		logger.Trace().Msg("server stopped")
 	}
+
 	return nil
 }
 
@@ -271,20 +349,20 @@ func (s *Server) Shutdown() error {
 	defer interruption.Catch()
 
 	s.mutex.RLock()
-	server := s.server
-	s.mutex.RUnlock()
-
-	if server != nil {
-		logger.Trace().Msg("shutting down webserver...")
+	defer s.mutex.RUnlock()
+	if len(s.servers) > 0 {
+		logger.Trace().Msg("shutting down webservers...")
 		shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownRelease()
 
-		err := server.Shutdown(shutdownCtx)
-		if err != nil {
-			return apperror.NewError("failed to shutdown webserver").AddError(err)
+		for serverKey, server := range s.servers {
+			if server != nil {
+				err := server.Shutdown(shutdownCtx)
+				if err != nil {
+					return apperror.NewErrorf("failed to shutdown %s server", serverKey).AddError(err)
+				}
+			}
 		}
-
-		logger.Trace().Msg("server stopped")
 	}
 	return nil
 }
@@ -295,19 +373,22 @@ func (s *Server) Restart() error {
 	defer interruption.Catch()
 
 	s.mutex.RLock()
-	server := s.server
-	s.mutex.RUnlock()
-
-	if server != nil {
-		logger.Trace().Msg("restarting webserver...")
+	if len(s.servers) > 0 {
+		logger.Trace().Msg("restarting webservers...")
 		shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownRelease()
 
-		err := server.Shutdown(shutdownCtx)
-		if err != nil {
-			return apperror.NewError("failed to shutdown webserver").AddError(err)
+		for key, server := range s.servers {
+			if server != nil {
+				err := server.Shutdown(shutdownCtx)
+				if err != nil {
+					s.mutex.RUnlock()
+					return apperror.NewErrorf("failed to shutdown %s server", key).AddError(err)
+				}
+			}
 		}
 	}
+	s.mutex.RUnlock()
 
 	err := s.Start().Error
 	if err != nil {
@@ -323,20 +404,23 @@ func (s *Server) RestartAsync(done chan error) {
 	defer interruption.Catch()
 
 	s.mutex.RLock()
-	server := s.server
-	s.mutex.RUnlock()
-
-	if server != nil {
-		logger.Trace().Msg("restarting webserver...")
+	if len(s.servers) > 0 {
+		logger.Trace().Msg("restarting webservers...")
 		shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), 10*time.Second)
 		defer shutdownRelease()
 
-		err := server.Shutdown(shutdownCtx)
-		if err != nil {
-			done <- apperror.NewError("failed to shutdown webserver").AddError(err)
-			return
+		for key, server := range s.servers {
+			if server != nil {
+				err := server.Shutdown(shutdownCtx)
+				if err != nil {
+					done <- apperror.NewErrorf("failed to shutdown %s server", key).AddError(err)
+					s.mutex.RUnlock()
+					return
+				}
+			}
 		}
 	}
+	s.mutex.RUnlock()
 
 	s.StartAsync(done)
 }
@@ -459,6 +543,9 @@ func (s *Server) WithWebsocket(path string, handler func(http.ResponseWriter, *h
 	return s
 }
 
+// WithJRPC adds a JSON-RPC service handler to the server
+// It will return an error in the Error field if the path is already registered as a handler or a websocket
+// The service will be accessible at path/{service}/{method}
 func (s *Server) WithJRPC(path string, service *jrpc.Service) *Server {
 	if s.Error != nil {
 		return s
@@ -540,12 +627,108 @@ func (s *Server) WithHost(address string) *Server {
 	return s
 }
 
-// WithPort sets the port of the web server
-func (s *Server) WithPort(port uint16) *Server {
+// WithPort adds a port with the specified protocol to the server
+// This method can be called multiple times to configure multiple ports
+func (s *Server) WithPort(port uint16, protocol Protocol) *Server {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	s.port = port
+
+	// Check if this port is already configured
+	for _, p := range s.ports {
+		if p.Port == port {
+			s.Error = apperror.NewErrorf("port %d is already configured", port)
+			return s
+		}
+	}
+
+	if protocol == ProtocolHTTPS {
+		s.https = true
+	}
+
+	s.ports = append(s.ports, ServerPort{
+		Port:     port,
+		Protocol: protocol,
+	})
 	return s
+}
+
+// WithHTTPPort adds an HTTP port to the server (convenience method)
+func (s *Server) WithHTTPPort(port uint16) *Server {
+	return s.WithPort(port, ProtocolHTTP)
+}
+
+// WithHTTPSPort adds an HTTPS port to the server (convenience method)
+func (s *Server) WithHTTPSPort(port uint16) *Server {
+	return s.WithPort(port, ProtocolHTTPS)
+}
+
+// WithRedirect adds a redirect rule from source port/route to target port/route
+func (s *Server) WithRedirect(rule RedirectRule) *Server {
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+
+	if rule.SourcePort == 0 || rule.TargetPort == 0 {
+		s.Error = apperror.NewError("source and target port must be specified for redirect rule")
+		return s
+	}
+
+	if rule.SourcePort == rule.TargetPort && rule.SourceRoute == rule.TargetRoute {
+		s.Error = apperror.NewError("source and target port and route cannot be the same for redirect rule")
+		return s
+	}
+
+	if rule.SourceRoute == "" || rule.TargetRoute == "" {
+		s.Error = apperror.NewError("source and target route must be specified for redirect rule")
+		return s
+	}
+
+	if rule.Code == 0 || (rule.Code < 300 || rule.Code > 399) {
+		rule.Code = http.StatusMovedPermanently
+	}
+
+	s.redirectRules = append(s.redirectRules, rule)
+	return s
+}
+
+// Redirect adds a redirect rule from source port/route to target port/route (convenience method)
+func (s *Server) Redirect(sourcePort uint16, targetPort uint16, sourceRoute string, targetRoute string) *Server {
+	return s.WithRedirect(RedirectRule{
+		SourcePort:  sourcePort,
+		TargetPort:  targetPort,
+		SourceRoute: sourceRoute,
+		TargetRoute: targetRoute,
+		Code:        http.StatusMovedPermanently,
+	})
+}
+
+// getRedirectTarget finds a matching redirect rule for the given port and path
+func (s *Server) redirect(sourcePort uint16, path string) *RedirectRule {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	for _, rule := range s.redirectRules {
+		if rule.SourcePort == sourcePort && strings.HasPrefix(path, rule.SourceRoute) {
+			return &rule
+		}
+	}
+	return nil
+}
+
+// getProtocolForPort returns the protocol (http/https) for a given port
+func (s *Server) getProtocolForPort(port uint16) string {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	for _, p := range s.ports {
+		if p.Port == port {
+			return string(p.Protocol)
+		}
+	}
+	// Default fallback
+	if port == 443 || port == 8443 {
+		return "https"
+	}
+	return "http"
 }
 
 // WithTLS sets the TLS configuration for the web server
@@ -572,57 +755,6 @@ func (s *Server) WithSelfSignedTLS() *Server {
 		return s
 	}
 	s.tlsConfig = security.NewTLSConfig(cert, pool, tls.NoClientCert)
-	return s
-}
-
-// WithRedirectToHTTPS sets up a redirect server that redirects HTTP requests to HTTPS
-// It must be called after WithPort and WithTLS or else it will return an error
-func (s *Server) WithRedirectToHTTPS(port uint16) *Server {
-	s.mutex.Lock()
-	defer s.mutex.Unlock()
-
-	if s.Error != nil {
-		return s
-	}
-
-	if s.tlsConfig == nil {
-		s.Error = apperror.NewError("redirect server requires TLS configuration to be set")
-		return s
-	}
-
-	if s.port == port {
-		s.Error = apperror.NewErrorf("redirect server port %d cannot be the same as the main server port", port)
-		return s
-	}
-
-	if s.redirect != nil {
-		s.Error = apperror.NewErrorf("redirect server is already set to %d", port)
-		return s
-	}
-
-	s.redirect = &http.Server{
-		Addr: net.JoinHostPort(s.host, strconv.FormatUint(uint64(port), 10)),
-		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			h, _, err := net.SplitHostPort(r.Host)
-			if err != nil {
-				logger.Error().Fields(logging.F("error", err)).Msg("failed to split host and port from request")
-				http.Error(w, "Bad Request", http.StatusBadRequest)
-				return
-			}
-			ip := net.ParseIP(h)
-			if ip != nil && ip.To16() != nil && ip.To4() == nil {
-				h = "[" + ip.String() + "]"
-			}
-			logger.Trace().Fields(logging.F("path", r.URL.Path)).Msg("redirecting HTTP request to HTTPS")
-			http.Redirect(w, r, fmt.Sprintf("https://%s:%d%s", h, s.port, r.URL.Path), http.StatusMovedPermanently)
-		}),
-		ErrorLog:          s.errorLog,
-		ReadTimeout:       s.readTimeout,
-		ReadHeaderTimeout: s.readHeaderTimeout,
-		WriteTimeout:      s.writeTimeout,
-		IdleTimeout:       s.idleTimeout,
-	}
-
 	return s
 }
 

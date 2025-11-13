@@ -40,13 +40,15 @@ func (s *smtpSender) Send(ctx context.Context, message *Message) error {
 	}
 
 	// Validate message
-	if err := s.validateMessage(message); err != nil {
+	err := s.validateMessage(message)
+	if err != nil {
 		return apperror.Wrap(err)
 	}
 
 	// Process template if specified
 	if s.templateManager != nil && s.templateManager.config.Enabled {
-		if err := s.processTemplate(message); err != nil {
+		err = s.processTemplate(message)
+		if err != nil {
 			return apperror.Wrap(err)
 		}
 	}
@@ -100,25 +102,25 @@ func (s *smtpSender) validateMessage(message *Message) error {
 		return apperror.NewError("at least one recipient is required")
 	}
 
-	if message.Subject == "" {
-		return apperror.NewError("subject is required")
-	}
-
-	if message.TextBody == "" && message.HTMLBody == "" && message.Template == "" {
-		return apperror.NewError("message body or template is required")
-	}
-
 	return nil
 }
 
 // processTemplate processes the email template if specified
 func (s *smtpSender) processTemplate(message *Message) error {
-	if message.Template == "" {
+	// Skip if neither template name nor template content is provided
+	if message.Template == "" && message.TemplateContent == "" {
 		return nil
 	}
 
 	var err error
-	message.HTMLBody, err = s.templateManager.RenderTemplate(message.Template, message.TemplateData, message.TemplateFuncs)
+	if message.TemplateContent != "" {
+		// Use direct template content
+		message.HTMLBody, err = s.templateManager.RenderTemplateContent(message.TemplateContent, message.TemplateData, message.TemplateFuncs)
+	} else {
+		// Use template file
+		message.HTMLBody, err = s.templateManager.RenderTemplate(message.Template, message.TemplateData, message.TemplateFuncs)
+	}
+
 	if err != nil {
 		return apperror.Wrap(err)
 	}
@@ -181,7 +183,8 @@ func (s *smtpSender) createEmail(message *Message) (*email.Email, error) {
 
 	// Add attachments
 	for _, attachment := range message.Attachments {
-		if err := s.addAttachment(emailMsg, attachment); err != nil {
+		err := s.addAttachment(emailMsg, attachment)
+		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
 	}

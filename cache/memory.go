@@ -328,7 +328,8 @@ func (mc *MemoryCache) GetMulti(ctx context.Context, keys []string) (map[string]
 // SetMulti stores multiple values in the cache
 func (mc *MemoryCache) SetMulti(ctx context.Context, items map[string]interface{}, ttl time.Duration) error {
 	for key, value := range items {
-		if err := mc.Set(ctx, key, value, ttl); err != nil {
+		err := mc.Set(ctx, key, value, ttl)
+		if err != nil {
 			return err
 		}
 	}
@@ -338,7 +339,8 @@ func (mc *MemoryCache) SetMulti(ctx context.Context, items map[string]interface{
 // DeleteMulti removes multiple values from the cache
 func (mc *MemoryCache) DeleteMulti(ctx context.Context, keys []string) error {
 	for _, key := range keys {
-		if err := mc.Delete(ctx, key); err != nil {
+		err := mc.Delete(ctx, key)
+		if err != nil {
 			return err
 		}
 	}

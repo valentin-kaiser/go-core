@@ -25,42 +25,9 @@ func TestServerInstance(t *testing.T) {
 	}
 }
 
-func TestServerWithRedirect(t *testing.T) {
-	server := web.New()
-
-	// Setup TLS first
-	subject := pkix.Name{Organization: []string{"Test"}}
-	cert, caPool, err := security.GenerateSelfSignedCertificate(subject)
-	if err != nil {
-		t.Fatalf("Failed to generate test certificate: %v", err)
-	}
-
-	tlsConfig := security.NewTLSConfig(cert, caPool, tls.NoClientCert)
-	server.WithTLS(tlsConfig)
-
-	result := server.WithRedirectToHTTPS(8080)
-
-	if result != server {
-		t.Error("WithRedirectToHTTPS() should return the same server instance")
-	}
-}
-
-func TestServerWithRedirectWithoutTLS(t *testing.T) {
-	server := web.New()
-	result := server.WithRedirectToHTTPS(8080)
-
-	if result != server {
-		t.Error("WithRedirectToHTTPS() should return the same server instance")
-	}
-
-	if server.Error == nil {
-		t.Error("WithRedirectToHTTPS() without TLS should set an error")
-	}
-}
-
 func TestServerStartAsync(t *testing.T) {
 	server := web.New()
-	server.WithHost("localhost").WithPort(0) // Use any available port
+	server.WithHost("localhost").WithPort(0, web.ProtocolHTTP)
 
 	done := make(chan error, 1)
 
@@ -83,30 +50,6 @@ func TestServerStartAsync(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Error("StartAsync timed out")
-	}
-}
-
-func TestServerRestart(t *testing.T) {
-	server := web.New()
-	server.WithHost("localhost").WithPort(0)
-
-	// Test that restart properly shuts down if the server is already running
-	// We'll start it async first
-	done := make(chan error, 1)
-	server.StartAsync(done)
-
-	// Give it time to start
-	time.Sleep(50 * time.Millisecond)
-
-	// Now test restart async which should shutdown and restart
-	restartDone := make(chan error, 1)
-	server.RestartAsync(restartDone)
-
-	// Stop after a short time
-	time.Sleep(50 * time.Millisecond)
-	err := server.Stop()
-	if err != nil {
-		t.Logf("Stop returned error (expected): %v", err)
 	}
 }
 
@@ -134,7 +77,7 @@ func TestServerMemoryUsage(_ *testing.T) {
 	for i := 0; i < 100; i++ {
 		server := web.New()
 		server.WithHost("localhost").
-			WithPort(8080+uint16(i)).
+			WithPort(8080+uint16(i), web.ProtocolHTTP).
 			WithHandlerFunc(fmt.Sprintf("/test%d", i), func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			})
@@ -192,7 +135,7 @@ func TestServerConfiguration(t *testing.T) {
 	// Test chainable configuration
 	result := server.
 		WithHost("0.0.0.0").
-		WithPort(8080).
+		WithPort(8080, web.ProtocolHTTP).
 		WithReadTimeout(30 * time.Second).
 		WithWriteTimeout(30 * time.Second).
 		WithIdleTimeout(60 * time.Second)
@@ -312,14 +255,14 @@ func TestServerPortValidation(t *testing.T) {
 	server := web.New()
 
 	// Test invalid port should set error
-	server.WithPort(0) // Port 0 is valid (any available port)
+	server.WithPort(0, web.ProtocolHTTP)
 	if server.Error != nil {
 		t.Errorf("Port 0 should be valid, got error: %v", server.Error)
 	}
 
 	// Test maximum valid port
 	server = web.New()
-	server.WithPort(65535)
+	server.WithPort(65535, web.ProtocolHTTP)
 	if server.Error != nil {
 		t.Errorf("Port 65535 should be valid, got error: %v", server.Error)
 	}

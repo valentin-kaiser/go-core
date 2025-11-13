@@ -153,7 +153,8 @@ func (s *TaskScheduler) RegisterCronTaskWithOptions(name, cronSpec string, fn Ta
 		return apperror.NewError("task function cannot be nil")
 	}
 
-	if err := s.ValidateCronSpec(cronSpec); err != nil {
+	err := s.ValidateCronSpec(cronSpec)
+	if err != nil {
 		return apperror.NewError(fmt.Sprintf("invalid cron specification: %v", err))
 	}
 
@@ -291,7 +292,8 @@ func (s *TaskScheduler) RegisterOrRescheduleCronTaskWithOptions(name, cronSpec s
 		return apperror.NewError("task function cannot be nil")
 	}
 
-	if err := s.ValidateCronSpec(cronSpec); err != nil {
+	err := s.ValidateCronSpec(cronSpec)
+	if err != nil {
 		return apperror.NewError(fmt.Sprintf("invalid cron specification: %v", err))
 	}
 
@@ -301,14 +303,6 @@ func (s *TaskScheduler) RegisterOrRescheduleCronTaskWithOptions(name, cronSpec s
 	existingTask, exists := s.tasks[name]
 	if exists {
 		// Task exists, reschedule it
-		existingTask.mutex.RLock()
-		isRunning := existingTask.IsRunning
-		existingTask.mutex.RUnlock()
-
-		if isRunning {
-			return apperror.NewError(fmt.Sprintf("cannot reschedule running task '%s'", name))
-		}
-
 		nextRun, err := s.calculateNextCronRun(cronSpec, time.Now())
 		if err != nil {
 			return apperror.NewError(fmt.Sprintf("failed to calculate next run time: %v", err))
@@ -409,14 +403,6 @@ func (s *TaskScheduler) RegisterOrRescheduleIntervalTaskWithOptions(name string,
 
 	existingTask, exists := s.tasks[name]
 	if exists {
-		existingTask.mutex.RLock()
-		isRunning := existingTask.IsRunning
-		existingTask.mutex.RUnlock()
-
-		if isRunning {
-			return apperror.NewError(fmt.Sprintf("cannot reschedule running task '%s'", name))
-		}
-
 		existingTask.mutex.Lock()
 		existingTask.Type = TaskTypeInterval
 		existingTask.CronSpec = "" // Clear cron spec for interval tasks
@@ -663,14 +649,6 @@ func (s *TaskScheduler) runTask(ctx context.Context, task *Task) {
 		}
 
 		lastError = err
-		if !task.Quiet || task.ConsecutiveFailures == 0 && task.MaxRetries > 0 {
-			logger.Warn().
-				Err(err).
-				Field("task_name", task.Name).
-				Field("attempt", attempt+1).
-				Msg("task execution failed")
-		}
-
 		if attempt < task.MaxRetries {
 			select {
 			case <-taskCtx.Done():
@@ -897,7 +875,8 @@ func (s *TaskScheduler) RescheduleTaskWithCron(name, cronSpec string) error {
 		return apperror.NewError("cron specification cannot be empty")
 	}
 
-	if err := s.ValidateCronSpec(cronSpec); err != nil {
+	err := s.ValidateCronSpec(cronSpec)
+	if err != nil {
 		return apperror.NewError(fmt.Sprintf("invalid cron specification: %v", err))
 	}
 
@@ -907,10 +886,6 @@ func (s *TaskScheduler) RescheduleTaskWithCron(name, cronSpec string) error {
 	task, exists := s.tasks[name]
 	if !exists {
 		return apperror.NewError(fmt.Sprintf("task '%s' not found", name))
-	}
-
-	if task.IsRunning {
-		return apperror.NewError(fmt.Sprintf("cannot reschedule running task '%s'", name))
 	}
 
 	nextRun, err := s.calculateNextCronRun(cronSpec, time.Now())
@@ -948,10 +923,6 @@ func (s *TaskScheduler) RescheduleTaskWithInterval(name string, interval time.Du
 	task, exists := s.tasks[name]
 	if !exists {
 		return apperror.NewError(fmt.Sprintf("task '%s' not found", name))
-	}
-
-	if task.IsRunning {
-		return apperror.NewError(fmt.Sprintf("cannot reschedule running task '%s'", name))
 	}
 
 	task.Type = TaskTypeInterval
