@@ -191,15 +191,12 @@ func Register(s Server) *Service {
 
 			mt := rm.Type()
 
-			var pm proto.Message
-			protoMsgType, err := protoregistry.GlobalTypes.FindMessageByName(md.Input().FullName())
+			var pm proto.Message = dynamicpb.NewMessage(md.Input())
+			pmt, err := protoregistry.GlobalTypes.FindMessageByName(md.Input().FullName())
 			if err == nil {
-				pm = protoMsgType.New().Interface()
-				service.types[md.Input().FullName()] = pm
-			} else {
-				pm = dynamicpb.NewMessage(md.Input())
-				service.types[md.Input().FullName()] = pm
+				pm = pmt.New().Interface()
 			}
+			service.types[md.Input().FullName()] = pm
 
 			var it, ot reflect.Type
 			if mt.NumIn() >= 2 {
@@ -667,13 +664,12 @@ func (s *Service) handleServerStream(ctx context.Context, conn *websocket.Conn, 
 	}
 
 	if reqPtr.IsValid() && len(reflect.ValueOf(msg).Elem().String()) > 0 {
-		msg, ok := reqPtr.Interface().(proto.Message)
+		pmsg, ok := reqPtr.Interface().(proto.Message)
 		if !ok {
-			s.closeWS(conn, websocket.CloseInternalServerErr, apperror.NewError("expected proto.Message for request"))
+			s.closeWS(conn, websocket.CloseInternalServerErr, apperror.NewError("request message is not a proto message"))
 			return
 		}
-
-		b, err := marshalOpts.Marshal(msg)
+		b, err := marshalOpts.Marshal(pmsg)
 		if err != nil {
 			s.closeWS(conn, websocket.CloseInternalServerErr, apperror.Wrap(err))
 			return
@@ -944,7 +940,6 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 		return StreamingTypeInvalid, apperror.NewError("last return value must be error")
 	}
 
-	// Get expected message types from proto descriptor
 	inputType := s.getProtoMessageType(md.Input())
 	outputType := s.getProtoMessageType(md.Output())
 
