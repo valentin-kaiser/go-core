@@ -9,57 +9,57 @@ import (
 
 // Logger returns the current global logger adapter
 func Logger() logging.Adapter {
-	return logging.GetGlobalAdapter()
+	return logging.GetGlobalAdapter[logging.Adapter]()
 }
 
 // SetLevel sets the log level for the global logger
 func SetLevel(level logging.Level) {
-	logging.GetGlobalAdapter().SetLevel(level)
+	logging.GetGlobalAdapter[logging.Adapter]().SetLevel(level)
 }
 
 // GetLevel returns the current log level
 func GetLevel() logging.Level {
-	return logging.GetGlobalAdapter().GetLevel()
+	return logging.GetGlobalAdapter[logging.Adapter]().GetLevel()
 }
 
 // Trace returns a trace level event
 func Trace() logging.Event {
-	return logging.GetGlobalAdapter().Trace()
+	return logging.GetGlobalAdapter[logging.Adapter]().Trace()
 }
 
 // Debug returns a debug level event
 func Debug() logging.Event {
-	return logging.GetGlobalAdapter().Debug()
+	return logging.GetGlobalAdapter[logging.Adapter]().Debug()
 }
 
 // Info returns an info level event
 func Info() logging.Event {
-	return logging.GetGlobalAdapter().Info()
+	return logging.GetGlobalAdapter[logging.Adapter]().Info()
 }
 
 // Warn returns a warning level event
 func Warn() logging.Event {
-	return logging.GetGlobalAdapter().Warn()
+	return logging.GetGlobalAdapter[logging.Adapter]().Warn()
 }
 
 // Error returns an error level event
 func Error() logging.Event {
-	return logging.GetGlobalAdapter().Error()
+	return logging.GetGlobalAdapter[logging.Adapter]().Error()
 }
 
 // Fatal returns a fatal level event
 func Fatal() logging.Event {
-	return logging.GetGlobalAdapter().Fatal()
+	return logging.GetGlobalAdapter[logging.Adapter]().Fatal()
 }
 
 // Panic returns a panic level event
 func Panic() logging.Event {
-	return logging.GetGlobalAdapter().Panic()
+	return logging.GetGlobalAdapter[logging.Adapter]().Panic()
 }
 
 // Printf logs a formatted message
 func Printf(format string, v ...interface{}) {
-	logging.GetGlobalAdapter().Printf(format, v...)
+	logging.GetGlobalAdapter[logging.Adapter]().Printf(format, v...)
 }
 
 // F is a helper function to create fields

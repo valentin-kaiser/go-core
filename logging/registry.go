@@ -2,6 +2,7 @@ package logging
 
 import (
 	"fmt"
+	"log"
 	"runtime"
 	"sync"
 )
@@ -28,10 +29,15 @@ func SetGlobalAdapter(adapter Adapter) {
 }
 
 // GetGlobalAdapter returns the current global adapter
-func GetGlobalAdapter() Adapter {
+func GetGlobalAdapter[T Adapter]() T {
 	mu.RLock()
 	defer mu.RUnlock()
-	return global
+	a, ok := global.(T)
+	if ok {
+		return a
+	}
+	var zero T
+	return zero
 }
 
 // SetPackageAdapter sets a specific adapter for a package
@@ -109,6 +115,11 @@ func (d *DynamicAdapter) WithPackage(pkg string) Adapter {
 // Enabled returns whether logging is enabled for the current active adapter.
 func (d *DynamicAdapter) Enabled() bool {
 	return d.current().Enabled()
+}
+
+// Logger returns the underlying logger from the current active adapter.
+func (d *DynamicAdapter) Logger() *log.Logger {
+	return d.current().Logger()
 }
 
 // Debug sets whether to use caller tracking

@@ -15,6 +15,8 @@
 //	logger.Info().Str("key", "value").Msg("Application started")
 package logging
 
+import "log"
+
 // Level represents log levels
 type Level int
 
@@ -77,6 +79,8 @@ type Adapter interface {
 	// Enabled returns true if logging is enabled for this adapter, false otherwise.
 	// This can be used to skip expensive log message construction when logging is disabled.
 	Enabled() bool
+
+	Logger() *log.Logger
 }
 
 // Field represents a structured log field

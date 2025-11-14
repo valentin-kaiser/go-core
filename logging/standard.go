@@ -208,3 +208,7 @@ func (s *StandardAdapter) WithPackage(pkg string) Adapter {
 func (s *StandardAdapter) Enabled() bool {
 	return s.level != DisabledLevel
 }
+
+func (s *StandardAdapter) Logger() *log.Logger {
+	return s.logger
+}
