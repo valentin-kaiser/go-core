@@ -29,15 +29,11 @@ func SetGlobalAdapter(adapter Adapter) {
 }
 
 // GetGlobalAdapter returns the current global adapter
-func GetGlobalAdapter[T Adapter]() T {
+func GetGlobalAdapter[T Adapter]() (T, bool) {
 	mu.RLock()
 	defer mu.RUnlock()
 	a, ok := global.(T)
-	if ok {
-		return a
-	}
-	var zero T
-	return zero
+	return a, ok
 }
 
 // SetPackageAdapter sets a specific adapter for a package

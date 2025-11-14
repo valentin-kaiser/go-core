@@ -9,60 +9,65 @@ import (
 
 // Logger returns the current global logger adapter
 func Logger() logging.Adapter {
-	return logging.GetGlobalAdapter[logging.Adapter]()
+	return global()
 }
 
 // SetLevel sets the log level for the global logger
 func SetLevel(level logging.Level) {
-	logging.GetGlobalAdapter[logging.Adapter]().SetLevel(level)
+	global().SetLevel(level)
 }
 
 // GetLevel returns the current log level
 func GetLevel() logging.Level {
-	return logging.GetGlobalAdapter[logging.Adapter]().GetLevel()
+	return global().GetLevel()
 }
 
 // Trace returns a trace level event
 func Trace() logging.Event {
-	return logging.GetGlobalAdapter[logging.Adapter]().Trace()
+	return global().Trace()
 }
 
 // Debug returns a debug level event
 func Debug() logging.Event {
-	return logging.GetGlobalAdapter[logging.Adapter]().Debug()
+	return global().Debug()
 }
 
 // Info returns an info level event
 func Info() logging.Event {
-	return logging.GetGlobalAdapter[logging.Adapter]().Info()
+	return global().Info()
 }
 
 // Warn returns a warning level event
 func Warn() logging.Event {
-	return logging.GetGlobalAdapter[logging.Adapter]().Warn()
+	return global().Warn()
 }
 
 // Error returns an error level event
 func Error() logging.Event {
-	return logging.GetGlobalAdapter[logging.Adapter]().Error()
+	return global().Error()
 }
 
 // Fatal returns a fatal level event
 func Fatal() logging.Event {
-	return logging.GetGlobalAdapter[logging.Adapter]().Fatal()
+	return global().Fatal()
 }
 
 // Panic returns a panic level event
 func Panic() logging.Event {
-	return logging.GetGlobalAdapter[logging.Adapter]().Panic()
+	return global().Panic()
 }
 
 // Printf logs a formatted message
 func Printf(format string, v ...interface{}) {
-	logging.GetGlobalAdapter[logging.Adapter]().Printf(format, v...)
+	global().Printf(format, v...)
 }
 
 // F is a helper function to create fields
 func F(key string, value interface{}) logging.Field {
 	return logging.F(key, value)
+}
+
+func global() logging.Adapter {
+	adapter, _ := logging.GetGlobalAdapter[logging.Adapter]()
+	return adapter
 }
