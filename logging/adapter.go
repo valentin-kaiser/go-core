@@ -21,8 +21,9 @@ import "log"
 type Level int
 
 // Log level constants define the severity levels for logging operations.
-// These levels are ordered from most verbose (TraceLevel) to least verbose (DisabledLevel).
+// These levels are ordered from most verbose (VerboseLevel) to least verbose (DisabledLevel).
 const (
+	VerboseLevel  Level = -2 // VerboseLevel logs extremely detailed information, more than TraceLevel
 	TraceLevel    Level = -1 // TraceLevel logs very detailed diagnostic information
 	DebugLevel    Level = 0  // DebugLevel logs debug information useful for development
 	InfoLevel     Level = 1  // InfoLevel logs general information about application execution
@@ -36,6 +37,8 @@ const (
 // String returns the string representation of the log level
 func (l Level) String() string {
 	switch l {
+	case VerboseLevel:
+		return "verbose"
 	case TraceLevel:
 		return "trace"
 	case DebugLevel:

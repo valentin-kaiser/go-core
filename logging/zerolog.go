@@ -259,6 +259,8 @@ func (z *ZerologAdapter) Logger() *l.Logger {
 // convertLevel converts our Level to zerolog.Level
 func (z *ZerologAdapter) convertLevel(level Level) zerolog.Level {
 	switch level {
+	case VerboseLevel:
+		return zerolog.TraceLevel
 	case TraceLevel:
 		return zerolog.TraceLevel
 	case DebugLevel:
