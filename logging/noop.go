@@ -1,5 +1,7 @@
 package logging
 
+import "log"
+
 // NoOpEvent implements Event interface but does nothing
 type NoOpEvent struct{}
 
@@ -89,4 +91,9 @@ func (n *NoOpAdapter) WithPackage(_ string) Adapter {
 // Enabled returns false indicating logging is disabled
 func (n *NoOpAdapter) Enabled() bool {
 	return false
+}
+
+// Logger returns a nil logger
+func (n *NoOpAdapter) Logger() *log.Logger {
+	return nil
 }

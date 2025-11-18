@@ -1,4 +1,4 @@
-package zlog
+package logging
 
 import "os"
 

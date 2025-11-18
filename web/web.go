@@ -75,13 +75,11 @@ import (
 
 	"github.com/NYTimes/gziphandler"
 	"github.com/gorilla/websocket"
-	"github.com/rs/zerolog"
 	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/interruption"
 	"github.com/valentin-kaiser/go-core/logging"
 	"github.com/valentin-kaiser/go-core/security"
 	"github.com/valentin-kaiser/go-core/web/jrpc"
-	"github.com/valentin-kaiser/go-core/zlog"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )
@@ -1038,7 +1036,7 @@ func (s *Server) WithIdleTimeout(timeout time.Duration) *Server {
 func (s *Server) WithErrorLog() *Server {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
-	s.errorLog = l.New(zlog.Logger().WithLevel(zerolog.ErrorLevel), "", 0)
+	s.errorLog = logger.Logger()
 	return s
 }
 
