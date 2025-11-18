@@ -68,6 +68,9 @@ func F(key string, value interface{}) logging.Field {
 }
 
 func global() logging.Adapter {
-	adapter, _ := logging.GetGlobalAdapter[logging.Adapter]()
+	adapter, ok := logging.GetGlobalAdapter[logging.Adapter]()
+	if !ok {
+		return logging.NewNoOpAdapter()
+	}
 	return adapter
 }

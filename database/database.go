@@ -277,7 +277,7 @@ func connect(config Config) (*gorm.DB, error) {
 		},
 	)
 	// If we are in trace loglevel, enable gorm logging
-	if logger.GetLevel() == logging.VerboseLevel && flag.Debug {
+	if logger.GetLevel() <= logging.VerboseLevel && flag.Debug {
 		newLogger = gl.New(
 			logger,
 			gl.Config{
