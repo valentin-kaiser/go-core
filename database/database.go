@@ -277,7 +277,7 @@ func connect(config Config) (*gorm.DB, error) {
 		},
 	)
 	// If we are in trace loglevel, enable gorm logging
-	if logger.GetLevel() < logging.TraceLevel && flag.Debug {
+	if logger.GetLevel() == logging.VerboseLevel && flag.Debug {
 		newLogger = gl.New(
 			logger,
 			gl.Config{
@@ -296,7 +296,7 @@ func connect(config Config) (*gorm.DB, error) {
 			if os.IsNotExist(err) {
 				err := os.Mkdir(flag.Path, 0750)
 				if err != nil {
-					return nil, err
+					return nil, apperror.Wrap(err)
 				}
 			}
 			dsn = fmt.Sprintf("file:%s?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000", filepath.Join(flag.Path, config.Name+".db"))
@@ -305,12 +305,12 @@ func connect(config Config) (*gorm.DB, error) {
 		var err error
 		conn, err := gorm.Open(sqlite.Open(dsn), cfg)
 		if err != nil {
-			return nil, err
+			return nil, apperror.Wrap(err)
 		}
 
 		sqlDB, err := conn.DB()
 		if err != nil {
-			return nil, err
+			return nil, apperror.Wrap(err)
 		}
 
 		sqlDB.SetMaxOpenConns(16)
@@ -331,18 +331,18 @@ func connect(config Config) (*gorm.DB, error) {
 			config.Port,
 		)), cfg)
 		if err != nil {
-			return nil, err
+			return nil, apperror.Wrap(err)
 		}
 
 		sdb, err := create.DB()
 		if err != nil {
-			return nil, err
+			return nil, apperror.Wrap(err)
 		}
 		defer apperror.Catch(sdb.Close, "closing temporary database connection failed")
 
 		err = create.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", config.Name)).Error
 		if err != nil {
-			return nil, err
+			return nil, apperror.Wrap(err)
 		}
 
 		conn, err := gorm.Open(mysql.Open(fmt.Sprintf(
@@ -354,7 +354,7 @@ func connect(config Config) (*gorm.DB, error) {
 			config.Name,
 		)), cfg)
 		if err != nil {
-			return nil, err
+			return nil, apperror.Wrap(err)
 		}
 
 		// Set global db with proper locking
