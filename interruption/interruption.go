@@ -46,12 +46,22 @@ import (
 	"runtime"
 	"runtime/debug"
 	"strings"
+	"time"
 
+	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/flag"
 	"github.com/valentin-kaiser/go-core/logging"
 )
 
-var logger = logging.GetPackageLogger("interruption")
+var (
+	logger    = logging.GetPackageLogger("interruption")
+	Directory = filepath.Join(flag.Path, "panics")
+	Format    = "2006-01-02_15-04-05"
+)
+
+func init() {
+	_ = os.MkdirAll(Directory, os.ModePerm)
+}
 
 // Catch recovers from panics in the application and logs detailed error information.
 // It captures the panic value, caller information, and stack trace for debugging.
@@ -65,10 +75,11 @@ var logger = logging.GetPackageLogger("interruption")
 //		// application logic
 //	}
 func Catch() {
-	if err := recover(); err != nil {
+	err := recover()
+	if err != nil {
 		caller := "unknown"
 		line := 0
-		_, file, line, ok := runtime.Caller(2)
+		_, file, line, ok := runtime.Caller(3)
 		if ok {
 			caller = fmt.Sprintf("%s/%s", filepath.Base(filepath.Dir(file)), strings.Trim(filepath.Base(file), filepath.Ext(file)))
 		}
@@ -87,6 +98,17 @@ func Catch() {
 			return
 		}
 		logger.Error().Msgf("%v code: %v => %v", caller, line, err)
+
+		timestamp := time.Now().Format(Format)
+		name := filepath.Join(Directory, fmt.Sprintf("%s.log", timestamp))
+		content := fmt.Sprintf("Caller: %v\nLine: %v\nError: %v\n", caller, line, err)
+		if flag.Debug {
+			content = fmt.Sprintf("Caller: %v\nLine: %v\nError: %v\n\nStack Trace:\n%s\n", caller, line, err, string(debug.Stack()))
+		}
+		err := os.WriteFile(name, []byte(content), 0644)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "failed to write panic: %v", apperror.Wrap(err))
+		}
 	}
 }
 

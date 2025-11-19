@@ -256,10 +256,6 @@ func (s *Service) HandlerFunc(w http.ResponseWriter, r *http.Request) {
 		}
 
 		s.websocket(w, r, conn)
-		err = conn.Close()
-		if err != nil {
-			log.Error().Err(err).Msg("failed to close websocket connection")
-		}
 		return
 	}
 
