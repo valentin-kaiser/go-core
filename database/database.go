@@ -153,7 +153,11 @@ func Connected() bool {
 }
 
 // Reconnect will set the connected state to false and trigger a reconnect
-func Reconnect() {
+func Reconnect(c Config) {
+	configMutex.Lock()
+	config = &c
+	configMutex.Unlock()
+
 	logger.Trace().Msg("reconnecting...")
 	connected.Store(false)
 	failed.Store(false)
@@ -201,7 +205,7 @@ func Connect(interval time.Duration, c Config) {
 				// If we are not connected to the database, try to connect
 				if !connected.Load() {
 					var err error
-					dbInstance, err := connect(c)
+					dbInstance, err := connect()
 					if err != nil {
 						// Prevent spamming the logs with connection errors
 						if !failed.Load() {
@@ -275,7 +279,10 @@ func RegisterOnConnectHandler(handler func(db *gorm.DB, config Config) error) {
 }
 
 // connect will try to connect to the database and return the connection
-func connect(config Config) (*gorm.DB, error) {
+func connect() (*gorm.DB, error) {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+
 	// Silence gorm internal logging
 	newLogger := gl.New(
 		logger,
@@ -890,7 +897,7 @@ func Restore(backupPath string) error {
 
 		logger.Info().Msgf("database restored from backup: %s", backupPath)
 
-		Reconnect()
+		Reconnect(*config)
 		return nil
 
 	case "mysql", "mariadb":
