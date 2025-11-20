@@ -2,7 +2,7 @@ package database
 
 import (
 	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/config"
+	core "github.com/valentin-kaiser/go-core/config"
 )
 
 // Config holds the configuration for the database connection
@@ -54,5 +54,5 @@ func (c *Config) Validate() error {
 
 // Changed checks if the configuration has changed
 func (c *Config) Changed(n *Config) bool {
-	return config.Changed(c, n)
+	return core.Changed(c, n)
 }
