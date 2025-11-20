@@ -355,7 +355,12 @@ func connect() (*gorm.DB, error) {
 		}
 		defer apperror.Catch(sdb.Close, "closing temporary database connection failed")
 
-		err = create.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", config.Name)).Error
+		quotedName, err := quoteIdentifier(config.Name, "mysql")
+		if err != nil {
+			return nil, apperror.NewErrorf("invalid database name").AddError(err)
+		}
+
+		err = create.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s;", quotedName)).Error
 		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
@@ -402,7 +407,11 @@ func connect() (*gorm.DB, error) {
 		}
 
 		if !exists {
-			err = create.Exec(fmt.Sprintf("CREATE DATABASE \"%s\";", config.Name)).Error
+			quotedName, err := quoteIdentifier(config.Name, "postgres")
+			if err != nil {
+				return nil, apperror.NewErrorf("invalid database name").AddError(err)
+			}
+			err = create.Exec(fmt.Sprintf("CREATE DATABASE %s;", quotedName)).Error
 			if err != nil {
 				return nil, apperror.Wrap(err)
 			}
@@ -427,7 +436,11 @@ func connect() (*gorm.DB, error) {
 		}
 
 		if !exists {
-			err = conn.Debug().Exec(fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS \"%s\";", config.Name)).Error
+			quotedName, err := quoteIdentifier(config.Name, "postgres")
+			if err != nil {
+				return nil, apperror.NewErrorf("invalid schema name").AddError(err)
+			}
+			err = conn.Debug().Exec(fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s;", quotedName)).Error
 			if err != nil {
 				return nil, apperror.Wrap(err)
 			}
@@ -585,8 +598,13 @@ func Backup(path string) error {
 		}
 
 		for _, table := range tables {
+			quotedTable, err := quoteIdentifier(table, "mysql")
+			if err != nil {
+				logger.Warn().Err(err).Msgf("invalid table name: %s", table)
+				continue
+			}
 			var tableName, createStmt string
-			err = dbInstance.Raw(fmt.Sprintf("SHOW CREATE TABLE `%s`", table)).Row().Scan(&tableName, &createStmt)
+			err = dbInstance.Raw(fmt.Sprintf("SHOW CREATE TABLE %s", quotedTable)).Row().Scan(&tableName, &createStmt)
 			if err != nil {
 				logger.Warn().Err(err).Msgf("failed to get schema for table %s", table)
 				continue
@@ -598,7 +616,7 @@ func Backup(path string) error {
 				return apperror.NewErrorf("failed to write table schema").AddError(err)
 			}
 
-			rows, err := dbInstance.Raw(fmt.Sprintf("SELECT * FROM `%s`", table)).Rows()
+			rows, err := dbInstance.Table(table).Rows()
 			if err != nil {
 				logger.Warn().Err(err).Msgf("failed to read data from table %s", table)
 				continue
@@ -626,13 +644,23 @@ func Backup(path string) error {
 
 				colsList := make([]string, len(columns))
 				for i, col := range columns {
-					colsList[i] = fmt.Sprintf("`%s`", col)
+					quotedCol, err := quoteIdentifier(col, "mysql")
+					if err != nil {
+						rows.Close()
+						return apperror.NewErrorf("invalid column name").AddError(err)
+					}
+					colsList[i] = quotedCol
 				}
 				colsStr := strings.Join(colsList, ", ")
 
 				for rows.Next() {
 					if !hasData {
-						_, err = backupFile.WriteString(fmt.Sprintf("INSERT INTO `%s` (%s) VALUES\n", table, colsStr))
+						quotedTableForInsert, err := quoteIdentifier(table, "mysql")
+						if err != nil {
+							rows.Close()
+							return apperror.NewErrorf("invalid table name for insert").AddError(err)
+						}
+						_, err = backupFile.WriteString(fmt.Sprintf("INSERT INTO %s (%s) VALUES\n", quotedTableForInsert, colsStr))
 						if err != nil {
 							rows.Close()
 							return apperror.NewErrorf("failed to write insert header").AddError(err)
@@ -740,7 +768,7 @@ func Backup(path string) error {
 
 		for _, table := range tables {
 			var createStmt string
-			err = dbInstance.Raw(fmt.Sprintf(`
+			err = dbInstance.Raw(`
 				SELECT 'CREATE TABLE IF NOT EXISTS "' || c.relname || '" (' || 
 					string_agg(a.attname || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod) || 
 						CASE WHEN a.attnotnull THEN ' NOT NULL' ELSE '' END, ', ') || 
@@ -748,9 +776,9 @@ func Backup(path string) error {
 				FROM pg_class c
 				JOIN pg_namespace n ON n.oid = c.relnamespace
 				JOIN pg_attribute a ON a.attrelid = c.oid
-				WHERE c.relname = '%s' AND n.nspname = '%s' AND a.attnum > 0 AND NOT a.attisdropped
+				WHERE c.relname = ? AND n.nspname = ? AND a.attnum > 0 AND NOT a.attisdropped
 				GROUP BY c.relname
-			`, table, config.Name)).Scan(&createStmt).Error
+			`, table, config.Name).Scan(&createStmt).Error
 			if err != nil {
 				logger.Warn().Err(err).Msgf("failed to get schema for table %s", table)
 				continue
@@ -761,7 +789,9 @@ func Backup(path string) error {
 				return apperror.NewErrorf("failed to write table schema").AddError(err)
 			}
 
-			rows, err := dbInstance.Raw(fmt.Sprintf(`SELECT * FROM "%s"."%s"`, config.Name, table)).Rows()
+			// Use schema-qualified table name with proper quoting
+			qualifiedTable := fmt.Sprintf("%s.%s", config.Name, table)
+			rows, err := dbInstance.Table(qualifiedTable).Rows()
 			if err != nil {
 				logger.Warn().Err(err).Msgf("failed to read data from table %s", table)
 				continue
@@ -811,11 +841,27 @@ func Backup(path string) error {
 
 					colsList := make([]string, len(columns))
 					for i, col := range columns {
-						colsList[i] = fmt.Sprintf("\"%s\"", col)
+						quotedCol, err := quoteIdentifier(col, "postgres")
+						if err != nil {
+							rows.Close()
+							return apperror.NewErrorf("invalid column name").AddError(err)
+						}
+						colsList[i] = quotedCol
 					}
 
-					insertStmt := fmt.Sprintf("INSERT INTO \"%s\".\"%s\" (%s) VALUES (%s);\n",
-						config.Name, table,
+					quotedSchema, err := quoteIdentifier(config.Name, "postgres")
+					if err != nil {
+						rows.Close()
+						return apperror.NewErrorf("invalid schema name").AddError(err)
+					}
+					quotedTableForInsert, err := quoteIdentifier(table, "postgres")
+					if err != nil {
+						rows.Close()
+						return apperror.NewErrorf("invalid table name").AddError(err)
+					}
+
+					insertStmt := fmt.Sprintf("INSERT INTO %s.%s (%s) VALUES (%s);\n",
+						quotedSchema, quotedTableForInsert,
 						fmt.Sprintf("%s", fmt.Sprint(colsList)[1:len(fmt.Sprint(colsList))-1]),
 						fmt.Sprintf("%s", fmt.Sprint(valueStrings)[1:len(fmt.Sprint(valueStrings))-1]))
 					_, err = backupFile.WriteString(insertStmt)
@@ -997,5 +1043,37 @@ func Restore(backupPath string) error {
 
 	default:
 		return apperror.NewErrorf("unsupported database driver for restore: %v", config.Driver)
+	}
+}
+
+// validateIdentifier checks if a SQL identifier is safe to use
+// Identifiers can only contain alphanumeric characters, underscores, hyphens, and dots
+func validateIdentifier(identifier string) error {
+	if identifier == "" {
+		return apperror.NewErrorf("identifier cannot be empty")
+	}
+	for _, char := range identifier {
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '_' || char == '-' || char == '.') {
+			return apperror.NewErrorf("invalid character in identifier: %c", char)
+		}
+	}
+	return nil
+}
+
+// quoteIdentifier safely quotes a SQL identifier for the given driver
+func quoteIdentifier(identifier string, driver string) (string, error) {
+	if err := validateIdentifier(identifier); err != nil {
+		return "", err
+	}
+	switch driver {
+	case "mysql", "mariadb":
+		return "`" + identifier + "`", nil
+	case "postgres":
+		return "\"" + identifier + "\"", nil
+	case "sqlite":
+		return "\"" + identifier + "\"", nil
+	default:
+		return "", apperror.NewErrorf("unsupported driver: %s", driver)
 	}
 }
