@@ -823,21 +823,31 @@ func Backup(path string) error {
 						return apperror.NewErrorf("failed to scan row").AddError(err)
 					}
 
-					var valueStrings []string
-					for _, val := range values {
-						if val == nil {
-							valueStrings = append(valueStrings, "NULL")
-						} else {
-							switch v := val.(type) {
-							case []byte:
-								valueStrings = append(valueStrings, fmt.Sprintf("'%s'", string(v)))
-							case string:
-								valueStrings = append(valueStrings, fmt.Sprintf("'%s'", v))
-							default:
-								valueStrings = append(valueStrings, fmt.Sprintf("%v", v))
-							}
+				var valueStrings []string
+				for _, val := range values {
+					if val == nil {
+						valueStrings = append(valueStrings, "NULL")
+					} else {
+						switch v := val.(type) {
+						case []byte:
+							escaped := strings.ReplaceAll(string(v), "\\", "\\\\")
+							escaped = strings.ReplaceAll(escaped, "'", "''")
+							escaped = strings.ReplaceAll(escaped, "\n", "\\n")
+							escaped = strings.ReplaceAll(escaped, "\r", "\\r")
+							valueStrings = append(valueStrings, fmt.Sprintf("'%s'", escaped))
+						case string:
+							escaped := strings.ReplaceAll(v, "\\", "\\\\")
+							escaped = strings.ReplaceAll(escaped, "'", "''")
+							escaped = strings.ReplaceAll(escaped, "\n", "\\n")
+							escaped = strings.ReplaceAll(escaped, "\r", "\\r")
+							valueStrings = append(valueStrings, fmt.Sprintf("'%s'", escaped))
+						case time.Time:
+							valueStrings = append(valueStrings, fmt.Sprintf("'%s'", v.Format("2006-01-02 15:04:05")))
+						default:
+							valueStrings = append(valueStrings, fmt.Sprintf("%v", v))
 						}
 					}
+				}
 
 					colsList := make([]string, len(columns))
 					for i, col := range columns {
