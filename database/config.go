@@ -23,6 +23,10 @@ func (c *Config) Validate() error {
 		return apperror.NewError("database driver is required")
 	}
 
+	if c.Driver != "sqlite" && c.Driver != "mysql" && c.Driver != "mariadb" && c.Driver != "postgres" {
+		return apperror.NewError("unsupported database driver: " + c.Driver)
+	}
+
 	switch c.Driver {
 	case "sqlite":
 		if c.Name == "" {

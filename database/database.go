@@ -83,6 +83,7 @@ import (
 	"github.com/valentin-kaiser/go-core/logging"
 	"github.com/valentin-kaiser/go-core/version"
 	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	gl "gorm.io/gorm/logger"
@@ -362,6 +363,65 @@ func connect(config Config) (*gorm.DB, error) {
 		db = conn
 		dbMutex.Unlock()
 
+		return conn, nil
+	case "postgres":
+		create, err := gorm.Open(postgres.Open(fmt.Sprintf(
+			"host=%v port=%v user=%v password=%v dbname=postgres sslmode=disable",
+			config.Host,
+			config.Port,
+			config.User,
+			config.Password,
+		)), cfg)
+		if err != nil {
+			return nil, apperror.Wrap(err)
+		}
+		sdb, err := create.DB()
+		if err != nil {
+			return nil, apperror.Wrap(err)
+		}
+		defer apperror.Catch(sdb.Close, "closing temporary database connection failed")
+
+		var exists bool
+		err = create.Raw("SELECT exists (SELECT 1 FROM pg_database WHERE datname = ?);", config.Name).Scan(&exists).Error
+		if err != nil {
+			return nil, apperror.Wrap(err)
+		}
+
+		if !exists {
+			err = create.Exec(fmt.Sprintf("CREATE DATABASE \"%s\";", config.Name)).Error
+			if err != nil {
+				return nil, apperror.Wrap(err)
+			}
+		}
+
+		conn, err := gorm.Open(postgres.Open(fmt.Sprintf(
+			"host=%v port=%v user=%v password=%v dbname=%v sslmode=disable search_path=%v",
+			config.Host,
+			config.Port,
+			config.User,
+			config.Password,
+			config.Name,
+			config.Name+",public",
+		)), cfg)
+		if err != nil {
+			return nil, apperror.Wrap(err)
+		}
+
+		err = conn.Raw("SELECT exists (SELECT 1 FROM information_schema.schemata WHERE schema_name = ?);", config.Name).Scan(&exists).Error
+		if err != nil {
+			return nil, apperror.Wrap(err)
+		}
+
+		if !exists {
+			err = conn.Debug().Exec(fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS \"%s\";", config.Name)).Error
+			if err != nil {
+				return nil, apperror.Wrap(err)
+			}
+		}
+
+		dbMutex.Lock()
+		db = conn
+		dbMutex.Unlock()
 		return conn, nil
 	default:
 		return nil, apperror.NewErrorf("unsupported database driver: %v", config.Driver)
