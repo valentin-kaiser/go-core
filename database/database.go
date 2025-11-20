@@ -73,6 +73,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -83,6 +84,7 @@ import (
 	"github.com/valentin-kaiser/go-core/logging"
 	"github.com/valentin-kaiser/go-core/version"
 	"gorm.io/driver/mysql"
+	"gorm.io/driver/postgres"
 	"gorm.io/driver/sqlite"
 	"gorm.io/gorm"
 	gl "gorm.io/gorm/logger"
@@ -91,6 +93,8 @@ import (
 var (
 	db               *gorm.DB
 	dbMutex          sync.RWMutex
+	config           *Config
+	configMutex      sync.RWMutex
 	connected        atomic.Bool
 	failed           atomic.Bool
 	cancel           atomic.Bool
@@ -149,7 +153,11 @@ func Connected() bool {
 }
 
 // Reconnect will set the connected state to false and trigger a reconnect
-func Reconnect() {
+func Reconnect(c Config) {
+	configMutex.Lock()
+	config = &c
+	configMutex.Unlock()
+
 	logger.Trace().Msg("reconnecting...")
 	connected.Store(false)
 	failed.Store(false)
@@ -183,7 +191,11 @@ func AwaitConnection() {
 
 // Connect will try to connect to the database every interval until it is connected
 // It will also check if the connection is still alive every interval and reconnect if it is not
-func Connect(interval time.Duration, config Config) {
+func Connect(interval time.Duration, c Config) {
+	configMutex.Lock()
+	config = &c
+	configMutex.Unlock()
+
 	go func() {
 		for {
 			func() {
@@ -193,7 +205,7 @@ func Connect(interval time.Duration, config Config) {
 				// If we are not connected to the database, try to connect
 				if !connected.Load() {
 					var err error
-					dbInstance, err := connect(config)
+					dbInstance, err := connect()
 					if err != nil {
 						// Prevent spamming the logs with connection errors
 						if !failed.Load() {
@@ -207,14 +219,14 @@ func Connect(interval time.Duration, config Config) {
 					db = dbInstance
 					dbMutex.Unlock()
 
-					onConnect(config)
+					onConnect(c)
 					handlerMutex.Lock()
 					handlers := make([]func(db *gorm.DB, config Config) error, len(onConnectHandler))
 					copy(handlers, onConnectHandler)
 					handlerMutex.Unlock()
 
 					for _, handler := range handlers {
-						err := handler(dbInstance, config)
+						err := handler(dbInstance, c)
 						if err != nil {
 							logger.Error().Err(err).Msg("onConnect handler failed")
 							failed.Store(true)
@@ -267,7 +279,10 @@ func RegisterOnConnectHandler(handler func(db *gorm.DB, config Config) error) {
 }
 
 // connect will try to connect to the database and return the connection
-func connect(config Config) (*gorm.DB, error) {
+func connect() (*gorm.DB, error) {
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+
 	// Silence gorm internal logging
 	newLogger := gl.New(
 		logger,
@@ -340,7 +355,12 @@ func connect(config Config) (*gorm.DB, error) {
 		}
 		defer apperror.Catch(sdb.Close, "closing temporary database connection failed")
 
-		err = create.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS `%s`;", config.Name)).Error
+		quotedName, err := quoteIdentifier(config.Name, "mysql")
+		if err != nil {
+			return nil, apperror.NewErrorf("invalid database name").AddError(err)
+		}
+
+		err = create.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s;", quotedName)).Error
 		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
@@ -362,6 +382,73 @@ func connect(config Config) (*gorm.DB, error) {
 		db = conn
 		dbMutex.Unlock()
 
+		return conn, nil
+	case "postgres":
+		create, err := gorm.Open(postgres.Open(fmt.Sprintf(
+			"host=%v port=%v user=%v password=%v dbname=postgres sslmode=disable",
+			config.Host,
+			config.Port,
+			config.User,
+			config.Password,
+		)), cfg)
+		if err != nil {
+			return nil, apperror.Wrap(err)
+		}
+		sdb, err := create.DB()
+		if err != nil {
+			return nil, apperror.Wrap(err)
+		}
+		defer apperror.Catch(sdb.Close, "closing temporary database connection failed")
+
+		var exists bool
+		err = create.Raw("SELECT exists (SELECT 1 FROM pg_database WHERE datname = ?);", config.Name).Scan(&exists).Error
+		if err != nil {
+			return nil, apperror.Wrap(err)
+		}
+
+		if !exists {
+			quotedName, err := quoteIdentifier(config.Name, "postgres")
+			if err != nil {
+				return nil, apperror.NewErrorf("invalid database name").AddError(err)
+			}
+			err = create.Exec(fmt.Sprintf("CREATE DATABASE %s;", quotedName)).Error
+			if err != nil {
+				return nil, apperror.Wrap(err)
+			}
+		}
+
+		conn, err := gorm.Open(postgres.Open(fmt.Sprintf(
+			"host=%v port=%v user=%v password=%v dbname=%v sslmode=disable search_path=%v",
+			config.Host,
+			config.Port,
+			config.User,
+			config.Password,
+			config.Name,
+			config.Name+",public",
+		)), cfg)
+		if err != nil {
+			return nil, apperror.Wrap(err)
+		}
+
+		err = conn.Raw("SELECT exists (SELECT 1 FROM information_schema.schemata WHERE schema_name = ?);", config.Name).Scan(&exists).Error
+		if err != nil {
+			return nil, apperror.Wrap(err)
+		}
+
+		if !exists {
+			quotedName, err := quoteIdentifier(config.Name, "postgres")
+			if err != nil {
+				return nil, apperror.NewErrorf("invalid schema name").AddError(err)
+			}
+			err = conn.Debug().Exec(fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s;", quotedName)).Error
+			if err != nil {
+				return nil, apperror.Wrap(err)
+			}
+		}
+
+		dbMutex.Lock()
+		db = conn
+		dbMutex.Unlock()
 		return conn, nil
 	default:
 		return nil, apperror.NewErrorf("unsupported database driver: %v", config.Driver)
@@ -424,5 +511,579 @@ func onConnect(config Config) {
 		if err != nil {
 			logger.Warn().Err(err).Msg("vacuum failed")
 		}
+	}
+}
+
+// Backup creates a backup of the database to the specified path.
+// For SQLite: copies the database file
+// For MySQL/MariaDB: uses mysqldump
+// For PostgreSQL: uses pg_dump
+// Returns an error if the database is not connected or if the backup fails.
+func Backup(path string) error {
+	if !connected.Load() {
+		return apperror.NewErrorf("database is not connected")
+	}
+
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0750); err != nil {
+		return apperror.NewErrorf("failed to create backup directory").AddError(err)
+	}
+
+	switch config.Driver {
+	case "sqlite":
+		dbMutex.RLock()
+		dbInstance := db
+		dbMutex.RUnlock()
+
+		// Execute a checkpoint to ensure all WAL data is in the main database file
+		err := dbInstance.Exec("PRAGMA wal_checkpoint(TRUNCATE);").Error
+		if err != nil {
+			return apperror.NewErrorf("failed to checkpoint WAL").AddError(err)
+		}
+
+		// Determine source path
+		var sourcePath string
+		if config.Name == ":memory:" {
+			return apperror.NewErrorf("cannot backup in-memory database")
+		}
+		sourcePath = filepath.Join(flag.Path, config.Name+".db")
+
+		// Copy the database file
+		sourceData, err := os.ReadFile(sourcePath)
+		if err != nil {
+			return apperror.NewErrorf("failed to read database file").AddError(err)
+		}
+
+		err = os.WriteFile(path, sourceData, 0640)
+		if err != nil {
+			return apperror.NewErrorf("failed to write backup file").AddError(err)
+		}
+
+		logger.Info().Msgf("database backup created: %s", path)
+		return nil
+
+	case "mysql", "mariadb":
+		dbMutex.RLock()
+		dbInstance := db
+		dbMutex.RUnlock()
+
+		if dbInstance == nil {
+			return apperror.NewErrorf("database instance is nil")
+		}
+
+		backupFile, err := os.Create(path)
+		if err != nil {
+			return apperror.NewErrorf("failed to create backup file").AddError(err)
+		}
+		defer backupFile.Close()
+
+		_, err = backupFile.WriteString(fmt.Sprintf("-- MySQL/MariaDB database backup\n-- Database: %s\n-- Generated: %s\n\n",
+			config.Name, time.Now().Format(time.RFC3339)))
+		if err != nil {
+			return apperror.NewErrorf("failed to write backup header").AddError(err)
+		}
+
+		_, err = backupFile.WriteString("SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS = 0;\n\n")
+		if err != nil {
+			return apperror.NewErrorf("failed to write charset settings").AddError(err)
+		}
+
+		var tables []string
+		err = dbInstance.Raw("SHOW TABLES").Scan(&tables).Error
+		if err != nil {
+			return apperror.NewErrorf("failed to get table list").AddError(err)
+		}
+
+		for _, table := range tables {
+			quotedTable, err := quoteIdentifier(table, "mysql")
+			if err != nil {
+				logger.Warn().Err(err).Msgf("invalid table name: %s", table)
+				continue
+			}
+			var tableName, createStmt string
+			err = dbInstance.Raw(fmt.Sprintf("SHOW CREATE TABLE %s", quotedTable)).Row().Scan(&tableName, &createStmt)
+			if err != nil {
+				logger.Warn().Err(err).Msgf("failed to get schema for table %s", table)
+				continue
+			}
+
+			_, err = backupFile.WriteString(fmt.Sprintf("\n-- Table structure for %s\nDROP TABLE IF EXISTS `%s`;\n%s;\n\n",
+				table, table, createStmt))
+			if err != nil {
+				return apperror.NewErrorf("failed to write table schema").AddError(err)
+			}
+
+			rows, err := dbInstance.Table(table).Rows()
+			if err != nil {
+				logger.Warn().Err(err).Msgf("failed to read data from table %s", table)
+				continue
+			}
+
+			columns, err := rows.Columns()
+			if err != nil {
+				rows.Close()
+				return apperror.NewErrorf("failed to get columns for table %s", table).AddError(err)
+			}
+
+			if len(columns) > 0 {
+				_, err = backupFile.WriteString(fmt.Sprintf("-- Data for table %s\n", table))
+				if err != nil {
+					rows.Close()
+					return apperror.NewErrorf("failed to write data header").AddError(err)
+				}
+
+				hasData := false
+				values := make([]interface{}, len(columns))
+				valuePtrs := make([]interface{}, len(columns))
+				for i := range values {
+					valuePtrs[i] = &values[i]
+				}
+
+				colsList := make([]string, len(columns))
+				for i, col := range columns {
+					quotedCol, err := quoteIdentifier(col, "mysql")
+					if err != nil {
+						rows.Close()
+						return apperror.NewErrorf("invalid column name").AddError(err)
+					}
+					colsList[i] = quotedCol
+				}
+				colsStr := strings.Join(colsList, ", ")
+
+				for rows.Next() {
+					if !hasData {
+						quotedTableForInsert, err := quoteIdentifier(table, "mysql")
+						if err != nil {
+							rows.Close()
+							return apperror.NewErrorf("invalid table name for insert").AddError(err)
+						}
+						_, err = backupFile.WriteString(fmt.Sprintf("INSERT INTO %s (%s) VALUES\n", quotedTableForInsert, colsStr))
+						if err != nil {
+							rows.Close()
+							return apperror.NewErrorf("failed to write insert header").AddError(err)
+						}
+						hasData = true
+					} else {
+						_, err = backupFile.WriteString(",\n")
+						if err != nil {
+							rows.Close()
+							return apperror.NewErrorf("failed to write comma").AddError(err)
+						}
+					}
+
+					err = rows.Scan(valuePtrs...)
+					if err != nil {
+						rows.Close()
+						return apperror.NewErrorf("failed to scan row").AddError(err)
+					}
+
+					// Build value list
+					var valueStrings []string
+					for _, val := range values {
+						if val == nil {
+							valueStrings = append(valueStrings, "NULL")
+						} else {
+							switch v := val.(type) {
+							case []byte:
+								escaped := strings.ReplaceAll(string(v), "\\", "\\\\")
+								escaped = strings.ReplaceAll(escaped, "'", "\\'")
+								escaped = strings.ReplaceAll(escaped, "\n", "\\n")
+								escaped = strings.ReplaceAll(escaped, "\r", "\\r")
+								valueStrings = append(valueStrings, fmt.Sprintf("'%s'", escaped))
+							case string:
+								escaped := strings.ReplaceAll(v, "\\", "\\\\")
+								escaped = strings.ReplaceAll(escaped, "'", "\\'")
+								escaped = strings.ReplaceAll(escaped, "\n", "\\n")
+								escaped = strings.ReplaceAll(escaped, "\r", "\\r")
+								valueStrings = append(valueStrings, fmt.Sprintf("'%s'", escaped))
+							case time.Time:
+								valueStrings = append(valueStrings, fmt.Sprintf("'%s'", v.Format("2006-01-02 15:04:05")))
+							default:
+								valueStrings = append(valueStrings, fmt.Sprintf("%v", v))
+							}
+						}
+					}
+
+					_, err = backupFile.WriteString(fmt.Sprintf("(%s)", strings.Join(valueStrings, ", ")))
+					if err != nil {
+						rows.Close()
+						return apperror.NewErrorf("failed to write values").AddError(err)
+					}
+				}
+
+				if hasData {
+					_, err = backupFile.WriteString(";\n\n")
+					if err != nil {
+						rows.Close()
+						return apperror.NewErrorf("failed to write statement terminator").AddError(err)
+					}
+				}
+			}
+			rows.Close()
+		}
+
+		// Re-enable foreign key checks
+		_, err = backupFile.WriteString("SET FOREIGN_KEY_CHECKS = 1;\n")
+		if err != nil {
+			return apperror.NewErrorf("failed to write footer").AddError(err)
+		}
+
+		logger.Info().Msgf("database backup created: %s", path)
+		return nil
+
+	case "postgres":
+		dbMutex.RLock()
+		dbInstance := db
+		dbMutex.RUnlock()
+
+		if dbInstance == nil {
+			return apperror.NewErrorf("database instance is nil")
+		}
+
+		backupFile, err := os.Create(path)
+		if err != nil {
+			return apperror.NewErrorf("failed to create backup file").AddError(err)
+		}
+		defer backupFile.Close()
+
+		_, err = backupFile.WriteString(fmt.Sprintf("-- PostgreSQL database backup\n-- Database: %s\n-- Generated: %s\n\n",
+			config.Name, time.Now().Format(time.RFC3339)))
+		if err != nil {
+			return apperror.NewErrorf("failed to write backup header").AddError(err)
+		}
+
+		var tables []string
+		err = dbInstance.Raw(`
+			SELECT tablename 
+			FROM pg_tables 
+			WHERE schemaname = ?
+			ORDER BY tablename
+		`, config.Name).Scan(&tables).Error
+		if err != nil {
+			return apperror.NewErrorf("failed to get table list").AddError(err)
+		}
+
+		for _, table := range tables {
+			var createStmt string
+			err = dbInstance.Raw(`
+				SELECT 'CREATE TABLE IF NOT EXISTS "' || c.relname || '" (' || 
+					string_agg(a.attname || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod) || 
+						CASE WHEN a.attnotnull THEN ' NOT NULL' ELSE '' END, ', ') || 
+					');' as create_stmt
+				FROM pg_class c
+				JOIN pg_namespace n ON n.oid = c.relnamespace
+				JOIN pg_attribute a ON a.attrelid = c.oid
+				WHERE c.relname = ? AND n.nspname = ? AND a.attnum > 0 AND NOT a.attisdropped
+				GROUP BY c.relname
+			`, table, config.Name).Scan(&createStmt).Error
+			if err != nil {
+				logger.Warn().Err(err).Msgf("failed to get schema for table %s", table)
+				continue
+			}
+
+			_, err = backupFile.WriteString(fmt.Sprintf("\n-- Table: %s\n%s\n\n", table, createStmt))
+			if err != nil {
+				return apperror.NewErrorf("failed to write table schema").AddError(err)
+			}
+
+			// Use schema-qualified table name with proper quoting
+			qualifiedTable := fmt.Sprintf("%s.%s", config.Name, table)
+			rows, err := dbInstance.Table(qualifiedTable).Rows()
+			if err != nil {
+				logger.Warn().Err(err).Msgf("failed to read data from table %s", table)
+				continue
+			}
+
+			columns, err := rows.Columns()
+			if err != nil {
+				rows.Close()
+				return apperror.NewErrorf("failed to get columns for table %s", table).AddError(err)
+			}
+
+			if len(columns) > 0 {
+				_, err = backupFile.WriteString(fmt.Sprintf("-- Data for table: %s\n", table))
+				if err != nil {
+					rows.Close()
+					return apperror.NewErrorf("failed to write data header").AddError(err)
+				}
+
+				values := make([]interface{}, len(columns))
+				valuePtrs := make([]interface{}, len(columns))
+				for i := range values {
+					valuePtrs[i] = &values[i]
+				}
+
+				for rows.Next() {
+					err = rows.Scan(valuePtrs...)
+					if err != nil {
+						rows.Close()
+						return apperror.NewErrorf("failed to scan row").AddError(err)
+					}
+
+				var valueStrings []string
+				for _, val := range values {
+					if val == nil {
+						valueStrings = append(valueStrings, "NULL")
+					} else {
+						switch v := val.(type) {
+						case []byte:
+							escaped := strings.ReplaceAll(string(v), "\\", "\\\\")
+							escaped = strings.ReplaceAll(escaped, "'", "''")
+							escaped = strings.ReplaceAll(escaped, "\n", "\\n")
+							escaped = strings.ReplaceAll(escaped, "\r", "\\r")
+							valueStrings = append(valueStrings, fmt.Sprintf("'%s'", escaped))
+						case string:
+							escaped := strings.ReplaceAll(v, "\\", "\\\\")
+							escaped = strings.ReplaceAll(escaped, "'", "''")
+							escaped = strings.ReplaceAll(escaped, "\n", "\\n")
+							escaped = strings.ReplaceAll(escaped, "\r", "\\r")
+							valueStrings = append(valueStrings, fmt.Sprintf("'%s'", escaped))
+						case time.Time:
+							valueStrings = append(valueStrings, fmt.Sprintf("'%s'", v.Format("2006-01-02 15:04:05")))
+						default:
+							valueStrings = append(valueStrings, fmt.Sprintf("%v", v))
+						}
+					}
+				}
+
+					colsList := make([]string, len(columns))
+					for i, col := range columns {
+						quotedCol, err := quoteIdentifier(col, "postgres")
+						if err != nil {
+							rows.Close()
+							return apperror.NewErrorf("invalid column name").AddError(err)
+						}
+						colsList[i] = quotedCol
+					}
+
+					quotedSchema, err := quoteIdentifier(config.Name, "postgres")
+					if err != nil {
+						rows.Close()
+						return apperror.NewErrorf("invalid schema name").AddError(err)
+					}
+					quotedTableForInsert, err := quoteIdentifier(table, "postgres")
+					if err != nil {
+						rows.Close()
+						return apperror.NewErrorf("invalid table name").AddError(err)
+					}
+
+					insertStmt := fmt.Sprintf("INSERT INTO %s.%s (%s) VALUES (%s);\n",
+						quotedSchema, quotedTableForInsert,
+						strings.Join(colsList, ", "),
+						strings.Join(valueStrings, ", "))
+					_, err = backupFile.WriteString(insertStmt)
+					if err != nil {
+						rows.Close()
+						return apperror.NewErrorf("failed to write insert statement").AddError(err)
+					}
+				}
+			}
+			rows.Close()
+			_, err = backupFile.WriteString("\n")
+			if err != nil {
+				return apperror.NewErrorf("failed to write newline").AddError(err)
+			}
+		}
+
+		logger.Info().Msgf("database backup created: %s", path)
+		return nil
+
+	default:
+		return apperror.NewErrorf("unsupported database driver for backup: %v", config.Driver)
+	}
+}
+
+// Restore restores the database from a backup file at the specified path.
+// For SQLite: replaces the current database file with the backup
+// For MySQL/MariaDB: uses mysql client to restore from SQL dump
+// For PostgreSQL: uses psql to restore from SQL dump
+// Returns an error if the database is not connected or if the restore fails.
+// WARNING: This will overwrite the current database. Ensure you have a backup before restoring.
+func Restore(backupPath string) error {
+	if !connected.Load() {
+		return apperror.NewErrorf("database is not connected")
+	}
+
+	configMutex.RLock()
+	defer configMutex.RUnlock()
+
+	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+		return apperror.NewErrorf("backup file does not exist: %s", backupPath)
+	}
+
+	switch config.Driver {
+	case "sqlite":
+		if config.Name == ":memory:" {
+			return apperror.NewErrorf("cannot restore to in-memory database")
+		}
+
+		dbMutex.RLock()
+		dbInstance := db
+		dbMutex.RUnlock()
+
+		if dbInstance != nil {
+			sqlDB, err := dbInstance.DB()
+			if err != nil {
+				return apperror.NewErrorf("failed to get database instance").AddError(err)
+			}
+			err = sqlDB.Close()
+			if err != nil {
+				return apperror.NewErrorf("failed to close database connection").AddError(err)
+			}
+		}
+
+		connected.Store(false)
+
+		targetPath := filepath.Join(flag.Path, config.Name+".db")
+		backupData, err := os.ReadFile(backupPath)
+		if err != nil {
+			return apperror.NewErrorf("failed to read backup file").AddError(err)
+		}
+
+		err = os.WriteFile(targetPath, backupData, 0640)
+		if err != nil {
+			return apperror.NewErrorf("failed to write database file").AddError(err)
+		}
+
+		os.Remove(targetPath + "-wal")
+		os.Remove(targetPath + "-shm")
+
+		logger.Info().Msgf("database restored from backup: %s", backupPath)
+
+		Reconnect(*config)
+		return nil
+
+	case "mysql", "mariadb":
+		dbMutex.RLock()
+		dbInstance := db
+		dbMutex.RUnlock()
+
+		if dbInstance == nil {
+			return apperror.NewErrorf("database instance is nil")
+		}
+
+		backupData, err := os.ReadFile(backupPath)
+		if err != nil {
+			return apperror.NewErrorf("failed to read backup file").AddError(err)
+		}
+
+		sqlContent := string(backupData)
+		statements := []string{}
+		currentStmt := ""
+
+		for _, line := range strings.Split(sqlContent, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "--") {
+				continue
+			}
+
+			currentStmt += line + "\n"
+			if strings.HasSuffix(trimmed, ";") {
+				statements = append(statements, currentStmt)
+				currentStmt = ""
+			}
+		}
+
+		for _, stmt := range statements {
+			if strings.TrimSpace(stmt) == "" {
+				continue
+			}
+			err := dbInstance.Exec(stmt).Error
+			if err != nil {
+				logger.Warn().Err(err).Msgf("failed to execute statement: %s", stmt[:min(50, len(stmt))])
+			}
+		}
+
+		logger.Info().Msgf("database restored from backup: %s", backupPath)
+		return nil
+
+	case "postgres":
+		dbMutex.RLock()
+		dbInstance := db
+		dbMutex.RUnlock()
+
+		if dbInstance == nil {
+			return apperror.NewErrorf("database instance is nil")
+		}
+
+		backupData, err := os.ReadFile(backupPath)
+		if err != nil {
+			return apperror.NewErrorf("failed to read backup file").AddError(err)
+		}
+
+		sqlContent := string(backupData)
+		statements := []string{}
+		currentStmt := ""
+
+		for _, line := range strings.Split(sqlContent, "\n") {
+			trimmed := strings.TrimSpace(line)
+			if trimmed == "" || strings.HasPrefix(trimmed, "--") {
+				continue
+			}
+
+			currentStmt += line + "\n"
+
+			if strings.HasSuffix(trimmed, ";") {
+				statements = append(statements, currentStmt)
+				currentStmt = ""
+			}
+		}
+
+		err = dbInstance.Transaction(func(tx *gorm.DB) error {
+			for _, stmt := range statements {
+				if strings.TrimSpace(stmt) == "" {
+					continue
+				}
+				err := tx.Exec(stmt).Error
+				if err != nil {
+					logger.Warn().Err(err).Msgf("failed to execute statement: %s", stmt[:min(50, len(stmt))])
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return apperror.NewErrorf("failed to restore database").AddError(err)
+		}
+
+		logger.Info().Msgf("database restored from backup: %s", backupPath)
+		return nil
+
+	default:
+		return apperror.NewErrorf("unsupported database driver for restore: %v", config.Driver)
+	}
+}
+
+// validateIdentifier checks if a SQL identifier is safe to use
+// Identifiers can only contain alphanumeric characters, underscores, hyphens, and dots
+func validateIdentifier(identifier string) error {
+	if identifier == "" {
+		return apperror.NewErrorf("identifier cannot be empty")
+	}
+	for _, char := range identifier {
+		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || char == '_' || char == '-' || char == '.') {
+			return apperror.NewErrorf("invalid character in identifier: %c", char)
+		}
+	}
+	return nil
+}
+
+// quoteIdentifier safely quotes a SQL identifier for the given driver
+func quoteIdentifier(identifier string, driver string) (string, error) {
+	if err := validateIdentifier(identifier); err != nil {
+		return "", err
+	}
+	switch driver {
+	case "mysql", "mariadb":
+		return "`" + identifier + "`", nil
+	case "postgres":
+		return "\"" + identifier + "\"", nil
+	case "sqlite":
+		return "\"" + identifier + "\"", nil
+	default:
+		return "", apperror.NewErrorf("unsupported driver: %s", driver)
 	}
 }

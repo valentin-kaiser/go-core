@@ -2,7 +2,7 @@ package database
 
 import (
 	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/config"
+	core "github.com/valentin-kaiser/go-core/config"
 )
 
 // Config holds the configuration for the database connection
@@ -21,6 +21,10 @@ type Config struct {
 func (c *Config) Validate() error {
 	if c.Driver == "" {
 		return apperror.NewError("database driver is required")
+	}
+
+	if c.Driver != "sqlite" && c.Driver != "mysql" && c.Driver != "mariadb" && c.Driver != "postgres" {
+		return apperror.NewError("unsupported database driver: " + c.Driver)
 	}
 
 	switch c.Driver {
@@ -50,5 +54,5 @@ func (c *Config) Validate() error {
 
 // Changed checks if the configuration has changed
 func (c *Config) Changed(n *Config) bool {
-	return config.Changed(c, n)
+	return core.Changed(c, n)
 }

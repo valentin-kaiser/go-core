@@ -176,7 +176,9 @@ func TestExecuteWithoutConnection(t *testing.T) {
 
 func TestReconnect(t *testing.T) {
 	// Test that Reconnect doesn't panic
-	database.Reconnect()
+	database.Reconnect(database.Config{
+		Driver: "invalid-driver",
+	})
 
 	// Should still not be connected after reconnect without actual connection
 	if database.Connected() {
