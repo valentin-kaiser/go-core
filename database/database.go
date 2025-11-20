@@ -862,8 +862,8 @@ func Backup(path string) error {
 
 					insertStmt := fmt.Sprintf("INSERT INTO %s.%s (%s) VALUES (%s);\n",
 						quotedSchema, quotedTableForInsert,
-						fmt.Sprintf("%s", fmt.Sprint(colsList)[1:len(fmt.Sprint(colsList))-1]),
-						fmt.Sprintf("%s", fmt.Sprint(valueStrings)[1:len(fmt.Sprint(valueStrings))-1]))
+						strings.Join(colsList, ", "),
+						strings.Join(valueStrings, ", "))
 					_, err = backupFile.WriteString(insertStmt)
 					if err != nil {
 						rows.Close()
