@@ -105,9 +105,9 @@ func Catch() {
 		if flag.Debug {
 			content = fmt.Sprintf("Caller: %v\nLine: %v\nError: %v\n\nStack Trace:\n%s\n", caller, line, err, string(debug.Stack()))
 		}
-		err := os.WriteFile(name, []byte(content), 0644)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "failed to write panic: %v", apperror.Wrap(err))
+		werr := os.WriteFile(name, []byte(content), 0644)
+		if werr != nil {
+			fmt.Fprintf(os.Stderr, "failed to write panic: %v", apperror.Wrap(werr))
 		}
 	}
 }
