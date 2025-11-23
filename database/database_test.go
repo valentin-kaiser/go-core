@@ -1,13 +1,12 @@
 package database_test
 
 import (
-	"errors"
+	"database/sql"
 	"testing"
 	"time"
 
 	"github.com/valentin-kaiser/go-core/database"
 	"github.com/valentin-kaiser/go-core/version"
-	"gorm.io/gorm"
 )
 
 func TestConfig_Validate(t *testing.T) {
@@ -143,9 +142,11 @@ func TestConfig_Validate(t *testing.T) {
 }
 
 func TestConnected(t *testing.T) {
+	// Create a new database instance
+	db := database.New("test")
+
 	// Test that we can call the function without panic
-	// Note: We don't test the initial state since other tests may have connected
-	result := database.Connected()
+	result := db.Connected()
 
 	// The result should be a boolean (true or false)
 	if result != true && result != false {
@@ -154,18 +155,11 @@ func TestConnected(t *testing.T) {
 }
 
 func TestExecuteWithoutConnection(t *testing.T) {
-	// Ensure we're in a disconnected state for this test
-	// Only disconnect if currently connected to avoid hanging
-	if database.Connected() {
-		err := database.Disconnect()
-		if err != nil {
-			t.Errorf("Disconnect should not return an error: %v", err)
-		}
-		time.Sleep(100 * time.Millisecond) // Wait for disconnection
-	}
+	// Create a new database instance
+	db := database.New("test")
 
 	// Test Execute when not connected
-	err := database.Execute(func(_ *gorm.DB) error {
+	err := db.Execute(func(_ *sql.DB) error {
 		return nil
 	})
 
@@ -175,38 +169,30 @@ func TestExecuteWithoutConnection(t *testing.T) {
 }
 
 func TestReconnect(t *testing.T) {
+	// Create a new database instance
+	db := database.New("test")
+
 	// Test that Reconnect doesn't panic
-	database.Reconnect(database.Config{
+	db.Reconnect(database.Config{
 		Driver: "invalid-driver",
 	})
 
 	// Should still not be connected after reconnect without actual connection
-	if database.Connected() {
+	if db.Connected() {
 		t.Error("Expected not connected after reconnect without connection")
 	}
 }
 
 func TestAwaitConnectionTimeout(t *testing.T) {
-	// Ensure we start in a disconnected state for this test
-	if database.Connected() {
-		err := database.Disconnect()
-		if err != nil {
-			t.Errorf("Disconnect should not return an error: %v", err)
-		}
-		time.Sleep(200 * time.Millisecond) // Wait for disconnection
-	}
-
-	// Verify we're actually disconnected
-	if database.Connected() {
-		t.Skip("Cannot test AwaitConnection timeout - database is still connected")
-	}
+	// Create a new database instance
+	db := database.New("test")
 
 	// Test AwaitConnection with timeout to avoid hanging
 	done := make(chan bool, 1)
 
 	go func() {
 		// This should block since we're not connected
-		database.AwaitConnection()
+		db.AwaitConnection()
 		done <- true
 	}()
 
@@ -221,30 +207,36 @@ func TestAwaitConnectionTimeout(t *testing.T) {
 }
 
 func TestConnectWithInvalidConfig(t *testing.T) {
+	// Create a new database instance
+	db := database.New("test")
+
 	// Test Connect with invalid config
 	config := database.Config{
 		Driver: "invalid-driver",
 	}
 
 	// This should not panic
-	database.Connect(time.Millisecond, config)
+	db.Connect(time.Millisecond, config)
 
 	// Give it a moment to try connecting
 	time.Sleep(10 * time.Millisecond)
 
 	// Should still not be connected
-	if database.Connected() {
+	if db.Connected() {
 		t.Error("Should not be connected with invalid config")
 	}
 
 	// Clean up
-	err := database.Disconnect()
+	err := db.Disconnect()
 	if err != nil {
 		t.Errorf("Disconnect should not return an error: %v", err)
 	}
 }
 
 func TestConnectWithSQLiteConfig(t *testing.T) {
+	// Create a new database instance
+	db := database.New("test")
+
 	// Test Connect with SQLite config (should work without external database)
 	config := database.Config{
 		Driver: "sqlite",
@@ -252,19 +244,20 @@ func TestConnectWithSQLiteConfig(t *testing.T) {
 	}
 
 	// This should not panic
-	database.Connect(time.Millisecond*100, config)
+	db.Connect(time.Millisecond*100, config)
 
 	// Give it more time to connect and run migrations
 	time.Sleep(500 * time.Millisecond)
 
 	// Should be connected to in-memory SQLite
-	if !database.Connected() {
+	if !db.Connected() {
 		t.Error("Should be connected to in-memory SQLite")
 	}
 
 	// Test Execute with connection
-	err := database.Execute(func(db *gorm.DB) error {
-		return db.Exec("SELECT 1").Error
+	err := db.Execute(func(sqlDB *sql.DB) error {
+		_, err := sqlDB.Exec("SELECT 1")
+		return err
 	})
 
 	if err != nil {
@@ -272,7 +265,7 @@ func TestConnectWithSQLiteConfig(t *testing.T) {
 	}
 
 	// Clean up
-	database.Disconnect()
+	db.Disconnect()
 
 	// Give it more time to disconnect since it's asynchronous
 	time.Sleep(200 * time.Millisecond)
@@ -281,26 +274,13 @@ func TestConnectWithSQLiteConfig(t *testing.T) {
 	// due to the asynchronous nature of the connection management
 }
 
-func TestRegisterSchema(_ *testing.T) {
-	// Test schema registration
-	type TestModel struct {
-		ID   uint   `gorm:"primaryKey"`
-		Name string `gorm:"not null"`
-	}
-
-	// This should not panic
-	database.RegisterSchema(&TestModel{})
-
-	// Test with multiple schemas
-	type AnotherModel struct {
-		ID    uint   `gorm:"primaryKey"`
-		Value string `gorm:"not null"`
-	}
-
-	database.RegisterSchema(&TestModel{}, &AnotherModel{})
-}
+// TestRegisterSchema is removed since RegisterSchema no longer exists in the sqlc version
+// Schema management should be done through SQL migrations using RegisterMigrationStep
 
 func TestRegisterMigrationStep(_ *testing.T) {
+	// Create a new database instance
+	db := database.New("test")
+
 	// Test migration step registration
 	v1 := version.Release{
 		GitTag:    "v1.0.0",
@@ -308,7 +288,7 @@ func TestRegisterMigrationStep(_ *testing.T) {
 	}
 
 	// This should not panic
-	database.RegisterMigrationStep(v1, func(_ *gorm.DB) error {
+	db.RegisterMigrationStep(v1, func(_ *sql.DB) error {
 		return nil
 	})
 
@@ -319,17 +299,20 @@ func TestRegisterMigrationStep(_ *testing.T) {
 	}
 
 	// This should also not panic during registration
-	database.RegisterMigrationStep(v2, func(_ *gorm.DB) error {
+	db.RegisterMigrationStep(v2, func(_ *sql.DB) error {
 		// Just return nil for testing - we don't want to actually fail migrations
 		return nil
 	})
 }
 
 func TestRegisterOnConnectHandler(t *testing.T) {
+	// Create a new database instance
+	db := database.New("test")
+
 	// Test OnConnect handler registration
 	var handlerCalled bool
 
-	database.RegisterOnConnectHandler(func(_ *gorm.DB, _ database.Config) error {
+	db.RegisterOnConnectHandler(func(_ *sql.DB, _ database.Config) error {
 		handlerCalled = true
 		return nil
 	})
@@ -340,12 +323,15 @@ func TestRegisterOnConnectHandler(t *testing.T) {
 	}
 
 	// Test handler with error
-	database.RegisterOnConnectHandler(func(_ *gorm.DB, _ database.Config) error {
-		return errors.New("handler error")
+	db.RegisterOnConnectHandler(func(_ *sql.DB, _ database.Config) error {
+		return sql.ErrConnDone
 	})
 }
 
 func TestDisconnectWithoutConnection(t *testing.T) {
+	// Create a new database instance
+	db := database.New("test")
+
 	// Test Disconnect when not connected
 	// The Disconnect function works by sending a signal through a channel
 	// Even when not connected, it should still handle the disconnect signal
@@ -353,9 +339,9 @@ func TestDisconnectWithoutConnection(t *testing.T) {
 
 	go func() {
 		// Start a connection attempt first to have something to disconnect
-		database.Connect(time.Millisecond, database.Config{Driver: "invalid"})
+		db.Connect(time.Millisecond, database.Config{Driver: "invalid"})
 		time.Sleep(10 * time.Millisecond)
-		database.Disconnect()
+		db.Disconnect()
 		done <- true
 	}()
 
@@ -430,14 +416,18 @@ func BenchmarkConfigValidate(b *testing.B) {
 }
 
 func BenchmarkConnected(b *testing.B) {
+	db := database.New("test")
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		database.Connected()
+		db.Connected()
 	}
 }
 
 func BenchmarkExecuteError(b *testing.B) {
+	db := database.New("test")
+	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = database.Execute(func(_ *gorm.DB) error {
+		_ = db.Execute(func(_ *sql.DB) error {
 			return nil
 		})
 	}
