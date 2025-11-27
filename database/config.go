@@ -15,6 +15,7 @@ type Config struct {
 	User     string `usage:"Database username"`
 	Password string `usage:"Database password"`
 	Name     string `usage:"Name of the database or sqlite file"`
+	Search   string `usage:"Search path (schema) for Postgres databases"`
 }
 
 // Validate checks if the configuration is valid

@@ -126,7 +126,6 @@ import (
 	"github.com/valentin-kaiser/go-core/flag"
 	"github.com/valentin-kaiser/go-core/interruption"
 	"github.com/valentin-kaiser/go-core/logging"
-	"github.com/valentin-kaiser/go-core/version"
 )
 
 // Database represents a database connection instance with its own state and configuration.
@@ -143,7 +142,6 @@ type Database struct {
 	onConnectHandler []func(db *sql.DB, config Config) error
 	handlerMutex     sync.Mutex
 	logger           logging.Adapter
-	migrationSteps   map[string]map[string][]Step
 	migrationMutex   sync.RWMutex
 }
 
@@ -153,7 +151,6 @@ func New(name string) *Database {
 	return &Database{
 		done:             make(chan bool),
 		logger:           logging.GetPackageLogger("database:" + name),
-		migrationSteps:   make(map[string]map[string][]Step),
 		onConnectHandler: make([]func(db *sql.DB, config Config) error, 0),
 	}
 }
@@ -288,7 +285,6 @@ func (d *Database) Connect(interval time.Duration, c Config) {
 					d.db = instance
 					d.dbMutex.Unlock()
 
-					d.onConnect(c)
 					d.handlerMutex.Lock()
 					handlers := make([]func(db *sql.DB, config Config) error, len(d.onConnectHandler))
 					copy(handlers, d.onConnectHandler)
@@ -419,7 +415,7 @@ func (d *Database) connect() (*sql.DB, error) {
 
 		// Now connect to the actual database
 		dsn := fmt.Sprintf(
-			"%v:%v@tcp(%v:%v)/%v?charset=utf8mb4&parseTime=True&loc=Local",
+			"%v:%v@tcp(%v:%v)/%v?charset=utf8mb4&parseTime=True&loc=Local&multiStatements=true",
 			d.config.User,
 			d.config.Password,
 			d.config.Host,
@@ -478,12 +474,13 @@ func (d *Database) connect() (*sql.DB, error) {
 
 		// Now connect to the actual database
 		dsn := fmt.Sprintf(
-			"host=%v port=%v user=%v password=%v dbname=%v sslmode=disable",
+			"host=%v port=%v user=%v password=%v dbname=%v sslmode=disable search_path=%v",
 			d.config.Host,
 			d.config.Port,
 			d.config.User,
 			d.config.Password,
 			d.config.Name,
+			d.config.Search,
 		)
 
 		conn, err := sql.Open("pgx", dsn)
@@ -496,97 +493,10 @@ func (d *Database) connect() (*sql.DB, error) {
 			return nil, apperror.Wrap(err)
 		}
 
-		// Create schema if it doesn't exist
-		err = conn.QueryRow("SELECT exists (SELECT 1 FROM information_schema.schemata WHERE schema_name = $1);", d.config.Name).Scan(&exists)
-		if err != nil {
-			conn.Close()
-			return nil, apperror.Wrap(err)
-		}
-
-		if !exists {
-			quotedName, err := quoteIdentifier(d.config.Name, "postgres")
-			if err != nil {
-				conn.Close()
-				return nil, apperror.NewErrorf("invalid schema name").AddError(err)
-			}
-			_, err = conn.Exec(fmt.Sprintf("CREATE SCHEMA IF NOT EXISTS %s;", quotedName))
-			if err != nil {
-				conn.Close()
-				return nil, apperror.Wrap(err)
-			}
-		}
-
-		// Set search path
-		_, err = conn.Exec(fmt.Sprintf("SET search_path TO %s, public;", d.config.Name))
-		if err != nil {
-			conn.Close()
-			return nil, apperror.Wrap(err)
-		}
-
 		return conn, nil
 
 	default:
 		return nil, apperror.NewErrorf("unsupported database driver: %v", d.config.Driver)
-	}
-}
-
-// onConnect is an internal Event handler that will be called when a Database Connection is successfully established
-// It will run the migration setup and check if the database is up to date
-func (d *Database) onConnect(config Config) {
-	err := setup(d.db, config.Driver)
-	if err != nil {
-		d.logger.Fatal().Err(err).Msg("schema setup failed")
-	}
-
-	// Check for the current version in the database
-	revision := version.Get()
-	exists, err := versionExists(d.db, config.Driver, revision.GitTag, revision.GitCommit)
-	if err != nil {
-		d.logger.Fatal().Err(err).Msg("version check failed")
-	}
-
-	if !exists {
-		// Run all registered migration steps
-		for _, steps := range d.getMigrationSteps() {
-			if len(steps) == 0 {
-				continue
-			}
-
-			// Check if this migration version already exists
-			stepExists, err := versionExists(d.db, config.Driver, steps[0].Version.GitTag, steps[0].Version.GitCommit)
-			if err != nil {
-				d.logger.Fatal().Err(err).Msg("migration version check failed")
-			}
-
-			if !stepExists {
-				for _, step := range steps {
-					// Execute all migration step actions for this version
-					err = step.Action(d.db)
-					if err != nil {
-						d.logger.Fatal().Err(err).Msg("migration failed")
-					}
-				}
-
-				// Create the version record for this migration step
-				err = insertVersion(d.db, config.Driver, steps[0].Version)
-				if err != nil {
-					d.logger.Fatal().Err(err).Msg("version creation failed")
-				}
-			}
-		}
-
-		// Insert the current version
-		err = insertVersion(d.db, config.Driver, *revision)
-		if err != nil {
-			d.logger.Fatal().Err(err).Msg("version creation failed")
-		}
-	}
-
-	if config.Driver == "sqlite" {
-		_, err = d.db.Exec("VACUUM;")
-		if err != nil {
-			d.logger.Warn().Err(err).Msg("vacuum failed")
-		}
 	}
 }
 

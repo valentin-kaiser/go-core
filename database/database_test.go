@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/valentin-kaiser/go-core/database"
-	"github.com/valentin-kaiser/go-core/version"
 )
 
 func TestConfig_Validate(t *testing.T) {
@@ -272,37 +271,6 @@ func TestConnectWithSQLiteConfig(t *testing.T) {
 
 	// Note: The Connected() status might not immediately reflect disconnection
 	// due to the asynchronous nature of the connection management
-}
-
-// TestRegisterSchema is removed since RegisterSchema no longer exists in the sqlc version
-// Schema management should be done through SQL migrations using RegisterMigrationStep
-
-func TestRegisterMigrationStep(_ *testing.T) {
-	// Create a new database instance
-	db := database.New("test")
-
-	// Test migration step registration
-	v1 := version.Release{
-		GitTag:    "v1.0.0",
-		GitCommit: "abc123",
-	}
-
-	// This should not panic
-	db.RegisterMigrationStep(v1, func(_ *sql.DB) error {
-		return nil
-	})
-
-	// Test registering another migration step
-	v2 := version.Release{
-		GitTag:    "v1.0.1",
-		GitCommit: "def456",
-	}
-
-	// This should also not panic during registration
-	db.RegisterMigrationStep(v2, func(_ *sql.DB) error {
-		// Just return nil for testing - we don't want to actually fail migrations
-		return nil
-	})
 }
 
 func TestRegisterOnConnectHandler(t *testing.T) {
