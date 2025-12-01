@@ -28,6 +28,7 @@
 //	package main
 //
 //	import (
+//		"context"
 //		"database/sql"
 //		"fmt"
 //		"time"
@@ -35,13 +36,19 @@
 //		"github.com/valentin-kaiser/go-core/database"
 //		"github.com/valentin-kaiser/go-core/flag"
 //		"github.com/valentin-kaiser/go-core/version"
+//		"your-project/internal/sqlc"
 //	)
 //
 //	func main() {
 //		flag.Init()
 //
-//		// Create a new database instance
-//		db := database.New("main")
+//		// Create a new database instance with sqlc integration
+//		// Option 1: Pass sqlc.New as the constructor function
+//		db := database.New("main", sqlc.New)
+//
+//		// Option 2: Register queries constructor later
+//		// db := database.New[sqlc.Queries]("main", nil)
+//		// db.RegisterQueries(sqlc.New)
 //
 //		// Register migration steps for this instance
 //		db.RegisterMigrationStep(version.Release{
@@ -68,23 +75,27 @@
 //		// Wait for connection to be established
 //		db.AwaitConnection()
 //
-//		// Get the underlying *sql.DB
-//		sqlDB := db.GetDB()
-//		var ver version.Release
-//		err := sqlDB.QueryRow("SELECT git_tag, git_commit FROM releases ORDER BY id DESC LIMIT 1").Scan(&ver.GitTag, &ver.GitCommit)
+//		// Use Query method to execute type-safe sqlc queries
+//		ctx := context.Background()
+//		err := db.Query(func(q *sqlc.Queries) error {
+//			user, err := q.GetUser(ctx, 1)
+//			if err != nil {
+//				return err
+//			}
+//			fmt.Println("User:", user.Name, user.Email)
+//			return nil
+//		})
 //		if err != nil {
 //			panic(err)
 //		}
-//
-//		fmt.Println("Version:", ver.GitTag, ver.GitCommit)
 //	}
 //
 // Multi-Instance Example:
 //
-//	// Connect to multiple databases simultaneously
-//	postgres := database.New("postgres-main")
-//	mysql := database.New("mysql-analytics")
-//	sqlite := database.New("sqlite-cache")
+//	// Connect to multiple databases simultaneously with different sqlc Queries
+//	postgres := database.New("postgres-main", pgSqlc.New)
+//	mysql := database.New("mysql-analytics", mysqlSqlc.New)
+//	sqlite := database.New("sqlite-cache", sqliteSqlc.New)
 //
 //	postgres.Connect(time.Second, database.Config{
 //		Driver: "postgres",
@@ -112,7 +123,7 @@
 // Middleware Example:
 //
 //	// Create a new database instance with logging middleware
-//	db := database.New("main")
+//	db := database.New("main", sqlc.New)
 //
 //	// Register logging middleware to log all SQL statements
 //	logger := logging.GetPackageLogger("database")
@@ -127,10 +138,12 @@
 //	defer db.Disconnect()
 //
 //	// All SQL statements will now be logged with timing information
-//	db.Execute(func(sqlDB *sql.DB) error {
-//		_, err := sqlDB.Exec("INSERT INTO users (name, email) VALUES (?, ?)",
-//			"John Doe", "john@example.com")
-//		return err
+//	ctx := context.Background()
+//	db.Query(func(q *sqlc.Queries) error {
+//		return q.CreateUser(ctx, sqlc.CreateUserParams{
+//			Name:  "John Doe",
+//			Email: "john@example.com",
+//		})
 //	})
 package database
 
@@ -139,6 +152,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -155,7 +169,8 @@ import (
 
 // Database represents a database connection instance with its own state and configuration.
 // Multiple instances can be created to manage connections to different databases.
-type Database struct {
+// The generic type parameter Q represents the sqlc-generated Queries type.
+type Database[Q any] struct {
 	db               *sql.DB
 	dbMutex          sync.RWMutex
 	config           *Config
@@ -170,12 +185,16 @@ type Database struct {
 	migrationMutex   sync.RWMutex
 	middlewares      []Middleware
 	middlewareMutex  sync.RWMutex
+	queries          any
 }
 
 // New creates a new Database instance with the given name for logging purposes.
 // The name parameter is used to identify this database instance in logs.
-func New(name string) *Database {
-	return &Database{
+// The queriesNew parameter is an optional constructor function that creates a new sqlc Queries instance.
+// If queriesNew is nil, you must call RegisterQueries before using the Query method.
+// Example: database.New("main", sqlc.New) or database.New[sqlc.Queries]("main", nil)
+func New[Q any](name string) *Database[Q] {
+	return &Database[Q]{
 		done:             make(chan bool),
 		logger:           logging.GetPackageLogger("database:" + name),
 		onConnectHandler: make([]func(db *sql.DB, config Config) error, 0),
@@ -186,7 +205,7 @@ func New(name string) *Database {
 // Get returns the active database connection.
 // It will return nil if the database is not connected.
 // Use this function to get the database connection for executing queries with sqlc or raw SQL.
-func (d *Database) Get() *sql.DB {
+func (d *Database[Q]) Get() *sql.DB {
 	d.dbMutex.RLock()
 	defer d.dbMutex.RUnlock()
 	return d.db
@@ -194,7 +213,7 @@ func (d *Database) Get() *sql.DB {
 
 // Execute executes a function with a database connection.
 // It will return an error if the database is not connected or if the function returns an error.
-func (d *Database) Execute(call func(db *sql.DB) error) error {
+func (d *Database[Q]) Execute(call func(db *sql.DB) error) error {
 	defer interruption.Catch()
 
 	d.dbMutex.RLock()
@@ -213,10 +232,57 @@ func (d *Database) Execute(call func(db *sql.DB) error) error {
 	return nil
 }
 
+// Query executes a function with sqlc-generated Queries instance.
+// It will return an error if the database is not connected or if the function returns an error.
+// Example: db.Query(func(q *sqlc.Queries) error { return q.GetUser(ctx, id) })
+func (d *Database[Q]) Query(call func(q *Q) error) error {
+	defer interruption.Catch()
+
+	if d.queries == nil {
+		return apperror.NewErrorf("queries constructor not registered")
+	}
+
+	d.dbMutex.RLock()
+	dbInstance := d.db
+	d.dbMutex.RUnlock()
+
+	if !d.connected.Load() || dbInstance == nil {
+		return apperror.NewErrorf("database is not connected")
+	}
+
+	if d.queries == nil {
+		return apperror.NewErrorf("queries constructor not provided")
+	}
+
+	// Use reflection to call the constructor function
+	// This allows it to work with any DBTX interface type from sqlc
+	fnValue := reflect.ValueOf(d.queries)
+	if fnValue.Kind() != reflect.Func {
+		return apperror.NewErrorf("queries constructor is not a function")
+	}
+
+	results := fnValue.Call([]reflect.Value{reflect.ValueOf(dbInstance)})
+	if len(results) != 1 {
+		return apperror.NewErrorf("queries constructor must return exactly one value")
+	}
+
+	queries, ok := results[0].Interface().(*Q)
+	if !ok {
+		return apperror.NewErrorf("queries constructor returned unexpected type")
+	}
+
+	err := call(queries)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 // Transaction executes a function within a database transaction.
 // It will return an error if the database is not connected or if the function returns an error.
 // If the function returns an error, the transaction will be rolled back.
-func (d *Database) Transaction(call func(tx *sql.Tx) error) error {
+func (d *Database[Q]) Transaction(call func(tx *sql.Tx) error) error {
 	d.dbMutex.RLock()
 	dbInstance := d.db
 	d.dbMutex.RUnlock()
@@ -246,12 +312,12 @@ func (d *Database) Transaction(call func(tx *sql.Tx) error) error {
 }
 
 // Connected returns true if the database is connected, false otherwise
-func (d *Database) Connected() bool {
+func (d *Database[Q]) Connected() bool {
 	return d.connected.Load()
 }
 
 // Reconnect will set the connected state to false and trigger a reconnect
-func (d *Database) Reconnect(c Config) {
+func (d *Database[Q]) Reconnect(c Config) {
 	d.configMutex.Lock()
 	d.config = &c
 	d.configMutex.Unlock()
@@ -262,7 +328,7 @@ func (d *Database) Reconnect(c Config) {
 }
 
 // Disconnect will stop the database connection and wait for the connection to be closed
-func (d *Database) Disconnect() error {
+func (d *Database[Q]) Disconnect() error {
 	d.logger.Trace().Msg("closing connection...")
 	d.cancel.Store(true)
 	if d.connected.Load() && d.db != nil {
@@ -277,7 +343,7 @@ func (d *Database) Disconnect() error {
 }
 
 // AwaitConnection will block until the database is connected
-func (d *Database) AwaitConnection() {
+func (d *Database[Q]) AwaitConnection() {
 	for !d.connected.Load() {
 		time.Sleep(time.Second)
 	}
@@ -285,7 +351,7 @@ func (d *Database) AwaitConnection() {
 
 // Connect will try to connect to the database every interval until it is connected
 // It will also check if the connection is still alive every interval and reconnect if it is not
-func (d *Database) Connect(interval time.Duration, c Config) {
+func (d *Database[Q]) Connect(interval time.Duration, c Config) {
 	d.configMutex.Lock()
 	d.config = &c
 	d.configMutex.Unlock()
@@ -361,7 +427,7 @@ func (d *Database) Connect(interval time.Duration, c Config) {
 }
 
 // RegisterOnConnectHandler registers a function that will be called when the database connection is established
-func (d *Database) RegisterOnConnectHandler(handler func(db *sql.DB, config Config) error) {
+func (d *Database[Q]) RegisterOnConnectHandler(handler func(db *sql.DB, config Config) error) {
 	if handler == nil {
 		return
 	}
@@ -372,18 +438,30 @@ func (d *Database) RegisterOnConnectHandler(handler func(db *sql.DB, config Conf
 }
 
 // RegisterMiddleware registers a middleware that will intercept and log SQL statements
-func (d *Database) RegisterMiddleware(middleware Middleware) {
+func (d *Database[Q]) RegisterMiddleware(middleware Middleware) *Database[Q] {
 	if middleware == nil {
-		return
+		return d
 	}
 
 	d.middlewareMutex.Lock()
 	defer d.middlewareMutex.Unlock()
 	d.middlewares = append(d.middlewares, middleware)
+	return d
+}
+
+// RegisterQueries registers the sqlc Queries constructor function.
+// This allows you to set the queries constructor after creating the database instance.
+// Example: db.RegisterQueries(sqlc.New)
+func (d *Database[Q]) RegisterQueries(queries any) *Database[Q] {
+	if queries == nil {
+		return d
+	}
+	d.queries = queries
+	return d
 }
 
 // connect will try to connect to the database and return the connection
-func (d *Database) connect() (*sql.DB, error) {
+func (d *Database[Q]) connect() (*sql.DB, error) {
 	d.configMutex.RLock()
 	defer d.configMutex.RUnlock()
 
@@ -552,7 +630,7 @@ func (d *Database) connect() (*sql.DB, error) {
 // For MySQL/MariaDB: uses mysqldump
 // For PostgreSQL: uses pg_dump
 // Returns an error if the database is not connected or if the backup fails.
-func (d *Database) Backup(path string) error {
+func (d *Database[Q]) Backup(path string) error {
 	if !d.connected.Load() {
 		return apperror.NewErrorf("database is not connected")
 	}
@@ -958,7 +1036,7 @@ func (d *Database) Backup(path string) error {
 // For PostgreSQL: uses psql to restore from SQL dump
 // Returns an error if the database is not connected or if the restore fails.
 // WARNING: This will overwrite the current database. Ensure you have a backup before restoring.
-func (d *Database) Restore(backupPath string) error {
+func (d *Database[Q]) Restore(backupPath string) error {
 	if !d.connected.Load() {
 		return apperror.NewErrorf("database is not connected")
 	}
