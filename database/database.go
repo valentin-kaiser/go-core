@@ -1081,9 +1081,11 @@ func validateIdentifier(identifier string) error {
 }
 
 // quoteIdentifier safely quotes a SQL identifier for the given driver
+
 func quoteIdentifier(identifier string, driver string) (string, error) {
-	if err := validateIdentifier(identifier); err != nil {
-		return "", err
+	err := validateIdentifier(identifier)
+	if err != nil {
+		return "", apperror.Wrap(err)
 	}
 	switch driver {
 	case "mysql", "mariadb":
