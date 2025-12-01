@@ -21,6 +21,7 @@
 //   - Thread-safe access with `GetDB()` to retrieve the active connection
 //   - Registering on-connect hooks to perform actions like seeding or setup
 //   - Backup and restore functionality for SQLite, MySQL, and PostgreSQL
+//   - SQL middleware support for logging and monitoring all database operations
 //
 // Example:
 //
@@ -107,6 +108,30 @@
 //		Driver: "sqlite",
 //		Name:   ":memory:",
 //	})
+//
+// Middleware Example:
+//
+//	// Create a new database instance with logging middleware
+//	db := database.New("main")
+//
+//	// Register logging middleware to log all SQL statements
+//	logger := logging.GetPackageLogger("database")
+//	loggingMiddleware := database.NewLoggingMiddleware(logger)
+//	db.RegisterMiddleware(loggingMiddleware)
+//
+//	// Connect to the database
+//	db.Connect(time.Second, database.Config{
+//		Driver: "sqlite",
+//		Name:   "example",
+//	})
+//	defer db.Disconnect()
+//
+//	// All SQL statements will now be logged with timing information
+//	db.Execute(func(sqlDB *sql.DB) error {
+//		_, err := sqlDB.Exec("INSERT INTO users (name, email) VALUES (?, ?)",
+//			"John Doe", "john@example.com")
+//		return err
+//	})
 package database
 
 import (
@@ -143,6 +168,8 @@ type Database struct {
 	handlerMutex     sync.Mutex
 	logger           logging.Adapter
 	migrationMutex   sync.RWMutex
+	middlewares      []Middleware
+	middlewareMutex  sync.RWMutex
 }
 
 // New creates a new Database instance with the given name for logging purposes.
@@ -152,6 +179,7 @@ func New(name string) *Database {
 		done:             make(chan bool),
 		logger:           logging.GetPackageLogger("database:" + name),
 		onConnectHandler: make([]func(db *sql.DB, config Config) error, 0),
+		middlewares:      make([]Middleware, 0),
 	}
 }
 
@@ -343,10 +371,26 @@ func (d *Database) RegisterOnConnectHandler(handler func(db *sql.DB, config Conf
 	d.onConnectHandler = append(d.onConnectHandler, handler)
 }
 
+// RegisterMiddleware registers a middleware that will intercept and log SQL statements
+func (d *Database) RegisterMiddleware(middleware Middleware) {
+	if middleware == nil {
+		return
+	}
+
+	d.middlewareMutex.Lock()
+	defer d.middlewareMutex.Unlock()
+	d.middlewares = append(d.middlewares, middleware)
+}
+
 // connect will try to connect to the database and return the connection
 func (d *Database) connect() (*sql.DB, error) {
 	d.configMutex.RLock()
 	defer d.configMutex.RUnlock()
+
+	d.middlewareMutex.RLock()
+	middlewares := make([]Middleware, len(d.middlewares))
+	copy(middlewares, d.middlewares)
+	d.middlewareMutex.RUnlock()
 
 	switch d.config.Driver {
 	case "sqlite":
@@ -362,7 +406,8 @@ func (d *Database) connect() (*sql.DB, error) {
 			dsn = fmt.Sprintf("file:%s?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000", filepath.Join(flag.Path, d.config.Name+".db"))
 		}
 
-		conn, err := sql.Open("sqlite3", dsn)
+		driverName := wrap("sqlite3", middlewares)
+		conn, err := sql.Open(driverName, dsn)
 		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
@@ -393,7 +438,8 @@ func (d *Database) connect() (*sql.DB, error) {
 			d.config.Port,
 		)
 
-		create, err := sql.Open("mysql", createDSN)
+		driverName := wrap("mysql", middlewares)
+		create, err := sql.Open(driverName, createDSN)
 		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
@@ -423,7 +469,7 @@ func (d *Database) connect() (*sql.DB, error) {
 			d.config.Name,
 		)
 
-		conn, err := sql.Open("mysql", dsn)
+		conn, err := sql.Open(driverName, dsn)
 		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
@@ -445,7 +491,8 @@ func (d *Database) connect() (*sql.DB, error) {
 			d.config.Password,
 		)
 
-		create, err := sql.Open("pgx", createDSN)
+		driverName := wrap("pgx", middlewares)
+		create, err := sql.Open(driverName, createDSN)
 		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
@@ -483,7 +530,7 @@ func (d *Database) connect() (*sql.DB, error) {
 			d.config.Search,
 		)
 
-		conn, err := sql.Open("pgx", dsn)
+		conn, err := sql.Open(driverName, dsn)
 		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
