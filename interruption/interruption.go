@@ -59,10 +59,6 @@ var (
 	Format    = "2006-01-02_15-04-05"
 )
 
-func init() {
-	_ = os.MkdirAll(Directory, os.ModePerm)
-}
-
 // Catch recovers from panics in the application and logs detailed error information.
 // It captures the panic value, caller information, and stack trace for debugging.
 // When debug mode is enabled, it logs the full stack trace; otherwise, it logs only
@@ -99,6 +95,11 @@ func Catch() {
 		}
 		logger.Error().Msgf("%v code: %v => %v", caller, line, err)
 
+		e := os.MkdirAll(Directory, os.ModePerm)
+		if e != nil {
+			fmt.Fprintf(os.Stderr, "failed to create panic directory: %v", apperror.Wrap(e))
+			return
+		}
 		timestamp := time.Now().Format(Format)
 		name := filepath.Join(Directory, fmt.Sprintf("%s.log", timestamp))
 		content := fmt.Sprintf("Caller: %v\nLine: %v\nError: %v\n", caller, line, err)
