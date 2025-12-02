@@ -4,10 +4,18 @@ import (
 	"context"
 	"database/sql"
 	d "database/sql/driver"
+	"errors"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/logging"
+)
+
+var (
+	registeredDrivers   = make(map[string]bool)
+	registeredDriversMu sync.Mutex
 )
 
 // Middleware represents a SQL middleware that can intercept and log SQL statements
@@ -100,7 +108,7 @@ func (c *connection) ExecContext(ctx context.Context, query string, args []d.Nam
 		return result, err
 	}
 
-	// Fallback to Prepare/Exec
+	// Fallback to Prepare/Exec - statement will handle logging
 	stmt, err := c.PrepareContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -112,11 +120,8 @@ func (c *connection) ExecContext(ctx context.Context, query string, args []d.Nam
 		return nil, d.ErrSkip
 	}
 
-	result, err = stmtExecCtx.ExecContext(ctx, args)
-	for _, mw := range c.middlewares {
-		mw.AfterExec(ctx, query, args, result, err)
-	}
-	return result, err
+	// Don't call AfterExec here - statement already does it
+	return stmtExecCtx.ExecContext(ctx, args)
 }
 
 // QueryContext executes a query with context and middleware support
@@ -137,7 +142,7 @@ func (c *connection) QueryContext(ctx context.Context, query string, args []d.Na
 		return rows, err
 	}
 
-	// Fallback to Prepare/Query
+	// Fallback to Prepare/Query - statement will handle logging
 	stmt, err := c.PrepareContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -149,11 +154,8 @@ func (c *connection) QueryContext(ctx context.Context, query string, args []d.Na
 		return nil, d.ErrSkip
 	}
 
-	rows, err = stmtQueryCtx.QueryContext(ctx, args)
-	for _, mw := range c.middlewares {
-		mw.AfterQuery(ctx, query, args, err)
-	}
-	return rows, err
+	// Don't call AfterQuery here - statement already does it
+	return stmtQueryCtx.QueryContext(ctx, args)
 }
 
 // Ping verifies the connection is alive
@@ -246,6 +248,7 @@ func (s *statement) QueryContext(ctx context.Context, args []d.NamedValue) (d.Ro
 type LoggingMiddleware struct {
 	logger  logging.Adapter
 	enabled atomic.Bool
+	trace   atomic.Bool
 }
 
 // NewLoggingMiddleware creates a new logging middleware with the provided logger
@@ -257,8 +260,14 @@ func NewLoggingMiddleware(logger logging.Adapter) *LoggingMiddleware {
 }
 
 // SetEnabled enables or disables logging at runtime
-func (m *LoggingMiddleware) SetEnabled(enabled bool) {
+func (m *LoggingMiddleware) SetEnabled(enabled bool) *LoggingMiddleware {
 	m.enabled.Store(enabled)
+	return m
+}
+
+func (m *LoggingMiddleware) SetTrace(enabled bool) *LoggingMiddleware {
+	m.trace.Store(enabled)
+	return m
 }
 
 // IsEnabled returns true if logging is currently enabled
@@ -270,16 +279,8 @@ type contextKey string
 
 const startTimeKey contextKey = "startTime"
 
-// BeforeExec logs before executing a statement
+// BeforeExec does nothing before executing a statement
 func (m *LoggingMiddleware) BeforeExec(ctx context.Context, query string, args []d.NamedValue) context.Context {
-	if !m.enabled.Load() {
-		return ctx
-	}
-	m.logger.Debug().
-		Field("type", "exec").
-		Field("args", convertNamedValuesToInterface(args)).
-		Msg("executing statement")
-	m.logger.Debug().Msgf("\n%s", query)
 	return context.WithValue(ctx, startTimeKey, time.Now())
 }
 
@@ -293,14 +294,17 @@ func (m *LoggingMiddleware) AfterExec(ctx context.Context, query string, args []
 		duration = time.Since(startTime)
 	}
 
-	if err != nil {
-		m.logger.Error().
+	if err != nil && !errors.Is(err, d.ErrSkip) {
+		l := m.logger.Error().
 			Err(err).
 			Field("type", "exec").
 			Field("args", convertNamedValuesToInterface(args)).
-			Field("duration", duration).
-			Msg("statement execution failed")
-		m.logger.Error().Msgf("\n%s", query)
+			Field("duration", duration.String())
+
+		if m.trace.Load() {
+			l = l.Field("caller", apperror.Where(2))
+		}
+		l.Msgf("\n%s", query)
 		return
 	}
 
@@ -308,25 +312,19 @@ func (m *LoggingMiddleware) AfterExec(ctx context.Context, query string, args []
 	if result != nil {
 		rowsAffected, _ = result.RowsAffected()
 	}
-	m.logger.Debug().
+	l := m.logger.Debug().
 		Field("type", "exec").
 		Field("args", convertNamedValuesToInterface(args)).
 		Field("rows_affected", rowsAffected).
-		Field("duration", duration).
-		Msg("statement executed")
-	m.logger.Debug().Msgf("\n%s", query)
+		Field("duration", duration.String())
+	if m.trace.Load() {
+		l = l.Field("caller", apperror.Where(2))
+	}
+	l.Msgf("\n%s", query)
 }
 
-// BeforeQuery logs before executing a query
+// BeforeQuery does nothing before executing a query
 func (m *LoggingMiddleware) BeforeQuery(ctx context.Context, query string, args []d.NamedValue) context.Context {
-	if !m.enabled.Load() {
-		return ctx
-	}
-	m.logger.Debug().
-		Field("type", "query").
-		Field("args", convertNamedValuesToInterface(args)).
-		Msg("executing query")
-	m.logger.Debug().Msgf("\n%s", query)
 	return context.WithValue(ctx, startTimeKey, time.Now())
 }
 
@@ -340,23 +338,27 @@ func (m *LoggingMiddleware) AfterQuery(ctx context.Context, query string, args [
 		duration = time.Since(startTime)
 	}
 
-	if err != nil {
-		m.logger.Error().
+	if err != nil && !errors.Is(err, d.ErrSkip) {
+		l := m.logger.Error().
 			Err(err).
 			Field("type", "query").
 			Field("args", convertNamedValuesToInterface(args)).
-			Field("duration", duration).
-			Msg("query execution failed")
-		m.logger.Error().Msgf("\n%s", query)
+			Field("duration", duration.String())
+		if m.trace.Load() {
+			l = l.Field("caller", apperror.Where(2))
+		}
+		l.Msgf("\n%s", query)
 		return
 	}
 
-	m.logger.Trace().
+	l := m.logger.Trace().
 		Field("type", "query").
 		Field("args", convertNamedValuesToInterface(args)).
-		Field("duration", duration).
-		Msg("query executed")
-	m.logger.Trace().Msgf("\n%s", query)
+		Field("duration", duration.String())
+	if m.trace.Load() {
+		l = l.Field("caller", apperror.Where(2))
+	}
+	l.Msgf("\n%s", query)
 }
 
 // BeginTx is a no-op implementation to satisfy the Middleware interface
@@ -382,6 +384,17 @@ func wrap(driverName string, middlewares []Middleware) string {
 		return driverName
 	}
 
+	// Create wrapped driver name
+	wrappedDriverName := "middleware_" + driverName
+
+	// Check if driver is already registered
+	registeredDriversMu.Lock()
+	defer registeredDriversMu.Unlock()
+
+	if registeredDrivers[wrappedDriverName] {
+		return wrappedDriverName
+	}
+
 	// Get the original driver
 	db, err := sql.Open(driverName, "")
 	if err != nil {
@@ -391,14 +404,14 @@ func wrap(driverName string, middlewares []Middleware) string {
 
 	originalDriver := db.Driver()
 
-	// Create wrapped driver name
-	wrappedDriverName := "middleware_" + driverName
-
 	// Register wrapped driver
 	sql.Register(wrappedDriverName, &driver{
 		driver:      originalDriver,
 		middlewares: middlewares,
 	})
+
+	// Mark as registered
+	registeredDrivers[wrappedDriverName] = true
 
 	return wrappedDriverName
 }
