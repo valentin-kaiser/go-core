@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	d "database/sql/driver"
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,6 +17,7 @@ import (
 var (
 	registeredDrivers   = make(map[string]bool)
 	registeredDriversMu sync.Mutex
+	driverCounter       atomic.Uint64
 )
 
 // Middleware represents a SQL middleware that can intercept and log SQL statements
@@ -96,10 +98,16 @@ func (c *connection) ExecContext(ctx context.Context, query string, args []d.Nam
 		ctx = mw.BeforeExec(ctx, query, args)
 	}
 
+	var result d.Result
 	var err error
+
 	eCtx, ok := c.conn.(d.ExecerContext)
 	if ok {
-		return eCtx.ExecContext(ctx, query, args)
+		result, err = eCtx.ExecContext(ctx, query, args)
+		for _, mw := range c.middlewares {
+			mw.AfterExec(ctx, query, args, result, err)
+		}
+		return result, err
 	}
 
 	// Fallback to Prepare/Exec - statement will handle logging
@@ -124,10 +132,16 @@ func (c *connection) QueryContext(ctx context.Context, query string, args []d.Na
 		ctx = mw.BeforeQuery(ctx, query, args)
 	}
 
+	var rows d.Rows
 	var err error
+
 	connQueryCtx, ok := c.conn.(d.QueryerContext)
 	if ok {
-		return connQueryCtx.QueryContext(ctx, query, args)
+		rows, err = connQueryCtx.QueryContext(ctx, query, args)
+		for _, mw := range c.middlewares {
+			mw.AfterQuery(ctx, query, args, err)
+		}
+		return rows, err
 	}
 
 	// Fallback to Prepare/Query - statement will handle logging
@@ -372,8 +386,10 @@ func wrap(driverName string, middlewares []Middleware) string {
 		return driverName
 	}
 
-	// Create wrapped driver name
-	wrappedDriverName := "middleware_" + driverName
+	// Create unique wrapped driver name using atomic counter
+	// This ensures each database instance gets its own wrapped driver with its own middleware
+	counter := driverCounter.Add(1)
+	wrappedDriverName := fmt.Sprintf("middleware_%s_%d", driverName, counter)
 
 	// Check if driver is already registered
 	registeredDriversMu.Lock()
@@ -392,10 +408,14 @@ func wrap(driverName string, middlewares []Middleware) string {
 
 	originalDriver := db.Driver()
 
+	// Make a defensive copy of the middlewares slice to prevent shared state issues
+	cp := make([]Middleware, len(middlewares))
+	copy(cp, middlewares)
+
 	// Register wrapped driver
 	sql.Register(wrappedDriverName, &driver{
 		driver:      originalDriver,
-		middlewares: middlewares,
+		middlewares: cp,
 	})
 
 	// Mark as registered
