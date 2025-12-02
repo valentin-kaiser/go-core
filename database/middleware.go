@@ -96,16 +96,10 @@ func (c *connection) ExecContext(ctx context.Context, query string, args []d.Nam
 		ctx = mw.BeforeExec(ctx, query, args)
 	}
 
-	var result d.Result
 	var err error
-
 	eCtx, ok := c.conn.(d.ExecerContext)
 	if ok {
-		result, err = eCtx.ExecContext(ctx, query, args)
-		for _, mw := range c.middlewares {
-			mw.AfterExec(ctx, query, args, result, err)
-		}
-		return result, err
+		return eCtx.ExecContext(ctx, query, args)
 	}
 
 	// Fallback to Prepare/Exec - statement will handle logging
@@ -130,16 +124,10 @@ func (c *connection) QueryContext(ctx context.Context, query string, args []d.Na
 		ctx = mw.BeforeQuery(ctx, query, args)
 	}
 
-	var rows d.Rows
 	var err error
-
 	connQueryCtx, ok := c.conn.(d.QueryerContext)
 	if ok {
-		rows, err = connQueryCtx.QueryContext(ctx, query, args)
-		for _, mw := range c.middlewares {
-			mw.AfterQuery(ctx, query, args, err)
-		}
-		return rows, err
+		return connQueryCtx.QueryContext(ctx, query, args)
 	}
 
 	// Fallback to Prepare/Query - statement will handle logging
