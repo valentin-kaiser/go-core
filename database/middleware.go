@@ -110,7 +110,6 @@ func (c *connection) ExecContext(ctx context.Context, query string, args []d.Nam
 		return result, err
 	}
 
-	// Fallback to Prepare/Exec - statement will handle logging
 	stmt, err := c.PrepareContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -122,7 +121,6 @@ func (c *connection) ExecContext(ctx context.Context, query string, args []d.Nam
 		return nil, d.ErrSkip
 	}
 
-	// Don't call AfterExec here - statement already does it
 	return stmtExecCtx.ExecContext(ctx, args)
 }
 
@@ -144,7 +142,6 @@ func (c *connection) QueryContext(ctx context.Context, query string, args []d.Na
 		return rows, err
 	}
 
-	// Fallback to Prepare/Query - statement will handle logging
 	stmt, err := c.PrepareContext(ctx, query)
 	if err != nil {
 		return nil, err
@@ -156,7 +153,6 @@ func (c *connection) QueryContext(ctx context.Context, query string, args []d.Na
 		return nil, d.ErrSkip
 	}
 
-	// Don't call AfterQuery here - statement already does it
 	return stmtQueryCtx.QueryContext(ctx, args)
 }
 
@@ -296,7 +292,11 @@ func (m *LoggingMiddleware) AfterExec(ctx context.Context, query string, args []
 		duration = time.Since(startTime)
 	}
 
-	if err != nil && !errors.Is(err, d.ErrSkip) {
+	if err != nil && errors.Is(err, d.ErrSkip) {
+		return
+	}
+
+	if err != nil {
 		l := m.logger.Error().
 			Err(err).
 			Field("type", "exec").
@@ -340,7 +340,11 @@ func (m *LoggingMiddleware) AfterQuery(ctx context.Context, query string, args [
 		duration = time.Since(startTime)
 	}
 
-	if err != nil && !errors.Is(err, d.ErrSkip) {
+	if err != nil && errors.Is(err, d.ErrSkip) {
+		return
+	}
+
+	if err != nil {
 		l := m.logger.Error().
 			Err(err).
 			Field("type", "query").
@@ -386,12 +390,9 @@ func wrap(driverName string, middlewares []Middleware) string {
 		return driverName
 	}
 
-	// Create unique wrapped driver name using atomic counter
-	// This ensures each database instance gets its own wrapped driver with its own middleware
 	counter := driverCounter.Add(1)
 	wrappedDriverName := fmt.Sprintf("middleware_%s_%d", driverName, counter)
 
-	// Check if driver is already registered
 	registeredDriversMu.Lock()
 	defer registeredDriversMu.Unlock()
 
@@ -412,14 +413,11 @@ func wrap(driverName string, middlewares []Middleware) string {
 	cp := make([]Middleware, len(middlewares))
 	copy(cp, middlewares)
 
-	// Register wrapped driver
 	sql.Register(wrappedDriverName, &driver{
 		driver:      originalDriver,
 		middlewares: cp,
 	})
 
-	// Mark as registered
 	registeredDrivers[wrappedDriverName] = true
-
 	return wrappedDriverName
 }
