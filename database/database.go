@@ -22,6 +22,7 @@
 //   - Registering on-connect hooks to perform actions like seeding or setup
 //   - Backup and restore functionality for SQLite, MySQL, and PostgreSQL
 //   - SQL middleware support for logging and monitoring all database operations
+//   - Debug mode for per-query logging (similar to GORM's Debug() method)
 //
 // Example:
 //
@@ -145,6 +146,41 @@
 //			Email: "john@example.com",
 //		})
 //	})
+//
+// Debug Mode Example:
+//
+//	// Create a database instance and register LoggingMiddleware
+//	db := database.New("main", sqlc.New)
+//
+//	// LoggingMiddleware must be registered for Debug() to work
+//	logger := logging.GetPackageLogger("database")
+//	loggingMiddleware := database.NewLoggingMiddleware(logger)
+//	loggingMiddleware.SetEnabled(false) // Disabled by default
+//	db.RegisterMiddleware(loggingMiddleware)
+//
+//	db.Connect(time.Second, database.Config{
+//		Driver: "sqlite",
+//		Name:   "example",
+//	})
+//	defer db.Disconnect()
+//
+//	ctx := context.Background()
+//
+//	// Regular query - no debug logging (middleware is disabled)
+//	db.Query(func(q *sqlc.Queries) error {
+//		return q.GetUser(ctx, 1)
+//	})
+//
+//	// Debug query - temporarily enables logging for this specific query
+//	db.Debug().Query(func(q *sqlc.Queries) error {
+//		return q.GetUser(ctx, 1)
+//	})
+//
+//	// You can also use Debug() with Execute
+//	db.Debug().Execute(func(dbConn *sql.DB) error {
+//		_, err := dbConn.ExecContext(ctx, "UPDATE users SET active = ? WHERE id = ?", true, 1)
+//		return err
+//	})
 package database
 
 import (
@@ -186,6 +222,8 @@ type Database[Q any] struct {
 	middlewares      []Middleware
 	middlewareMutex  sync.RWMutex
 	queries          any
+	debug            bool
+	parent           *Database[Q]
 }
 
 // New creates a new Database instance with the given name for logging purposes.
@@ -211,20 +249,62 @@ func (d *Database[Q]) Get() *sql.DB {
 	return d.db
 }
 
+// Debug returns a new Database handle with debug logging enabled for all queries and executions.
+// This method requires that a LoggingMiddleware has been registered with RegisterMiddleware.
+// It temporarily enables debug-level logging for the specific query or execution that follows.
+// The debug handle shares the same underlying connection and configuration as the parent instance.
+// Example: db.Debug().Query(func(q *sqlc.Queries) error { return q.GetUser(ctx, id) })
+func (d *Database[Q]) Debug() *Database[Q] {
+	// If already in debug mode, return self
+	if d.debug {
+		return d
+	}
+
+	// Determine the parent instance
+	parent := d
+	if d.parent != nil {
+		parent = d.parent
+	}
+
+	// Create a debug instance that references the parent
+	// We don't copy the struct fields directly to avoid copying locks
+	return &Database[Q]{
+		debug:  true,
+		parent: parent,
+	}
+}
+
 // Execute executes a function with a database connection.
 // It will return an error if the database is not connected or if the function returns an error.
 func (d *Database[Q]) Execute(call func(db *sql.DB) error) error {
 	defer interruption.Catch()
 
-	d.dbMutex.RLock()
-	dbInstance := d.db
-	d.dbMutex.RUnlock()
+	// Get the actual database instance (from parent if debug mode)
+	parent := d
+	if d.debug && d.parent != nil {
+		parent = d.parent
+	}
 
-	if !d.connected.Load() || dbInstance == nil {
+	parent.dbMutex.RLock()
+	instance := parent.db
+	parent.dbMutex.RUnlock()
+
+	if !parent.connected.Load() || instance == nil {
 		return apperror.NewErrorf("database is not connected")
 	}
 
-	err := call(dbInstance)
+	// If in debug mode, temporarily enable logging middleware
+	if d.debug {
+		loggingMW := d.findLoggingMiddleware()
+		if loggingMW == nil {
+			return apperror.NewErrorf("debug mode requires LoggingMiddleware to be registered")
+		}
+		wasEnabled := loggingMW.IsEnabled()
+		loggingMW.SetEnabled(true)
+		defer loggingMW.SetEnabled(wasEnabled)
+	}
+
+	err := call(instance)
 	if err != nil {
 		return err
 	}
@@ -238,25 +318,38 @@ func (d *Database[Q]) Execute(call func(db *sql.DB) error) error {
 func (d *Database[Q]) Query(call func(q *Q) error) error {
 	defer interruption.Catch()
 
-	if d.queries == nil {
+	// Get the actual database instance (from parent if debug mode)
+	parent := d
+	if d.debug && d.parent != nil {
+		parent = d.parent
+	}
+
+	if parent.queries == nil {
 		return apperror.NewErrorf("queries constructor not registered")
 	}
 
-	d.dbMutex.RLock()
-	dbInstance := d.db
-	d.dbMutex.RUnlock()
+	parent.dbMutex.RLock()
+	dbInstance := parent.db
+	parent.dbMutex.RUnlock()
 
-	if !d.connected.Load() || dbInstance == nil {
+	if !parent.connected.Load() || dbInstance == nil {
 		return apperror.NewErrorf("database is not connected")
 	}
 
-	if d.queries == nil {
-		return apperror.NewErrorf("queries constructor not provided")
+	// If in debug mode, temporarily enable logging middleware
+	if d.debug {
+		loggingMW := d.findLoggingMiddleware()
+		if loggingMW == nil {
+			return apperror.NewErrorf("debug mode requires LoggingMiddleware to be registered")
+		}
+		wasEnabled := loggingMW.IsEnabled()
+		loggingMW.SetEnabled(true)
+		defer loggingMW.SetEnabled(wasEnabled)
 	}
 
 	// Use reflection to call the constructor function
 	// This allows it to work with any DBTX interface type from sqlc
-	fnValue := reflect.ValueOf(d.queries)
+	fnValue := reflect.ValueOf(parent.queries)
 	if fnValue.Kind() != reflect.Func {
 		return apperror.NewErrorf("queries constructor is not a function")
 	}
@@ -458,6 +551,26 @@ func (d *Database[Q]) RegisterQueries(queries any) *Database[Q] {
 	}
 	d.queries = queries
 	return d
+}
+
+// findLoggingMiddleware finds the LoggingMiddleware in the parent's middleware list.
+// Returns nil if no LoggingMiddleware is registered.
+func (d *Database[Q]) findLoggingMiddleware() *LoggingMiddleware {
+	parent := d
+	if d.parent != nil {
+		parent = d.parent
+	}
+
+	parent.middlewareMutex.RLock()
+	defer parent.middlewareMutex.RUnlock()
+
+	for _, mw := range parent.middlewares {
+		if loggingMW, ok := mw.(*LoggingMiddleware); ok {
+			return loggingMW
+		}
+	}
+
+	return nil
 }
 
 // connect will try to connect to the database and return the connection
