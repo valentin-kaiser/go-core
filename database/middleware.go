@@ -75,7 +75,10 @@ func (c *connection) Begin() (d.Tx, error) {
 
 // BeginTx starts a transaction with options
 func (c *connection) BeginTx(ctx context.Context, opts d.TxOptions) (d.Tx, error) {
-	return c.BeginTx(ctx, opts)
+	if connBeginTx, ok := c.conn.(d.ConnBeginTx); ok {
+		return connBeginTx.BeginTx(ctx, opts)
+	}
+	return c.conn.Begin()
 }
 
 // PrepareContext returns a prepared statement with context and middleware support
