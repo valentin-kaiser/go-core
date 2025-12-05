@@ -404,6 +404,81 @@ func (d *Database[Q]) Transaction(call func(tx *sql.Tx) error) error {
 	return nil
 }
 
+// QueryTransaction executes a function with a sqlc-generated Queries instance within a database transaction.
+// It will return an error if the database is not connected or if the function returns an error.
+// If the function returns an error, the transaction will be rolled back.
+// Example: db.QueryTransaction(func(q *sqlc.Queries) error { return q.CreateUser(ctx, params) })
+func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
+	defer interruption.Catch()
+
+	// Get the actual database instance (from parent if debug mode)
+	parent := d
+	if d.debug && d.parent != nil {
+		parent = d.parent
+	}
+
+	if parent.queries == nil {
+		return apperror.NewErrorf("queries constructor not registered")
+	}
+
+	parent.dbMutex.RLock()
+	dbInstance := parent.db
+	parent.dbMutex.RUnlock()
+
+	if !parent.connected.Load() || dbInstance == nil {
+		return apperror.NewErrorf("database is not connected")
+	}
+
+	// If in debug mode, temporarily enable logging middleware
+	if d.debug {
+		loggingMW := d.findLoggingMiddleware()
+		if loggingMW == nil {
+			return apperror.NewErrorf("debug mode requires LoggingMiddleware to be registered")
+		}
+		wasEnabled := loggingMW.IsEnabled()
+		loggingMW.SetEnabled(true)
+		defer loggingMW.SetEnabled(wasEnabled)
+	}
+
+	// Begin transaction
+	tx, err := dbInstance.Begin()
+	if err != nil {
+		return apperror.NewErrorf("failed to begin transaction").AddError(err)
+	}
+
+	// Use reflection to call the constructor function with the transaction
+	fnValue := reflect.ValueOf(parent.queries)
+	if fnValue.Kind() != reflect.Func {
+		return apperror.NewErrorf("queries constructor is not a function")
+	}
+
+	results := fnValue.Call([]reflect.Value{reflect.ValueOf(tx)})
+	if len(results) != 1 {
+		return apperror.NewErrorf("queries constructor must return exactly one value")
+	}
+
+	queries, ok := results[0].Interface().(*Q)
+	if !ok {
+		return apperror.NewErrorf("queries constructor returned unexpected type")
+	}
+
+	// Execute the user's function
+	err = call(queries)
+	if err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return apperror.NewErrorf("failed to rollback transaction").AddError(rbErr).AddError(err)
+		}
+		return err
+	}
+
+	err = tx.Commit()
+	if err != nil {
+		return apperror.NewErrorf("failed to commit transaction").AddError(err)
+	}
+
+	return nil
+}
+
 // Connected returns true if the database is connected, false otherwise
 func (d *Database[Q]) Connected() bool {
 	return d.connected.Load()
