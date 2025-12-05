@@ -287,36 +287,36 @@ func TestConfigChanged(t *testing.T) {
 		{
 			name: "no change",
 			old: database.Config{
-				Driver:   "sqlite",
-				Name:     "test",
+				Driver: "sqlite",
+				Name:   "test",
 			},
 			new: database.Config{
-				Driver:   "sqlite",
-				Name:     "test",
+				Driver: "sqlite",
+				Name:   "test",
 			},
 			changed: false,
 		},
 		{
 			name: "driver changed",
 			old: database.Config{
-				Driver:   "sqlite",
-				Name:     "test",
+				Driver: "sqlite",
+				Name:   "test",
 			},
 			new: database.Config{
-				Driver:   "mysql",
-				Name:     "test",
+				Driver: "mysql",
+				Name:   "test",
 			},
 			changed: true,
 		},
 		{
 			name: "name changed",
 			old: database.Config{
-				Driver:   "sqlite",
-				Name:     "test",
+				Driver: "sqlite",
+				Name:   "test",
 			},
 			new: database.Config{
-				Driver:   "sqlite",
-				Name:     "test2",
+				Driver: "sqlite",
+				Name:   "test2",
 			},
 			changed: true,
 		},

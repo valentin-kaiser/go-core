@@ -412,19 +412,19 @@ func TestDatabase_RegisterOnConnectHandler(t *testing.T) {
 // TestDatabase_RegisterOnConnectHandler_Nil tests registering nil handler
 func TestDatabase_RegisterOnConnectHandler_Nil(t *testing.T) {
 	db := database.New[TestQueries]("test")
-	
+
 	// Should not panic
 	db.RegisterOnConnectHandler(nil)
-	
+
 	config := database.Config{
 		Driver: "sqlite",
 		Name:   ":memory:",
 	}
-	
+
 	db.Connect(100*time.Millisecond, config)
 	defer db.Disconnect()
 	db.AwaitConnection()
-	
+
 	if !db.Connected() {
 		t.Error("Database should be connected even with nil handler")
 	}
@@ -436,7 +436,7 @@ func TestDatabase_RegisterMiddleware(t *testing.T) {
 
 	logger := logging.NewNoOpAdapter()
 	mw := database.NewLoggingMiddleware(logger)
-	
+
 	result := db.RegisterMiddleware(mw)
 	if result != db {
 		t.Error("RegisterMiddleware should return the same instance")
@@ -464,7 +464,7 @@ func TestDatabase_RegisterMiddleware(t *testing.T) {
 // TestDatabase_RegisterQueries tests registering queries constructor
 func TestDatabase_RegisterQueries(t *testing.T) {
 	db := database.New[TestQueries]("test")
-	
+
 	result := db.RegisterQueries(NewTestQueries)
 	if result != db {
 		t.Error("RegisterQueries should return the same instance")
@@ -830,7 +830,7 @@ func BenchmarkDatabase_Execute(b *testing.B) {
 func BenchmarkDatabase_Query(b *testing.B) {
 	db := database.New[TestQueries]("bench")
 	db.RegisterQueries(NewTestQueries)
-	
+
 	config := database.Config{
 		Driver: "sqlite",
 		Name:   ":memory:",
@@ -959,10 +959,10 @@ func TestDatabase_Transaction_NotConnected(t *testing.T) {
 // TestDatabase_Debug_Chaining tests debug mode returns same instance when already in debug
 func TestDatabase_Debug_Chaining(t *testing.T) {
 	db := database.New[TestQueries]("test-debug-chain")
-	
+
 	debug1 := db.Debug()
 	debug2 := debug1.Debug()
-	
+
 	if debug1 != debug2 {
 		t.Error("Debug() should return same instance when already in debug mode")
 	}
