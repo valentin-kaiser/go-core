@@ -55,6 +55,7 @@ import (
 
 var (
 	logger    = logging.GetPackageLogger("interruption")
+	Write     = false
 	Directory = filepath.Join(flag.Path, "panics")
 	Format    = "2006-01-02_15-04-05"
 )
@@ -80,6 +81,8 @@ func Catch() {
 			caller = fmt.Sprintf("%s/%s", filepath.Base(filepath.Dir(file)), strings.Trim(filepath.Base(file), filepath.Ext(file)))
 		}
 
+		write(err, caller, line)
+
 		if !logger.Enabled() {
 			if flag.Debug {
 				fmt.Fprintf(os.Stderr, "%v code: %v => %v \n %v", caller, line, err, string(debug.Stack()))
@@ -94,22 +97,6 @@ func Catch() {
 			return
 		}
 		logger.Error().Msgf("%v code: %v => %v", caller, line, err)
-
-		e := os.MkdirAll(Directory, os.ModePerm)
-		if e != nil {
-			fmt.Fprintf(os.Stderr, "failed to create panic directory: %v", apperror.Wrap(e))
-			return
-		}
-		timestamp := time.Now().Format(Format)
-		name := filepath.Join(Directory, fmt.Sprintf("%s.log", timestamp))
-		content := fmt.Sprintf("Caller: %v\nLine: %v\nError: %v\n", caller, line, err)
-		if flag.Debug {
-			content = fmt.Sprintf("Caller: %v\nLine: %v\nError: %v\n\nStack Trace:\n%s\n", caller, line, err, string(debug.Stack()))
-		}
-		werr := os.WriteFile(name, []byte(content), 0644)
-		if werr != nil {
-			fmt.Fprintf(os.Stderr, "failed to write panic: %v", apperror.Wrap(werr))
-		}
 	}
 }
 
@@ -220,5 +207,24 @@ func SetupGracefulShutdown(handlers []func() error, signals ...os.Signal) func()
 	ctx := OnSignal(handlers, signals...)
 	return func() {
 		WaitForShutdown(ctx)
+	}
+}
+
+func write(err any, caller string, line int) {
+	fmt.Printf("Panic directory: %v\n", Directory)
+	e := os.MkdirAll(Directory, os.ModePerm)
+	if e != nil {
+		fmt.Fprintf(os.Stderr, "failed to create panic directory: %v", apperror.Wrap(e))
+		return
+	}
+	timestamp := time.Now().Format(Format)
+	name := filepath.Join(Directory, fmt.Sprintf("%s.log", timestamp))
+	content := fmt.Sprintf("Caller: %v\nLine: %v\nError: %v\n", caller, line, err)
+	if flag.Debug {
+		content = fmt.Sprintf("Caller: %v\nLine: %v\nError: %v\n\nStack Trace:\n%s\n", caller, line, err, string(debug.Stack()))
+	}
+	werr := os.WriteFile(name, []byte(content), 0644)
+	if werr != nil {
+		fmt.Fprintf(os.Stderr, "failed to write panic: %v", apperror.Wrap(werr))
 	}
 }
