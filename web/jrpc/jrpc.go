@@ -891,9 +891,47 @@ func (s *Service) startMessageWriter(ctx context.Context, conn *websocket.Conn, 
 	return write
 }
 
+// isExpectedCloseError checks if an error is an expected websocket close error
+// that should not be logged as it indicates normal client disconnection
+func isExpectedCloseError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	// Check for normal websocket close codes
+	if websocket.IsCloseError(err,
+		websocket.CloseNormalClosure,
+		websocket.CloseGoingAway,
+		websocket.CloseNoStatusReceived) {
+		return true
+	}
+
+	// Check for network errors that occur during normal disconnection
+	errStr := strings.ToLower(err.Error())
+	patterns := []string{
+		"wsasend:",                        // Windows socket send error
+		"wsarecv:",                        // Windows socket receive error
+		"broken pipe",                     // Unix connection broken
+		"connection reset",                // Connection reset by peer
+		"connection aborted",              // Connection aborted
+		"connection refused",              // Connection refused
+		"going away",                      // Client going away
+		"use of closed",                   // Use of closed network connection
+		"tls: failed to send closenotify", // TLS close notification failure
+	}
+
+	for _, pattern := range patterns {
+		if strings.Contains(errStr, pattern) {
+			return true
+		}
+	}
+
+	return false
+}
+
 func (s *Service) closeWS(conn *websocket.Conn, code int, err error) {
 	var reason string
-	if err != nil && !errors.Is(err, websocket.ErrCloseSent) && !errors.Is(err, net.ErrClosed) {
+	if err != nil && !errors.Is(err, websocket.ErrCloseSent) && !errors.Is(err, net.ErrClosed) && !isExpectedCloseError(err) {
 		reason, _, _ = apperror.Split(err)
 		log.Trace().Field("code", code).Err(err).Msg("websocket connection closing with error")
 	}
@@ -901,11 +939,11 @@ func (s *Service) closeWS(conn *websocket.Conn, code int, err error) {
 		reason = reason[:123] // Close reason must be <= 123 bytes
 	}
 	err = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(time.Second))
-	if err != nil && !errors.Is(err, websocket.ErrCloseSent) && !errors.Is(err, net.ErrClosed) {
+	if err != nil && !errors.Is(err, websocket.ErrCloseSent) && !errors.Is(err, net.ErrClosed) && !isExpectedCloseError(err) {
 		log.Trace().Err(err).Msg("failed to send websocket close message")
 	}
 	err = conn.Close()
-	if err != nil && !errors.Is(err, net.ErrClosed) {
+	if err != nil && !errors.Is(err, net.ErrClosed) && !isExpectedCloseError(err) {
 		log.Trace().Err(err).Msg("failed to close websocket connection")
 	}
 }
