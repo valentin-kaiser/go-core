@@ -2,10 +2,13 @@ package database
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	d "database/sql/driver"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,7 +20,6 @@ import (
 var (
 	registeredDrivers   = make(map[string]bool)
 	registeredDriversMu sync.Mutex
-	driverCounter       atomic.Uint64
 )
 
 // Middleware represents a SQL middleware that can intercept and log SQL statements
@@ -388,17 +390,21 @@ func convertNamedValuesToInterface(args []d.NamedValue) []interface{} {
 }
 
 // wrap wraps a database driver with middleware support
+// It computes a stable driver name based on the middleware types to avoid
+// registering a new driver on every reconnection
 func wrap(driverName string, middlewares []Middleware) string {
 	if len(middlewares) == 0 {
 		return driverName
 	}
 
-	counter := driverCounter.Add(1)
-	wrappedDriverName := fmt.Sprintf("middleware_%s_%d", driverName, counter)
+	// Compute a hash based on the middleware types to create a stable driver name
+	hash := computeMiddlewareHash(middlewares)
+	wrappedDriverName := fmt.Sprintf("middleware_%s_%s", driverName, hash)
 
 	registeredDriversMu.Lock()
 	defer registeredDriversMu.Unlock()
 
+	// Reuse the driver if already registered
 	if registeredDrivers[wrappedDriverName] {
 		return wrappedDriverName
 	}
@@ -423,4 +429,17 @@ func wrap(driverName string, middlewares []Middleware) string {
 
 	registeredDrivers[wrappedDriverName] = true
 	return wrappedDriverName
+}
+
+// computeMiddlewareHash creates a stable hash based on the middleware types
+// This ensures the same middleware configuration always produces the same driver name
+func computeMiddlewareHash(middlewares []Middleware) string {
+	h := sha256.New()
+	for _, mw := range middlewares {
+		// Use the type name as part of the hash
+		typeName := reflect.TypeOf(mw).String()
+		h.Write([]byte(typeName))
+	}
+	// Return first 8 characters of the hex hash for brevity
+	return hex.EncodeToString(h.Sum(nil))[:8]
 }

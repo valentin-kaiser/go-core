@@ -386,3 +386,63 @@ func BenchmarkLoggingMiddleware_Disabled(b *testing.B) {
 		mw.AfterExec(newCtx, query, args, nil, nil)
 	}
 }
+
+// TestMiddleware_DriverReuse tests that the same middleware configuration reuses drivers
+func TestMiddleware_DriverReuse(t *testing.T) {
+	db1 := database.New[TestQueries]("test-reuse-1")
+	db1.RegisterQueries(NewTestQueries)
+	
+	logger := logging.NewNoOpAdapter()
+	loggingMW := database.NewLoggingMiddleware(logger)
+	db1.RegisterMiddleware(loggingMW)
+	
+	config := database.Config{
+		Driver: "sqlite",
+		Name:   ":memory:",
+	}
+	
+	// First connection - count drivers before and after
+	driversBeforeFirst := sql.Drivers()
+	db1.Connect(100*time.Millisecond, config)
+	db1.AwaitConnection()
+	driversAfterFirst := sql.Drivers()
+	
+	// Should have registered a new wrapped driver
+	newDriversCount := len(driversAfterFirst) - len(driversBeforeFirst)
+	if newDriversCount != 1 {
+		t.Logf("Warning: Expected 1 new driver, got %d. This may be due to other tests.", newDriversCount)
+	}
+	
+	// Disconnect and reconnect
+	err := db1.Disconnect()
+	if err != nil {
+		t.Fatalf("failed to disconnect: %v", err)
+	}
+	
+	db1.Connect(100*time.Millisecond, config)
+	db1.AwaitConnection()
+	driversAfterReconnect := sql.Drivers()
+	
+	// Should NOT register a new driver on reconnect (reuse existing)
+	if len(driversAfterReconnect) != len(driversAfterFirst) {
+		t.Errorf("expected no new drivers after reconnect, got %d new drivers", len(driversAfterReconnect)-len(driversAfterFirst))
+	}
+	
+	// Create another database with the same middleware configuration
+	db2 := database.New[TestQueries]("test-reuse-2")
+	db2.RegisterQueries(NewTestQueries)
+	db2.RegisterMiddleware(database.NewLoggingMiddleware(logger))
+	
+	db2.Connect(100*time.Millisecond, config)
+	db2.AwaitConnection()
+	driversAfterSecondDB := sql.Drivers()
+	
+	// Should reuse the same wrapped driver
+	if len(driversAfterSecondDB) != len(driversAfterReconnect) {
+		t.Errorf("expected to reuse existing driver for second db instance, got %d new drivers", len(driversAfterSecondDB)-len(driversAfterReconnect))
+	}
+	
+	// Cleanup
+	db1.Disconnect()
+	db2.Disconnect()
+}
