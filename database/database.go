@@ -395,7 +395,11 @@ func (d *Database[Q]) Transaction(call func(tx *sql.Tx) error) error {
 		return err
 	}
 
-	if err := tx.Commit(); err != nil {
+	err = tx.Commit()
+	if err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return apperror.NewErrorf("failed to rollback transaction").AddError(rbErr).AddError(err)
+		}
 		return apperror.NewErrorf("failed to commit transaction").AddError(err)
 	}
 
@@ -471,6 +475,9 @@ func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 
 	err = tx.Commit()
 	if err != nil {
+		if rbErr := tx.Rollback(); rbErr != nil {
+			return apperror.NewErrorf("failed to rollback transaction").AddError(rbErr).AddError(err)
+		}
 		return apperror.NewErrorf("failed to commit transaction").AddError(err)
 	}
 

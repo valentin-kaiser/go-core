@@ -431,14 +431,22 @@ func wrap(driverName string, middlewares []Middleware) string {
 	return wrappedDriverName
 }
 
-// computeMiddlewareHash creates a stable hash based on the middleware types
-// This ensures the same middleware configuration always produces the same driver name
+// computeMiddlewareHash creates a stable hash based on the middleware instances
+// This ensures the same middleware instances always produce the same driver name.
+// The hash includes both the type name and the pointer address to distinguish
+// between different instances of the same middleware type (e.g., two LoggingMiddleware
+// instances with different configurations).
 func computeMiddlewareHash(middlewares []Middleware) string {
 	h := sha256.New()
 	for _, mw := range middlewares {
 		// Use the type name as part of the hash
 		typeName := reflect.TypeOf(mw).String()
 		h.Write([]byte(typeName))
+		
+		// Include the pointer address to distinguish between different instances
+		// of the same middleware type with different configurations
+		ptr := reflect.ValueOf(mw).Pointer()
+		h.Write([]byte(fmt.Sprintf("%d", ptr)))
 	}
 	// Return first 8 characters of the hex hash for brevity
 	return hex.EncodeToString(h.Sum(nil))[:8]

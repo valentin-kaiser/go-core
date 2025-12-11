@@ -216,7 +216,6 @@ func SetupGracefulShutdown(handlers []func() error, signals ...os.Signal) func()
 }
 
 func write(err any, caller string, line int) {
-	fmt.Printf("Panic directory: %v\n", Directory)
 	e := os.MkdirAll(Directory, os.ModePerm)
 	if e != nil {
 		fmt.Fprintf(os.Stderr, "failed to create panic directory: %v", apperror.Wrap(e))

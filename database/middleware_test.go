@@ -428,18 +428,65 @@ func TestMiddleware_DriverReuse(t *testing.T) {
 		t.Errorf("expected no new drivers after reconnect, got %d new drivers", len(driversAfterReconnect)-len(driversAfterFirst))
 	}
 
-	// Create another database with the same middleware configuration
+	// Create another database with the SAME middleware instance
 	db2 := database.New[TestQueries]("test-reuse-2")
 	db2.RegisterQueries(NewTestQueries)
-	db2.RegisterMiddleware(database.NewLoggingMiddleware(logger))
+	db2.RegisterMiddleware(loggingMW) // Use the same instance
 
 	db2.Connect(100*time.Millisecond, config)
 	db2.AwaitConnection()
 	driversAfterSecondDB := sql.Drivers()
 
-	// Should reuse the same wrapped driver
+	// Should reuse the same wrapped driver (same middleware instance)
 	if len(driversAfterSecondDB) != len(driversAfterReconnect) {
-		t.Errorf("expected to reuse existing driver for second db instance, got %d new drivers", len(driversAfterSecondDB)-len(driversAfterReconnect))
+		t.Errorf("expected to reuse existing driver for second db instance with same middleware, got %d new drivers", len(driversAfterSecondDB)-len(driversAfterReconnect))
+	}
+
+	// Cleanup
+	db1.Disconnect()
+	db2.Disconnect()
+}
+
+// TestMiddleware_DifferentInstances tests that different middleware instances get different drivers
+func TestMiddleware_DifferentInstances(t *testing.T) {
+	logger := logging.NewNoOpAdapter()
+
+	// Create first database with first middleware instance
+	db1 := database.New[TestQueries]("test-diff-1")
+	db1.RegisterQueries(NewTestQueries)
+	loggingMW1 := database.NewLoggingMiddleware(logger)
+	db1.RegisterMiddleware(loggingMW1)
+
+	config := database.Config{
+		Driver: "sqlite",
+		Name:   ":memory:",
+	}
+
+	driversBeforeFirst := sql.Drivers()
+	db1.Connect(100*time.Millisecond, config)
+	db1.AwaitConnection()
+	driversAfterFirst := sql.Drivers()
+
+	// Create second database with DIFFERENT middleware instance
+	db2 := database.New[TestQueries]("test-diff-2")
+	db2.RegisterQueries(NewTestQueries)
+	loggingMW2 := database.NewLoggingMiddleware(logger) // Different instance
+	db2.RegisterMiddleware(loggingMW2)
+
+	db2.Connect(100*time.Millisecond, config)
+	db2.AwaitConnection()
+	driversAfterSecond := sql.Drivers()
+
+	// Should have registered TWO new drivers (one for each middleware instance)
+	totalNewDrivers := len(driversAfterSecond) - len(driversBeforeFirst)
+	if totalNewDrivers < 2 {
+		t.Errorf("expected at least 2 new drivers for different middleware instances, got %d", totalNewDrivers)
+	}
+
+	// Verify that the second connection registered a new driver
+	secondDBNewDrivers := len(driversAfterSecond) - len(driversAfterFirst)
+	if secondDBNewDrivers != 1 {
+		t.Errorf("expected 1 new driver for second db with different middleware instance, got %d", secondDBNewDrivers)
 	}
 
 	// Cleanup
