@@ -1232,15 +1232,19 @@ func (d *Database[Q]) Restore(backupPath string) error {
 	}
 
 	d.configMutex.RLock()
-	defer d.configMutex.RUnlock()
 
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+		d.configMutex.RUnlock()
 		return apperror.NewErrorf("backup file does not exist: %s", backupPath)
 	}
 
-	switch d.config.Driver {
+	cp := *d.config
+	driverType := d.config.Driver
+	d.configMutex.RUnlock()
+
+	switch driverType {
 	case "sqlite":
-		if d.config.Name == ":memory:" {
+		if cp.Name == ":memory:" {
 			return apperror.NewErrorf("cannot restore to in-memory database")
 		}
 
@@ -1257,7 +1261,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 
 		d.connected.Store(false)
 
-		targetPath := filepath.Join(flag.Path, d.config.Name+".db")
+		targetPath := filepath.Join(flag.Path, cp.Name+".db")
 		backupData, err := os.ReadFile(backupPath)
 		if err != nil {
 			return apperror.NewErrorf("failed to read backup file").AddError(err)
@@ -1273,7 +1277,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 
 		d.logger.Info().Msgf("database restored from backup: %s", backupPath)
 
-		d.Reconnect(*d.config)
+		d.Reconnect(cp)
 		return nil
 
 	case "mysql", "mariadb":

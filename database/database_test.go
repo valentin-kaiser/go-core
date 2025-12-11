@@ -637,7 +637,6 @@ func TestDatabase_Backup_InMemory(t *testing.T) {
 
 // TestDatabase_Restore_SQLite tests restore functionality for SQLite
 func TestDatabase_Restore_SQLite(t *testing.T) {
-	t.Skip("Restore test has deadlock issues with current implementation")
 	flag.Init()
 
 	// Create original database
