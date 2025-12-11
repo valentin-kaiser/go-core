@@ -228,9 +228,7 @@ type Database[Q any] struct {
 
 // New creates a new Database instance with the given name for logging purposes.
 // The name parameter is used to identify this database instance in logs.
-// The queriesNew parameter is an optional constructor function that creates a new sqlc Queries instance.
-// If queriesNew is nil, you must call RegisterQueries before using the Query method.
-// Example: database.New("main", sqlc.New) or database.New[sqlc.Queries]("main", nil)
+// The generic type parameter Q represents the sqlc-generated Queries type.
 func New[Q any](name string) *Database[Q] {
 	return &Database[Q]{
 		done:             make(chan bool),
@@ -783,6 +781,10 @@ func (d *Database[Q]) connect() (*sql.DB, error) {
 			if err != nil {
 				return nil, apperror.Wrap(err)
 			}
+		}
+
+		if strings.TrimSpace(d.config.Search) == "" {
+			d.config.Search = "public"
 		}
 
 		// Now connect to the actual database
@@ -1394,7 +1396,6 @@ func validateIdentifier(identifier string) error {
 }
 
 // quoteIdentifier safely quotes a SQL identifier for the given driver
-
 func quoteIdentifier(identifier string, driver string) (string, error) {
 	err := validateIdentifier(identifier)
 	if err != nil {
