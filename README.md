@@ -5,6 +5,9 @@
 
 **go-core** is a comprehensive, modular collection of Go libraries designed to accelerate professional application development. It provides robust, production-grade utilities for error handling, configuration, logging, caching, database management, security, service orchestration, and more. Each package is crafted for extensibility, reliability, and seamless integration.
 
+> **⚠️ Breaking Changes:**
+> This library is under active development and primarily maintained for personal use. The API may change without notice as new features are added and improvements are made. Backward compatibility is not guaranteed.
+
 ## Key Features
 
 ### Error Handling

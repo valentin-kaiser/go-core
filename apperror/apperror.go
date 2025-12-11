@@ -129,23 +129,13 @@ func Wrap(err error) error {
 
 // AddError adds an additional error to the Error instance context
 func (e Error) AddError(err error) Error {
-	if getErrors(err) != nil {
-		e.Errors = append(e.Errors, getErrors(err)...)
-		return e
-	}
 	e.Errors = append(e.Errors, err)
 	return e
 }
 
 // AddErrors adds multiple additional errors to the Error instance context
 func (e Error) AddErrors(errs []error) Error {
-	for _, err := range errs {
-		if getErrors(err) != nil {
-			e.Errors = append(e.Errors, getErrors(err)...)
-			continue
-		}
-		e.Errors = append(e.Errors, err)
-	}
+	e.Errors = append(e.Errors, errs...)
 	return e
 }
 
