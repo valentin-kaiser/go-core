@@ -54,10 +54,13 @@ import (
 )
 
 var (
-	logger    = logging.GetPackageLogger("interruption")
-	Write     = false
+	// Format specifies the timestamp format used for naming panic log files.
+	Format = "2006-01-02_15-04-05"
+	// Write determines whether panic information should be written to files.
+	Write = false
+	// Directory specifies the directory where panic log files are stored.
 	Directory = filepath.Join(flag.Path, "panics")
-	Format    = "2006-01-02_15-04-05"
+	logger    = logging.GetPackageLogger("interruption")
 )
 
 // Catch recovers from panics in the application and logs detailed error information.
@@ -81,7 +84,9 @@ func Catch() {
 			caller = fmt.Sprintf("%s/%s", filepath.Base(filepath.Dir(file)), strings.Trim(filepath.Base(file), filepath.Ext(file)))
 		}
 
-		write(err, caller, line)
+		if Write {
+			write(err, caller, line)
+		}
 
 		if !logger.Enabled() {
 			if flag.Debug {
