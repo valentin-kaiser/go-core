@@ -538,6 +538,17 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 			bytes, err := json.Marshal(v)
 			return string(bytes), err
 		},
+		"marshalIndent": func(v interface{}, prefix, indent string) (string, error) {
+			bytes, err := json.MarshalIndent(v, prefix, indent)
+			return string(bytes), err
+		},
+		"debug": func(v interface{}) template.HTML {
+			bytes, err := json.MarshalIndent(v, "", "  ")
+			if err != nil {
+				return template.HTML(fmt.Sprintf("error: %v", err))
+			}
+			return template.HTML(fmt.Sprintf("<pre>%s</pre>", string(bytes)))
+		},
 		"print":  fmt.Sprint,
 		"printf": fmt.Sprintf,
 	}
