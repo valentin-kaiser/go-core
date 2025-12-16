@@ -547,7 +547,8 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 			if err != nil {
 				return template.HTML(fmt.Sprintf("error: %v", err))
 			}
-			return template.HTML(fmt.Sprintf("<pre>%s</pre>", string(bytes)))
+			escaped := html.EscapeString(string(bytes))
+			return template.HTML(fmt.Sprintf("<pre>%s</pre>", escaped))
 		},
 		"print":  fmt.Sprint,
 		"printf": fmt.Sprintf,
