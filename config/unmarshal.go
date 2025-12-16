@@ -266,6 +266,8 @@ func (m *manager) setFieldValue(field reflect.Value, value interface{}) error {
 
 	case reflect.Slice:
 		return m.setSliceValue(field, value)
+	case reflect.Map:
+		return m.setMapValue(field, value)
 	}
 
 	return nil
@@ -440,6 +442,147 @@ func (m *manager) unmarshalMapToStruct(v reflect.Value, data map[string]interfac
 
 		if err := m.setFieldValue(fieldValue, value); err != nil {
 			return err
+		}
+	}
+
+	return nil
+}
+
+func (m *manager) setMapValue(field reflect.Value, value interface{}) error {
+	if value == nil {
+		return nil
+	}
+
+	valValue := reflect.ValueOf(value)
+	if valValue.Type().AssignableTo(field.Type()) {
+		field.Set(valValue)
+		return nil
+	}
+
+	inputMap, ok := value.(map[string]interface{})
+	if !ok {
+		if genericMap, ok := value.(map[interface{}]interface{}); ok {
+			inputMap = make(map[string]interface{})
+			for k, v := range genericMap {
+				inputMap[fmt.Sprintf("%v", k)] = v
+			}
+		} else {
+			return nil
+		}
+	}
+
+	keyType := field.Type().Key()
+	valueType := field.Type().Elem()
+
+	newMap := reflect.MakeMap(field.Type())
+	for k, v := range inputMap {
+		keyValue := reflect.New(keyType).Elem()
+		if err := m.setFieldValue(keyValue, k); err != nil {
+			return err
+		}
+
+		mapValue := reflect.New(valueType).Elem()
+
+		if valueType.Kind() == reflect.Ptr {
+			if mapValue.IsNil() {
+				mapValue.Set(reflect.New(valueType.Elem()))
+			}
+			if valueType.Elem().Kind() == reflect.Struct {
+				if err := m.setStructValue(mapValue, v); err != nil {
+					return err
+				}
+			} else {
+				if err := m.setFieldValue(mapValue.Elem(), v); err != nil {
+					return err
+				}
+			}
+		} else if valueType.Kind() == reflect.Struct {
+			if err := m.setStructValue(mapValue.Addr(), v); err != nil {
+				return err
+			}
+		} else {
+			if err := m.setFieldValue(mapValue, v); err != nil {
+				return err
+			}
+		}
+
+		newMap.SetMapIndex(keyValue, mapValue)
+	}
+
+	field.Set(newMap)
+	return nil
+}
+
+func (m *manager) setStructValue(field reflect.Value, value interface{}) error {
+	if field.Kind() != reflect.Ptr {
+		return fmt.Errorf("setStructValue requires pointer to struct")
+	}
+
+	if field.IsNil() {
+		field.Set(reflect.New(field.Type().Elem()))
+	}
+
+	structValue := field.Elem()
+	if structValue.Kind() != reflect.Struct {
+		return fmt.Errorf("expected struct, got %v", structValue.Kind())
+	}
+
+	inputMap, ok := value.(map[string]interface{})
+	if !ok {
+		if genericMap, ok := value.(map[interface{}]interface{}); ok {
+			inputMap = make(map[string]interface{})
+			for k, v := range genericMap {
+				inputMap[fmt.Sprintf("%v", k)] = v
+			}
+		} else {
+			return nil
+		}
+	}
+
+	structType := structValue.Type()
+	for i := 0; i < structType.NumField(); i++ {
+		fieldInfo := structType.Field(i)
+		fieldValue := structValue.Field(i)
+
+		if !fieldValue.CanSet() {
+			continue
+		}
+
+		fieldName := fieldInfo.Tag.Get("yaml")
+		if fieldName == "" || fieldName == "-" {
+			fieldName = strings.ToLower(fieldInfo.Name)
+		} else {
+			if idx := strings.Index(fieldName, ","); idx != -1 {
+				fieldName = fieldName[:idx]
+			}
+		}
+
+		var fieldVal interface{}
+		var found bool
+		for k, v := range inputMap {
+			if strings.EqualFold(k, fieldName) {
+				fieldVal = v
+				found = true
+				break
+			}
+		}
+
+		if !found {
+			continue
+		}
+
+		if fieldValue.Kind() == reflect.Struct {
+			if err := m.setStructValue(fieldValue.Addr(), fieldVal); err != nil {
+				return err
+			}
+		} else if fieldValue.Kind() == reflect.Ptr && fieldValue.Type().Elem().Kind() == reflect.Struct {
+			if err := m.setStructValue(fieldValue, fieldVal); err != nil {
+				return err
+			}
+		} else {
+			if err := m.setFieldValue(fieldValue, fieldVal); err != nil {
+				return err
+			}
 		}
 	}
 
