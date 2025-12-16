@@ -184,6 +184,7 @@
 package database
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"os"
@@ -484,6 +485,26 @@ func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 	return nil
 }
 
+// TestConnection tests the database connection by attempting to connect and ping the database.
+func (d *Database[Q]) TestConnection(c Config) error {
+	d.configMutex.Lock()
+	d.config = &c
+	d.configMutex.Unlock()
+
+	instance, err := d.connect()
+	if err != nil {
+		return apperror.NewError("connection test failed").AddError(err)
+	}
+	defer instance.Close()
+
+	err = instance.Ping()
+	if err != nil {
+		return apperror.NewError("ping test failed").AddError(err)
+	}
+
+	return nil
+}
+
 // Connected returns true if the database is connected, false otherwise
 func (d *Database[Q]) Connected() bool {
 	return d.connected.Load()
@@ -582,9 +603,31 @@ func (d *Database[Q]) Connect(interval time.Duration, c Config) {
 				d.dbMutex.RUnlock()
 
 				if dbInstance != nil {
-					err := dbInstance.Ping()
-					if err != nil && d.connected.Load() {
-						d.logger.Error().Err(err).Msg("connection lost")
+					// Retry ping a few times before declaring connection lost
+					// This prevents treating transient connection pool errors as database failures
+					const maxRetries = 3
+					var lastErr error
+					pingSucceeded := false
+
+					for i := 0; i < maxRetries; i++ {
+						ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+						err := dbInstance.PingContext(ctx)
+						cancel()
+
+						if err == nil {
+							pingSucceeded = true
+							break
+						}
+						lastErr = err
+
+						// Brief pause between retries to allow bad connections to be removed from pool
+						if i < maxRetries-1 {
+							time.Sleep(100 * time.Millisecond)
+						}
+					}
+
+					if !pingSucceeded && d.connected.Load() {
+						d.logger.Error().Err(lastErr).Msgf("connection lost after %d ping attempts", maxRetries)
 						d.connected.Store(false)
 						d.failed.Store(true)
 					}

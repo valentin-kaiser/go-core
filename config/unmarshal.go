@@ -94,7 +94,7 @@ func (m *manager) unmarshalStruct(v reflect.Value, prefix string) error {
 			continue
 		}
 
-		err := setFieldValue(fieldValue, value)
+		err := m.setFieldValue(fieldValue, value)
 		if err != nil {
 			return err
 		}
@@ -103,7 +103,7 @@ func (m *manager) unmarshalStruct(v reflect.Value, prefix string) error {
 	return nil
 }
 
-func setFieldValue(field reflect.Value, value interface{}) error {
+func (m *manager) setFieldValue(field reflect.Value, value interface{}) error {
 	if !field.CanSet() {
 		return nil
 	}
@@ -265,62 +265,86 @@ func setFieldValue(field reflect.Value, value interface{}) error {
 		}
 
 	case reflect.Slice:
-		return setSliceValue(field, value)
-
+		return m.setSliceValue(field, value)
 	case reflect.Map:
-		return setMapValue(field, value)
+		return m.setMapValue(field, value)
 	}
 
 	return nil
 }
 
-func setSliceValue(field reflect.Value, value interface{}) error {
-	if value == nil {
-		return nil
-	}
-
+func (m *manager) setSliceValue(field reflect.Value, value interface{}) error {
 	elemType := field.Type().Elem()
-	valValue := reflect.ValueOf(value)
-	if valValue.Type().AssignableTo(field.Type()) {
-		field.Set(valValue)
-		return nil
-	}
+	elemKind := elemType.Kind()
 
+	// Handle []interface{} from YAML
 	slice, ok := value.([]interface{})
 	if !ok {
-		if valValue.Kind() == reflect.Slice {
-			slice = make([]interface{}, valValue.Len())
-			for i := 0; i < valValue.Len(); i++ {
-				slice[i] = valValue.Index(i).Interface()
-			}
-		} else {
+		// Try direct assignment for typed slices
+		if reflect.TypeOf(value).AssignableTo(field.Type()) {
+			field.Set(reflect.ValueOf(value))
 			return nil
 		}
+		return nil
 	}
 
+	// Create a new slice of the appropriate type
 	newSlice := reflect.MakeSlice(field.Type(), len(slice), len(slice))
+
 	for i, item := range slice {
 		elemValue := newSlice.Index(i)
 
-		if elemType.Kind() == reflect.Ptr {
-			if elemValue.IsNil() {
-				elemValue.Set(reflect.New(elemType.Elem()))
-			}
-			if elemType.Elem().Kind() == reflect.Struct {
-				if err := setStructValue(elemValue, item); err != nil {
+		switch elemKind {
+		case reflect.Struct:
+			// Handle slice of structs
+			if itemMap, ok := item.(map[interface{}]interface{}); ok {
+				// Convert map[interface{}]interface{} to map[string]interface{}
+				stringMap := make(map[string]interface{})
+				for k, v := range itemMap {
+					if keyStr, ok := k.(string); ok {
+						stringMap[keyStr] = v
+					}
+				}
+				if err := m.unmarshalMapToStruct(elemValue, stringMap); err != nil {
 					return err
+				}
+			} else if itemMap, ok := item.(map[string]interface{}); ok {
+				if err := m.unmarshalMapToStruct(elemValue, itemMap); err != nil {
+					return err
+				}
+			}
+
+		case reflect.Ptr:
+			// Handle slice of pointers to structs
+			if elemType.Elem().Kind() == reflect.Struct {
+				elemValue.Set(reflect.New(elemType.Elem()))
+				if itemMap, ok := item.(map[interface{}]interface{}); ok {
+					stringMap := make(map[string]interface{})
+					for k, v := range itemMap {
+						if keyStr, ok := k.(string); ok {
+							stringMap[keyStr] = v
+						}
+					}
+					if err := m.unmarshalMapToStruct(elemValue, stringMap); err != nil {
+						return err
+					}
+				} else if itemMap, ok := item.(map[string]interface{}); ok {
+					if err := m.unmarshalMapToStruct(elemValue, itemMap); err != nil {
+						return err
+					}
 				}
 			} else {
-				if err := setFieldValue(elemValue.Elem(), item); err != nil {
+				// Handle pointer to primitive types
+				newElem := reflect.New(elemType.Elem())
+				if err := m.setFieldValue(newElem.Elem(), item); err != nil {
 					return err
 				}
+				elemValue.Set(newElem)
 			}
-		} else if elemType.Kind() == reflect.Struct {
-			if err := setStructValue(elemValue.Addr(), item); err != nil {
-				return err
-			}
-		} else {
-			if err := setFieldValue(elemValue, item); err != nil {
+
+		default:
+			// Handle primitive types
+			if err := m.setFieldValue(elemValue, item); err != nil {
 				return err
 			}
 		}
@@ -330,7 +354,101 @@ func setSliceValue(field reflect.Value, value interface{}) error {
 	return nil
 }
 
-func setMapValue(field reflect.Value, value interface{}) error {
+func (m *manager) unmarshalMapToStruct(v reflect.Value, data map[string]interface{}) error {
+	if v.Kind() == reflect.Ptr {
+		if v.IsNil() {
+			v.Set(reflect.New(v.Type().Elem()))
+		}
+		v = v.Elem()
+	}
+
+	if v.Kind() != reflect.Struct {
+		return nil
+	}
+
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		fieldValue := v.Field(i)
+
+		if !fieldValue.CanSet() {
+			continue
+		}
+
+		yamlTag := field.Tag.Get("yaml")
+		if yamlTag == "-" {
+			continue
+		}
+
+		fieldName := getFieldName(field)
+
+		// Look for the value in the data map
+		value, exists := data[fieldName]
+		if !exists {
+			// Try lowercase version
+			value, exists = data[strings.ToLower(fieldName)]
+		}
+		if !exists {
+			continue
+		}
+
+		if fieldValue.Kind() == reflect.Struct {
+			if nestedMap, ok := value.(map[string]interface{}); ok {
+				if err := m.unmarshalMapToStruct(fieldValue, nestedMap); err != nil {
+					return err
+				}
+			} else if nestedMap, ok := value.(map[interface{}]interface{}); ok {
+				stringMap := make(map[string]interface{})
+				for k, v := range nestedMap {
+					if keyStr, ok := k.(string); ok {
+						stringMap[keyStr] = v
+					}
+				}
+				if err := m.unmarshalMapToStruct(fieldValue, stringMap); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+
+		if fieldValue.Kind() == reflect.Ptr && fieldValue.Type().Elem().Kind() == reflect.Struct {
+			if fieldValue.IsNil() {
+				fieldValue.Set(reflect.New(fieldValue.Type().Elem()))
+			}
+			if nestedMap, ok := value.(map[string]interface{}); ok {
+				if err := m.unmarshalMapToStruct(fieldValue, nestedMap); err != nil {
+					return err
+				}
+			} else if nestedMap, ok := value.(map[interface{}]interface{}); ok {
+				stringMap := make(map[string]interface{})
+				for k, v := range nestedMap {
+					if keyStr, ok := k.(string); ok {
+						stringMap[keyStr] = v
+					}
+				}
+				if err := m.unmarshalMapToStruct(fieldValue, stringMap); err != nil {
+					return err
+				}
+			}
+			continue
+		}
+
+		if fieldValue.Kind() == reflect.Slice {
+			if err := m.setSliceValue(fieldValue, value); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if err := m.setFieldValue(fieldValue, value); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func (m *manager) setMapValue(field reflect.Value, value interface{}) error {
 	if value == nil {
 		return nil
 	}
@@ -359,7 +477,7 @@ func setMapValue(field reflect.Value, value interface{}) error {
 	newMap := reflect.MakeMap(field.Type())
 	for k, v := range inputMap {
 		keyValue := reflect.New(keyType).Elem()
-		if err := setFieldValue(keyValue, k); err != nil {
+		if err := m.setFieldValue(keyValue, k); err != nil {
 			return err
 		}
 
@@ -370,20 +488,20 @@ func setMapValue(field reflect.Value, value interface{}) error {
 				mapValue.Set(reflect.New(valueType.Elem()))
 			}
 			if valueType.Elem().Kind() == reflect.Struct {
-				if err := setStructValue(mapValue, v); err != nil {
+				if err := m.setStructValue(mapValue, v); err != nil {
 					return err
 				}
 			} else {
-				if err := setFieldValue(mapValue.Elem(), v); err != nil {
+				if err := m.setFieldValue(mapValue.Elem(), v); err != nil {
 					return err
 				}
 			}
 		} else if valueType.Kind() == reflect.Struct {
-			if err := setStructValue(mapValue.Addr(), v); err != nil {
+			if err := m.setStructValue(mapValue.Addr(), v); err != nil {
 				return err
 			}
 		} else {
-			if err := setFieldValue(mapValue, v); err != nil {
+			if err := m.setFieldValue(mapValue, v); err != nil {
 				return err
 			}
 		}
@@ -395,7 +513,7 @@ func setMapValue(field reflect.Value, value interface{}) error {
 	return nil
 }
 
-func setStructValue(field reflect.Value, value interface{}) error {
+func (m *manager) setStructValue(field reflect.Value, value interface{}) error {
 	if field.Kind() != reflect.Ptr {
 		return fmt.Errorf("setStructValue requires pointer to struct")
 	}
@@ -454,15 +572,15 @@ func setStructValue(field reflect.Value, value interface{}) error {
 		}
 
 		if fieldValue.Kind() == reflect.Struct {
-			if err := setStructValue(fieldValue.Addr(), fieldVal); err != nil {
+			if err := m.setStructValue(fieldValue.Addr(), fieldVal); err != nil {
 				return err
 			}
 		} else if fieldValue.Kind() == reflect.Ptr && fieldValue.Type().Elem().Kind() == reflect.Struct {
-			if err := setStructValue(fieldValue, fieldVal); err != nil {
+			if err := m.setStructValue(fieldValue, fieldVal); err != nil {
 				return err
 			}
 		} else {
-			if err := setFieldValue(fieldValue, fieldVal); err != nil {
+			if err := m.setFieldValue(fieldValue, fieldVal); err != nil {
 				return err
 			}
 		}

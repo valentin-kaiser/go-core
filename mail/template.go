@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"html/template"
 	"io/fs"
 	"os"
@@ -537,6 +538,18 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 		"marshal": func(v interface{}) (string, error) {
 			bytes, err := json.Marshal(v)
 			return string(bytes), err
+		},
+		"marshalIndent": func(v interface{}, prefix, indent string) (string, error) {
+			bytes, err := json.MarshalIndent(v, prefix, indent)
+			return string(bytes), err
+		},
+		"debug": func(v interface{}) template.HTML {
+			bytes, err := json.MarshalIndent(v, "", "  ")
+			if err != nil {
+				return template.HTML(fmt.Sprintf("error: %v", err))
+			}
+			escaped := html.EscapeString(string(bytes))
+			return template.HTML(fmt.Sprintf("<pre>%s</pre>", escaped))
 		},
 		"print":  fmt.Sprint,
 		"printf": fmt.Sprintf,
