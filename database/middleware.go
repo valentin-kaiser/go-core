@@ -442,7 +442,7 @@ func computeMiddlewareHash(middlewares []Middleware) string {
 		// Use the type name as part of the hash
 		typeName := reflect.TypeOf(mw).String()
 		h.Write([]byte(typeName))
-		
+
 		// Include the pointer address to distinguish between different instances
 		// of the same middleware type with different configurations
 		ptr := reflect.ValueOf(mw).Pointer()

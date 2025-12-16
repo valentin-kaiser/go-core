@@ -608,24 +608,24 @@ func (d *Database[Q]) Connect(interval time.Duration, c Config) {
 					const maxRetries = 3
 					var lastErr error
 					pingSucceeded := false
-					
+
 					for i := 0; i < maxRetries; i++ {
 						ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 						err := dbInstance.PingContext(ctx)
 						cancel()
-						
+
 						if err == nil {
 							pingSucceeded = true
 							break
 						}
 						lastErr = err
-						
+
 						// Brief pause between retries to allow bad connections to be removed from pool
 						if i < maxRetries-1 {
 							time.Sleep(100 * time.Millisecond)
 						}
 					}
-					
+
 					if !pingSucceeded && d.connected.Load() {
 						d.logger.Error().Err(lastErr).Msgf("connection lost after %d ping attempts", maxRetries)
 						d.connected.Store(false)
