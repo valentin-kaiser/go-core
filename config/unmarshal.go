@@ -26,6 +26,19 @@ func (m *manager) getValue(key string) interface{} {
 		return val
 	}
 
+	prefix := lowerKey + "."
+	reconstructedMap := make(map[string]interface{})
+	for k, v := range m.values {
+		if strings.HasPrefix(k, prefix) {
+			suffix := k[len(prefix):]
+			reconstructedMap[suffix] = v
+		}
+	}
+
+	if len(reconstructedMap) > 0 {
+		return reconstructedMap
+	}
+
 	if val, exists := m.defaults[lowerKey]; exists {
 		return val
 	}
