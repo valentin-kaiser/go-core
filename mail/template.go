@@ -436,7 +436,19 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 		tm.funcs = make(template.FuncMap)
 	}
 
-	funcs := template.FuncMap{
+	tm.mutex.Lock()
+	defer tm.mutex.Unlock()
+	for key, fn := range DefaultFuncs() {
+		if _, exists := tm.funcs[key]; !exists {
+			tm.funcs[key] = fn
+		}
+	}
+	return tm
+}
+
+func DefaultFuncs() template.FuncMap {
+	return template.FuncMap{
+		// Math functions
 		"add": func(a, b int) int {
 			return a + b
 		},
@@ -458,6 +470,7 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 			}
 			return a % b
 		},
+		// String functions
 		"upper": strings.ToUpper,
 		"lower": strings.ToLower,
 		"title": func(s string, langCode string) string {
@@ -476,6 +489,7 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 		"hasSuffix": strings.HasSuffix,
 		"join":      strings.Join,
 		"split":     strings.Split,
+		// Utility functions
 		"default": func(defaultValue, value interface{}) interface{} {
 			if value == nil || value == "" {
 				return defaultValue
@@ -496,6 +510,7 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 			}
 			return dict
 		},
+		// Time functions
 		"now": time.Now,
 		"date": func(format string, date interface{}) string {
 			// Handle different date types and formats
@@ -530,6 +545,7 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 		"unix": func(t int64, nsec int) time.Time {
 			return time.Unix(t, int64(nsec))
 		},
+		// JSON functions
 		"unmarshal": func(object string) (interface{}, error) {
 			var data map[string]interface{}
 			err := json.Unmarshal([]byte(object), &data)
@@ -543,6 +559,7 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 			bytes, err := json.MarshalIndent(v, prefix, indent)
 			return string(bytes), err
 		},
+		// Debugging functions
 		"debug": func(v interface{}) template.HTML {
 			bytes, err := json.MarshalIndent(v, "", "  ")
 			if err != nil {
@@ -554,13 +571,4 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 		"print":  fmt.Sprint,
 		"printf": fmt.Sprintf,
 	}
-
-	tm.mutex.Lock()
-	defer tm.mutex.Unlock()
-	for key, fn := range funcs {
-		if _, exists := tm.funcs[key]; !exists {
-			tm.funcs[key] = fn
-		}
-	}
-	return tm
 }
