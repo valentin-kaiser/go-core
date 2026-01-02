@@ -232,22 +232,48 @@ func (m *manager) parseStructTags(v reflect.Value, labelBase string) error {
 
 // kebabCase converts a string to kebab-case (dash-separated lowercase)
 // Example: "ApplicationName" -> "application-name"
+// Handles acronyms properly: "HTTPPort" -> "http-port", "ARCHost" -> "arc-host"
+// Handles dot-separated paths: "RTLS.ARCHost" -> "rtls.arc-host"
 func kebabCase(s string) string {
 	if s == "" {
 		return s
 	}
 
+	// Handle dot-separated segments (e.g., "RTLS.ARCHost")
+	if strings.Contains(s, ".") {
+		parts := strings.Split(s, ".")
+		for i, part := range parts {
+			parts[i] = kebabCase(part)
+		}
+		return strings.Join(parts, ".")
+	}
+
+	runes := []rune(s)
 	var result strings.Builder
-	for i, r := range s {
+
+	for i := 0; i < len(runes); i++ {
+		r := runes[i]
+
+		// Check if current character is uppercase
 		if unicode.IsUpper(r) {
+			// Add hyphen before uppercase letter if:
+			// 1. It's not the first character
+			// 2. Previous character is lowercase OR
+			// 3. Next character exists and is lowercase (end of acronym)
 			if i > 0 {
-				result.WriteByte('-')
+				prevIsLower := unicode.IsLower(runes[i-1])
+				nextIsLower := i+1 < len(runes) && unicode.IsLower(runes[i+1])
+
+				if prevIsLower || nextIsLower {
+					result.WriteByte('-')
+				}
 			}
 			result.WriteRune(unicode.ToLower(r))
-			continue
+		} else {
+			result.WriteRune(r)
 		}
-		result.WriteRune(r)
 	}
+
 	return result.String()
 }
 
