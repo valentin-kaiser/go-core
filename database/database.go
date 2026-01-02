@@ -578,10 +578,6 @@ func (d *Database[Q]) Connect(interval time.Duration, c Config) {
 					copy(handlers, d.onConnectHandler)
 					d.handlerMutex.Unlock()
 
-					d.failed.Store(false)
-					d.connected.Store(true)
-					d.logger.Debug().Msg("connection established")
-
 					for _, handler := range handlers {
 						err := handler(instance, c)
 						if err != nil {
@@ -594,6 +590,9 @@ func (d *Database[Q]) Connect(interval time.Duration, c Config) {
 					if d.failed.Load() {
 						d.logger.Debug().Msg("connection restored")
 					}
+					d.failed.Store(false)
+					d.connected.Store(true)
+					d.logger.Debug().Msg("connection established")
 					return
 				}
 
