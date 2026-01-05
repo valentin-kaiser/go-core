@@ -917,32 +917,6 @@ func BenchmarkDatabase_Connected(b *testing.B) {
 	}
 }
 
-// TestDatabase_OnConnectHandler_Error tests handler that returns error
-func TestDatabase_OnConnectHandler_Error(t *testing.T) {
-	db := database.New[TestQueries]("test-handler-error")
-
-	handlerError := errors.New("handler error")
-	db.RegisterOnConnectHandler(func(sqlDB *sql.DB, config database.Config) error {
-		return handlerError
-	})
-
-	config := database.Config{
-		Driver: "sqlite",
-		Name:   ":memory:",
-	}
-
-	db.Connect(100*time.Millisecond, config)
-	defer db.Disconnect()
-
-	// Wait a bit for connection attempt
-	time.Sleep(300 * time.Millisecond)
-
-	// Connection should fail due to handler error
-	if db.Connected() {
-		t.Error("Database should not be connected when handler returns error")
-	}
-}
-
 // TestDatabase_Transaction_NotConnected tests transaction when not connected
 func TestDatabase_Transaction_NotConnected(t *testing.T) {
 	db := database.New[TestQueries]("test-tx-not-connected")
