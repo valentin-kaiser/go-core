@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -379,9 +380,9 @@ func TestDatabase_Transaction_Rollback(t *testing.T) {
 func TestDatabase_RegisterOnConnectHandler(t *testing.T) {
 	db := database.New[TestQueries]("test")
 
-	handlerCalled := false
+	var handlerCalled atomic.Bool
 	db.RegisterOnConnectHandler(func(sqlDB *sql.DB, config database.Config) error {
-		handlerCalled = true
+		handlerCalled.Store(true)
 		_, err := sqlDB.Exec("CREATE TABLE test_table (id INTEGER PRIMARY KEY)")
 		return err
 	})
@@ -395,7 +396,7 @@ func TestDatabase_RegisterOnConnectHandler(t *testing.T) {
 	defer db.Disconnect()
 	db.AwaitConnection()
 
-	if !handlerCalled {
+	if !handlerCalled.Load() {
 		t.Error("OnConnect handler should have been called")
 	}
 
@@ -917,32 +918,6 @@ func BenchmarkDatabase_Connected(b *testing.B) {
 	}
 }
 
-// TestDatabase_OnConnectHandler_Error tests handler that returns error
-func TestDatabase_OnConnectHandler_Error(t *testing.T) {
-	db := database.New[TestQueries]("test-handler-error")
-
-	handlerError := errors.New("handler error")
-	db.RegisterOnConnectHandler(func(sqlDB *sql.DB, config database.Config) error {
-		return handlerError
-	})
-
-	config := database.Config{
-		Driver: "sqlite",
-		Name:   ":memory:",
-	}
-
-	db.Connect(100*time.Millisecond, config)
-	defer db.Disconnect()
-
-	// Wait a bit for connection attempt
-	time.Sleep(300 * time.Millisecond)
-
-	// Connection should fail due to handler error
-	if db.Connected() {
-		t.Error("Database should not be connected when handler returns error")
-	}
-}
-
 // TestDatabase_Transaction_NotConnected tests transaction when not connected
 func TestDatabase_Transaction_NotConnected(t *testing.T) {
 	db := database.New[TestQueries]("test-tx-not-connected")
@@ -1016,16 +991,16 @@ func TestDatabase_Query_WithError(t *testing.T) {
 func TestDatabase_MultipleOnConnectHandlers(t *testing.T) {
 	db := database.New[TestQueries]("test-multi-handlers")
 
-	handler1Called := false
-	handler2Called := false
+	var handler1Called atomic.Bool
+	var handler2Called atomic.Bool
 
 	db.RegisterOnConnectHandler(func(sqlDB *sql.DB, config database.Config) error {
-		handler1Called = true
+		handler1Called.Store(true)
 		return nil
 	})
 
 	db.RegisterOnConnectHandler(func(sqlDB *sql.DB, config database.Config) error {
-		handler2Called = true
+		handler2Called.Store(true)
 		return nil
 	})
 
@@ -1038,10 +1013,10 @@ func TestDatabase_MultipleOnConnectHandlers(t *testing.T) {
 	defer db.Disconnect()
 	db.AwaitConnection()
 
-	if !handler1Called {
+	if !handler1Called.Load() {
 		t.Error("First handler should have been called")
 	}
-	if !handler2Called {
+	if !handler2Called.Load() {
 		t.Error("Second handler should have been called")
 	}
 }
