@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -379,9 +380,9 @@ func TestDatabase_Transaction_Rollback(t *testing.T) {
 func TestDatabase_RegisterOnConnectHandler(t *testing.T) {
 	db := database.New[TestQueries]("test")
 
-	handlerCalled := false
+	var handlerCalled atomic.Bool
 	db.RegisterOnConnectHandler(func(sqlDB *sql.DB, config database.Config) error {
-		handlerCalled = true
+		handlerCalled.Store(true)
 		_, err := sqlDB.Exec("CREATE TABLE test_table (id INTEGER PRIMARY KEY)")
 		return err
 	})
@@ -395,7 +396,7 @@ func TestDatabase_RegisterOnConnectHandler(t *testing.T) {
 	defer db.Disconnect()
 	db.AwaitConnection()
 
-	if !handlerCalled {
+	if !handlerCalled.Load() {
 		t.Error("OnConnect handler should have been called")
 	}
 
@@ -990,16 +991,16 @@ func TestDatabase_Query_WithError(t *testing.T) {
 func TestDatabase_MultipleOnConnectHandlers(t *testing.T) {
 	db := database.New[TestQueries]("test-multi-handlers")
 
-	handler1Called := false
-	handler2Called := false
+	var handler1Called atomic.Bool
+	var handler2Called atomic.Bool
 
 	db.RegisterOnConnectHandler(func(sqlDB *sql.DB, config database.Config) error {
-		handler1Called = true
+		handler1Called.Store(true)
 		return nil
 	})
 
 	db.RegisterOnConnectHandler(func(sqlDB *sql.DB, config database.Config) error {
-		handler2Called = true
+		handler2Called.Store(true)
 		return nil
 	})
 
@@ -1012,10 +1013,10 @@ func TestDatabase_MultipleOnConnectHandlers(t *testing.T) {
 	defer db.Disconnect()
 	db.AwaitConnection()
 
-	if !handler1Called {
+	if !handler1Called.Load() {
 		t.Error("First handler should have been called")
 	}
-	if !handler2Called {
+	if !handler2Called.Load() {
 		t.Error("Second handler should have been called")
 	}
 }
