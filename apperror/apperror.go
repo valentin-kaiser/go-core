@@ -244,7 +244,7 @@ func (e Error) Error() string {
 		case errors != "" && details == "":
 			return fmt.Sprintf(FullFormat, trace, e.Message, errors)
 		case errors != "" && details != "":
-			return fmt.Sprintf(FullFormat, trace, e.Message, errors) + details
+			return fmt.Sprintf(FullFormat, trace, e.Message, errors) + " " + details
 		default:
 			return fmt.Sprintf(ErrorTraceFormat, trace, e.Message)
 		}
@@ -424,13 +424,4 @@ func trace(e Error) []string {
 
 	e.Trace = append(e.Trace, fmt.Sprintf("%s:%d", file, line))
 	return e.Trace
-}
-
-// getErrors checks if the error is of type Error and returns the additional errors
-// If the error is not of type Error, it returns nil
-func getErrors(err error) []error {
-	if e, ok := err.(Error); ok {
-		return e.Errors
-	}
-	return nil
 }
