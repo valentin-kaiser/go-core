@@ -68,7 +68,7 @@
 //
 //		// Connect to the database
 //		db.Connect(time.Second, database.Config{
-//			Driver: "sqlite",
+//			Driver: "sqlite3",
 //			Name:   "test",
 //		})
 //		defer db.Disconnect()
@@ -117,7 +117,7 @@
 //	})
 //
 //	sqlite.Connect(time.Second, database.Config{
-//		Driver: "sqlite",
+//		Driver: "sqlite3",
 //		Name:   ":memory:",
 //	})
 //
@@ -133,7 +133,7 @@
 //
 //	// Connect to the database
 //	db.Connect(time.Second, database.Config{
-//		Driver: "sqlite",
+//		Driver: "sqlite3",
 //		Name:   "example",
 //	})
 //	defer db.Disconnect()
@@ -159,7 +159,7 @@
 //	db.RegisterMiddleware(loggingMiddleware)
 //
 //	db.Connect(time.Second, database.Config{
-//		Driver: "sqlite",
+//		Driver: "sqlite3",
 //		Name:   "example",
 //	})
 //	defer db.Disconnect()
@@ -708,7 +708,7 @@ func (d *Database[Q]) connect() (*sql.DB, error) {
 	d.middlewareMutex.RUnlock()
 
 	switch d.config.Driver {
-	case "sqlite":
+	case "sqlite3":
 		dsn := "file:memdb1?mode=memory&cache=shared&_busy_timeout=5000"
 		if d.config.Name != ":memory:" {
 			_, err := os.Stat(flag.Path)
@@ -885,7 +885,7 @@ func (d *Database[Q]) Backup(path string) error {
 	}
 
 	switch d.config.Driver {
-	case "sqlite":
+	case "sqlite3":
 		d.dbMutex.RLock()
 		dbInstance := d.db
 		d.dbMutex.RUnlock()
@@ -1294,7 +1294,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 	d.configMutex.RUnlock()
 
 	switch driverType {
-	case "sqlite":
+	case "sqlite3":
 		if cp.Name == ":memory:" {
 			return apperror.NewErrorf("cannot restore to in-memory database")
 		}
@@ -1461,7 +1461,7 @@ func quoteIdentifier(identifier string, driver string) (string, error) {
 		return "`" + identifier + "`", nil
 	case "postgres":
 		return "\"" + identifier + "\"", nil
-	case "sqlite":
+	case "sqlite3":
 		return "\"" + identifier + "\"", nil
 	default:
 		return "", apperror.NewErrorf("unsupported driver: %s", driver)

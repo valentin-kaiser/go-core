@@ -50,7 +50,7 @@ func TestDatabase_Connect_SQLite(t *testing.T) {
 	db := database.New[TestQueries]("test")
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -95,7 +95,7 @@ func TestDatabase_Disconnect(t *testing.T) {
 	db := database.New[TestQueries]("test-disconnect")
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -123,7 +123,7 @@ func TestDatabase_Reconnect(t *testing.T) {
 	db := database.New[TestQueries]("test")
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -136,7 +136,7 @@ func TestDatabase_Reconnect(t *testing.T) {
 
 	// Reconnect with new config
 	newConfig := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 	db.Reconnect(newConfig)
@@ -156,7 +156,7 @@ func TestDatabase_Execute(t *testing.T) {
 	db := database.New[TestQueries]("test")
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -217,7 +217,7 @@ func TestDatabase_Query(t *testing.T) {
 	db.RegisterQueries(NewTestQueries)
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -249,7 +249,7 @@ func TestDatabase_Query_NotRegistered(t *testing.T) {
 	db := database.New[TestQueries]("test")
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -270,7 +270,7 @@ func TestDatabase_Transaction(t *testing.T) {
 	db := database.New[TestQueries]("test")
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -326,7 +326,7 @@ func TestDatabase_Transaction_Rollback(t *testing.T) {
 	db := database.New[TestQueries]("test-rollback")
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -388,7 +388,7 @@ func TestDatabase_RegisterOnConnectHandler(t *testing.T) {
 	})
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -418,7 +418,7 @@ func TestDatabase_RegisterOnConnectHandler_Nil(t *testing.T) {
 	db.RegisterOnConnectHandler(nil)
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -444,7 +444,7 @@ func TestDatabase_RegisterMiddleware(t *testing.T) {
 	}
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -489,7 +489,7 @@ func TestDatabase_Debug(t *testing.T) {
 	db.RegisterMiddleware(loggingMw)
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -540,7 +540,7 @@ func TestDatabase_Debug_WithoutMiddleware(t *testing.T) {
 	db.RegisterQueries(NewTestQueries)
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -575,7 +575,7 @@ func TestDatabase_Backup_SQLite(t *testing.T) {
 	db := database.New[TestQueries]("test")
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   "test_backup",
 	}
 
@@ -622,7 +622,7 @@ func TestDatabase_Backup_InMemory(t *testing.T) {
 	db := database.New[TestQueries]("test")
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -643,7 +643,7 @@ func TestDatabase_Restore_SQLite(t *testing.T) {
 	// Create original database
 	db1 := database.New[TestQueries]("test1")
 	config1 := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   "test_restore_orig",
 	}
 
@@ -681,7 +681,7 @@ func TestDatabase_Restore_SQLite(t *testing.T) {
 	// Create new database
 	db2 := database.New[TestQueries]("test2")
 	config2 := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   "test_restore_target",
 	}
 
@@ -730,7 +730,7 @@ func TestDatabase_Connected(t *testing.T) {
 	}
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -752,7 +752,7 @@ func TestDatabase_Get(t *testing.T) {
 	}
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -777,7 +777,7 @@ func TestDatabase_AwaitConnection(t *testing.T) {
 	db := database.New[TestQueries]("test")
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -803,7 +803,7 @@ func TestDatabase_AwaitConnection(t *testing.T) {
 func BenchmarkDatabase_Execute(b *testing.B) {
 	db := database.New[TestQueries]("bench")
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -832,7 +832,7 @@ func BenchmarkDatabase_Query(b *testing.B) {
 	db.RegisterQueries(NewTestQueries)
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -859,7 +859,7 @@ func BenchmarkDatabase_Query(b *testing.B) {
 func BenchmarkDatabase_Transaction(b *testing.B) {
 	db := database.New[TestQueries]("bench")
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -886,7 +886,7 @@ func BenchmarkDatabase_Transaction(b *testing.B) {
 func BenchmarkDatabase_Get(b *testing.B) {
 	db := database.New[TestQueries]("bench")
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -904,7 +904,7 @@ func BenchmarkDatabase_Get(b *testing.B) {
 func BenchmarkDatabase_Connected(b *testing.B) {
 	db := database.New[TestQueries]("bench")
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -947,7 +947,7 @@ func TestDatabase_Execute_WithError(t *testing.T) {
 	db := database.New[TestQueries]("test-exec-error")
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -970,7 +970,7 @@ func TestDatabase_Query_WithError(t *testing.T) {
 	db.RegisterQueries(NewTestQueries)
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -1005,7 +1005,7 @@ func TestDatabase_MultipleOnConnectHandlers(t *testing.T) {
 	})
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 

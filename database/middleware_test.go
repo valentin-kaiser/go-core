@@ -222,7 +222,7 @@ func TestMiddleware_Integration(t *testing.T) {
 
 	// Connect to in-memory SQLite database
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -268,7 +268,7 @@ func TestMiddleware_Chaining(t *testing.T) {
 	db.RegisterMiddleware(mock2)
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -301,7 +301,7 @@ func TestMiddleware_NilMiddleware(t *testing.T) {
 	}
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -397,7 +397,7 @@ func TestMiddleware_DriverReuse(t *testing.T) {
 	db1.RegisterMiddleware(loggingMW)
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 
@@ -458,7 +458,7 @@ func TestMiddleware_DifferentInstances(t *testing.T) {
 	db1.RegisterMiddleware(loggingMW1)
 
 	config := database.Config{
-		Driver: "sqlite",
+		Driver: "sqlite3",
 		Name:   ":memory:",
 	}
 

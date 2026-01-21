@@ -16,7 +16,7 @@ func TestConfigValidate_SQLite(t *testing.T) {
 		{
 			name: "valid sqlite config",
 			config: database.Config{
-				Driver: "sqlite",
+				Driver: "sqlite3",
 				Name:   "test",
 			},
 			wantErr: false,
@@ -24,7 +24,7 @@ func TestConfigValidate_SQLite(t *testing.T) {
 		{
 			name: "valid sqlite memory config",
 			config: database.Config{
-				Driver: "sqlite",
+				Driver: "sqlite3",
 				Name:   ":memory:",
 			},
 			wantErr: false,
@@ -32,14 +32,14 @@ func TestConfigValidate_SQLite(t *testing.T) {
 		{
 			name: "sqlite missing name",
 			config: database.Config{
-				Driver: "sqlite",
+				Driver: "sqlite3",
 			},
 			wantErr: true,
 		},
 		{
 			name: "sqlite empty name",
 			config: database.Config{
-				Driver: "sqlite",
+				Driver: "sqlite3",
 				Name:   "",
 			},
 			wantErr: true,
@@ -287,11 +287,11 @@ func TestConfigChanged(t *testing.T) {
 		{
 			name: "no change",
 			old: database.Config{
-				Driver: "sqlite",
+				Driver: "sqlite3",
 				Name:   "test",
 			},
 			new: database.Config{
-				Driver: "sqlite",
+				Driver: "sqlite3",
 				Name:   "test",
 			},
 			changed: false,
@@ -299,7 +299,7 @@ func TestConfigChanged(t *testing.T) {
 		{
 			name: "driver changed",
 			old: database.Config{
-				Driver: "sqlite",
+				Driver: "sqlite3",
 				Name:   "test",
 			},
 			new: database.Config{
@@ -311,11 +311,11 @@ func TestConfigChanged(t *testing.T) {
 		{
 			name: "name changed",
 			old: database.Config{
-				Driver: "sqlite",
+				Driver: "sqlite3",
 				Name:   "test",
 			},
 			new: database.Config{
-				Driver: "sqlite",
+				Driver: "sqlite3",
 				Name:   "test2",
 			},
 			changed: true,
@@ -438,7 +438,7 @@ func TestConfigChanged(t *testing.T) {
 func BenchmarkConfigValidate(b *testing.B) {
 	configs := []database.Config{
 		{
-			Driver: "sqlite",
+			Driver: "sqlite3",
 			Name:   "test",
 		},
 		{
