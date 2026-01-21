@@ -483,11 +483,11 @@ func GetWebSocketConn(ctx context.Context) (*websocket.Conn, bool) {
 func (s *Service) call(ctx context.Context, service, method string, req proto.Message) (any, error) {
 	methodInfo, exists := s.methods[service+"."+method]
 	if !exists {
-		return nil, errMethodNotFound
+		return nil, apperror.Wrap(errMethodNotFound)
 	}
 
 	if !methodInfo.method.IsValid() {
-		return nil, errMethodReflectionNotFound
+		return nil, apperror.Wrap(errMethodReflectionNotFound)
 	}
 
 	m := methodInfo.method
@@ -496,25 +496,25 @@ func (s *Service) call(ctx context.Context, service, method string, req proto.Me
 	// Validate method signature if not already validated
 	if !methodInfo.validated {
 		if mt.NumIn() != 2 || mt.NumOut() != 2 {
-			return nil, errInvalidMethodSignature
+			return nil, apperror.Wrap(errInvalidMethodSignature)
 		}
 		if !mt.In(0).Implements(contextType) {
-			return nil, errFirstArgMustBeContext
+			return nil, apperror.Wrap(errFirstArgMustBeContext)
 		}
 		if !mt.Out(1).Implements(errorType) {
-			return nil, errSecondReturnMustBeError
+			return nil, apperror.Wrap(errSecondReturnMustBeError)
 		}
 		methodInfo.validated = true
 	}
 
 	wanted := mt.In(1)
 	if wanted.Kind() != reflect.Ptr {
-		return nil, errRequestMustBePointer
+		return nil, apperror.Wrap(errRequestMustBePointer)
 	}
 
 	reqVal := reflect.ValueOf(req)
 	if !reqVal.IsValid() {
-		return nil, errNilRequest
+		return nil, apperror.Wrap(errNilRequest)
 	}
 
 	if !reqVal.Type().AssignableTo(wanted) {
@@ -529,15 +529,15 @@ func (s *Service) call(ctx context.Context, service, method string, req proto.Me
 		reqPtr := reflect.New(wanted.Elem())
 		b, err := marshalOpts.Marshal(req)
 		if err != nil {
-			return nil, err
+			return nil, apperror.Wrap(err)
 		}
 		pm, ok := reqPtr.Interface().(proto.Message)
 		if !ok {
-			return nil, errExpectedProtoMessage
+			return nil, apperror.Wrap(errExpectedProtoMessage)
 		}
 		err = unmarshalOpts.Unmarshal(b, pm)
 		if err != nil {
-			return nil, err
+			return nil, apperror.Wrap(err)
 		}
 		reqVal = reqPtr
 	}
@@ -549,7 +549,7 @@ func (s *Service) call(ctx context.Context, service, method string, req proto.Me
 		var ok bool
 		err, ok = e.(error)
 		if !ok {
-			return nil, errExpectedError
+			return nil, apperror.Wrap(errExpectedError)
 		}
 	}
 
@@ -559,13 +559,13 @@ func (s *Service) call(ctx context.Context, service, method string, req proto.Me
 	}
 
 	l.Field("service", service).Field("method", method).Msg("jRPC method called")
-	return res, err
+	return res, apperror.Wrap(err)
 }
 
 func (s *Service) find(service, method string) (*methodInfo, error) {
 	md, exists := s.methods[service+"."+method]
 	if !exists {
-		return nil, errMethodNotFound
+		return nil, apperror.Wrap(errMethodNotFound)
 	}
 
 	return md, nil
