@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -530,7 +531,8 @@ func TestDatabase_Backup_SQLite(t *testing.T) {
 
 	db := database.New[TestQueries](database.DriverSQLite, "test")
 
-	dsn := "file:test_backup.db"
+	// Use a DSN that creates the database in flag.Path directory to match cleanup
+	dsn := fmt.Sprintf("file:%s", filepath.Join(flag.Path, "test_backup.db"))
 
 	db.Connect(100*time.Millisecond, dsn)
 	defer func() {

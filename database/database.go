@@ -66,11 +66,8 @@
 //			return err
 //		})
 //
-//		// Connect to the database
-//		db.Connect(time.Second, database.Config{
-//			Driver: "sqlite3",
-//			Name:   "test",
-//		})
+//		// Connect to the database using DSN string
+//		db.Connect(time.Second, "file:test.db")
 //		defer db.Disconnect()
 //
 //		// Wait for connection to be established
@@ -98,28 +95,11 @@
 //	mysql := database.New("mysql-analytics", mysqlSqlc.New)
 //	sqlite := database.New("sqlite-cache", sqliteSqlc.New)
 //
-//	postgres.Connect(time.Second, database.Config{
-//		Driver: "postgres",
-//		Host:   "localhost",
-//		Port:   5432,
-//		User:   "postgres",
-//		Password: "secret",
-//		Name:   "maindb",
-//	})
+//	postgres.Connect(time.Second, "postgres://postgres:secret@localhost:5432/maindb?sslmode=disable")
 //
-//	mysql.Connect(time.Second, database.Config{
-//		Driver: "mysql",
-//		Host:   "localhost",
-//		Port:   3306,
-//		User:   "root",
-//		Password: "password",
-//		Name:   "analytics",
-//	})
+//	mysql.Connect(time.Second, "root:password@tcp(localhost:3306)/analytics")
 //
-//	sqlite.Connect(time.Second, database.Config{
-//		Driver: "sqlite3",
-//		Name:   ":memory:",
-//	})
+//	sqlite.Connect(time.Second, "file::memory:")
 //
 // Middleware Example:
 //
@@ -131,11 +111,8 @@
 //	loggingMiddleware := database.NewLoggingMiddleware(logger)
 //	db.RegisterMiddleware(loggingMiddleware)
 //
-//	// Connect to the database
-//	db.Connect(time.Second, database.Config{
-//		Driver: "sqlite3",
-//		Name:   "example",
-//	})
+//	// Connect to the database using DSN string
+//	db.Connect(time.Second, "file:example.db")
 //	defer db.Disconnect()
 //
 //	// All SQL statements will now be logged with timing information
@@ -158,10 +135,7 @@
 //	loggingMiddleware.SetEnabled(false) // Disabled by default
 //	db.RegisterMiddleware(loggingMiddleware)
 //
-//	db.Connect(time.Second, database.Config{
-//		Driver: "sqlite3",
-//		Name:   "example",
-//	})
+//	db.Connect(time.Second, "file:example.db")
 //	defer db.Disconnect()
 //
 //	ctx := context.Background()
@@ -208,7 +182,7 @@ type Driver string
 const (
 	DriverSQLite   Driver = "sqlite3"
 	DriverMySQL    Driver = "mysql"
-	DriverPostgres Driver = "postgres"
+	DriverPostgres Driver = "pgx"
 )
 
 // Database represents a database connection instance with its own state and configuration.
@@ -703,7 +677,7 @@ func (d *Database[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
 	d.middlewareMutex.RUnlock()
 
 	switch driver {
-	case "sqlite3":
+	case DriverSQLite:
 		driverName := wrap(string(driver), middlewares)
 		conn, err := sql.Open(driverName, dsn)
 		if err != nil {
@@ -721,7 +695,7 @@ func (d *Database[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
 
 		return conn, nil
 
-	case "mysql", "mariadb":
+	case DriverMySQL:
 		conn, err := sql.Open(string(driver), dsn)
 		if err != nil {
 			return nil, apperror.Wrap(err)
@@ -734,8 +708,9 @@ func (d *Database[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
 
 		return conn, nil
 
-	case "postgres":
-		conn, err := sql.Open(string(driver), dsn)
+	case DriverPostgres:
+		// Use "pgx" as the driver name for jackc/pgx/v5/stdlib
+		conn, err := sql.Open("pgx", dsn)
 		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
@@ -768,7 +743,7 @@ func (d *Database[Q]) Backup(path string, dsn string, schema string) error {
 	}
 
 	switch d.driver {
-	case "sqlite3":
+	case DriverSQLite:
 		if !strings.HasPrefix(dsn, "file:") {
 			return apperror.NewErrorf("database backup is only supported for file-based SQLite databases")
 		}
@@ -783,8 +758,14 @@ func (d *Database[Q]) Backup(path string, dsn string, schema string) error {
 			return apperror.NewErrorf("failed to checkpoint WAL").AddError(err)
 		}
 
+		// Parse and validate the SQLite DSN to get the file path
+		sourceFilePath, err := parseSQLiteFilePath(dsn)
+		if err != nil {
+			return apperror.Wrap(err)
+		}
+
 		// Copy the database file
-		sourceData, err := os.ReadFile((strings.SplitN(dsn[5:], "?", 2))[0])
+		sourceData, err := os.ReadFile(sourceFilePath)
 		if err != nil {
 			return apperror.NewErrorf("failed to read database file").AddError(err)
 		}
@@ -797,7 +778,7 @@ func (d *Database[Q]) Backup(path string, dsn string, schema string) error {
 		d.logger.Info().Msgf("database backup created: %s", path)
 		return nil
 
-	case "mysql", "mariadb":
+	case DriverMySQL:
 		d.dbMutex.RLock()
 		dbInstance := d.db
 		d.dbMutex.RUnlock()
@@ -976,7 +957,7 @@ func (d *Database[Q]) Backup(path string, dsn string, schema string) error {
 		d.logger.Info().Msgf("database backup created: %s", path)
 		return nil
 
-	case "postgres":
+	case DriverPostgres:
 		d.dbMutex.RLock()
 		dbInstance := d.db
 		d.dbMutex.RUnlock()
@@ -1167,7 +1148,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 	}
 
 	switch d.driver {
-	case "sqlite3":
+	case DriverSQLite:
 		if !strings.HasPrefix(d.dsn, "file:") {
 			return apperror.NewErrorf("restore is only supported for file-based SQLite databases")
 		}
@@ -1185,7 +1166,12 @@ func (d *Database[Q]) Restore(backupPath string) error {
 
 		d.connected.Store(false)
 
-		targetPath := strings.SplitN(d.dsn[5:], "?", 2)[0]
+		// Parse and validate the SQLite DSN to get the file path
+		targetPath, err := parseSQLiteFilePath(d.dsn)
+		if err != nil {
+			return apperror.Wrap(err)
+		}
+
 		backupData, err := os.ReadFile(backupPath)
 		if err != nil {
 			return apperror.NewErrorf("failed to read backup file").AddError(err)
@@ -1204,7 +1190,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		d.Reconnect(d.dsn)
 		return nil
 
-	case "mysql", "mariadb":
+	case DriverMySQL:
 		d.dbMutex.RLock()
 		dbInstance := d.db
 		d.dbMutex.RUnlock()
@@ -1248,7 +1234,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		d.logger.Info().Msgf("database restored from backup: %s", backupPath)
 		return nil
 
-	case "postgres":
+	case DriverPostgres:
 		d.dbMutex.RLock()
 		dbInstance := d.db
 		d.dbMutex.RUnlock()
@@ -1324,19 +1310,44 @@ func validateIdentifier(identifier string) error {
 }
 
 // quoteIdentifier safely quotes a SQL identifier for the given driver
-func quoteIdentifier(identifier string, driver string) (string, error) {
+func quoteIdentifier(identifier string, driver Driver) (string, error) {
 	err := validateIdentifier(identifier)
 	if err != nil {
 		return "", apperror.Wrap(err)
 	}
 	switch driver {
-	case "mysql", "mariadb":
+	case DriverMySQL:
 		return "`" + identifier + "`", nil
-	case "postgres":
+	case DriverPostgres:
 		return "\"" + identifier + "\"", nil
-	case "sqlite3":
+	case DriverSQLite:
 		return "\"" + identifier + "\"", nil
 	default:
 		return "", apperror.NewErrorf("unsupported driver: %s", driver)
 	}
+}
+
+// parseSQLiteFilePath extracts and validates the file path from a SQLite DSN.
+// SQLite DSN format: "file:path/to/db.db[?options]"
+// Returns the file path without the "file:" prefix and query parameters.
+func parseSQLiteFilePath(dsn string) (string, error) {
+	if len(dsn) <= 5 || !strings.HasPrefix(dsn, "file:") {
+		return "", apperror.NewErrorf("invalid SQLite DSN format: %s (expected 'file:path')", dsn)
+	}
+
+	// Remove "file:" prefix
+	pathWithQuery := dsn[5:]
+	if pathWithQuery == "" {
+		return "", apperror.NewErrorf("SQLite DSN contains no file path after 'file:' prefix")
+	}
+
+	// Split on '?' to remove query parameters
+	parts := strings.SplitN(pathWithQuery, "?", 2)
+	filePath := parts[0]
+
+	if filepath.IsAbs(filepath.Clean(filepath.ToSlash(filepath.Clean(strings.TrimSpace(filePath))))) || strings.HasPrefix(filePath, ":") {
+		return filePath, nil
+	}
+
+	return filePath, nil
 }
