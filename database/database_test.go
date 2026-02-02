@@ -35,7 +35,7 @@ func NewTestQueries(db DBTX) *TestQueries {
 
 // TestNew tests creating a new database instance
 func TestNew(t *testing.T) {
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 	if db == nil {
 		t.Fatal("New() returned nil")
 	}
@@ -47,14 +47,11 @@ func TestNew(t *testing.T) {
 
 // TestDatabase_Connect_SQLite tests connecting to SQLite database
 func TestDatabase_Connect_SQLite(t *testing.T) {
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 
 	// Wait for connection
@@ -72,13 +69,11 @@ func TestDatabase_Connect_SQLite(t *testing.T) {
 
 // TestDatabase_Connect_InvalidConfig tests connecting with invalid config
 func TestDatabase_Connect_InvalidConfig(t *testing.T) {
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 
-	config := database.Config{
-		Driver: "invalid",
-	}
+	dsn := "invalid://connection"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 
 	// Wait a bit
@@ -92,14 +87,11 @@ func TestDatabase_Connect_InvalidConfig(t *testing.T) {
 
 // TestDatabase_Disconnect tests disconnecting from database
 func TestDatabase_Disconnect(t *testing.T) {
-	db := database.New[TestQueries]("test-disconnect")
+	db := database.New[TestQueries](database.DriverSQLite, "test-disconnect")
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	db.AwaitConnection()
 
 	if !db.Connected() {
@@ -120,14 +112,11 @@ func TestDatabase_Disconnect(t *testing.T) {
 
 // TestDatabase_Reconnect tests reconnecting to database
 func TestDatabase_Reconnect(t *testing.T) {
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	db.AwaitConnection()
 
 	if !db.Connected() {
@@ -135,11 +124,8 @@ func TestDatabase_Reconnect(t *testing.T) {
 	}
 
 	// Reconnect with new config
-	newConfig := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
-	db.Reconnect(newConfig)
+	newDsn := ":memory:"
+	db.Reconnect(newDsn)
 
 	// Wait for reconnection
 	time.Sleep(300 * time.Millisecond)
@@ -153,14 +139,11 @@ func TestDatabase_Reconnect(t *testing.T) {
 
 // TestDatabase_Execute tests executing raw SQL
 func TestDatabase_Execute(t *testing.T) {
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -201,7 +184,7 @@ func TestDatabase_Execute(t *testing.T) {
 
 // TestDatabase_Execute_NotConnected tests executing when not connected
 func TestDatabase_Execute_NotConnected(t *testing.T) {
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 
 	err := db.Execute(func(sqlDB *sql.DB) error {
 		return nil
@@ -213,15 +196,12 @@ func TestDatabase_Execute_NotConnected(t *testing.T) {
 
 // TestDatabase_Query tests using sqlc queries
 func TestDatabase_Query(t *testing.T) {
-	db := database.New[TestQueries]("test-query")
+	db := database.New[TestQueries](database.DriverSQLite, "test-query")
 	db.RegisterQueries(NewTestQueries)
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -246,14 +226,11 @@ func TestDatabase_Query(t *testing.T) {
 
 // TestDatabase_Query_NotRegistered tests Query without registered constructor
 func TestDatabase_Query_NotRegistered(t *testing.T) {
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -267,14 +244,11 @@ func TestDatabase_Query_NotRegistered(t *testing.T) {
 
 // TestDatabase_Transaction tests database transactions
 func TestDatabase_Transaction(t *testing.T) {
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -323,14 +297,11 @@ func TestDatabase_Transaction(t *testing.T) {
 
 // TestDatabase_Transaction_Rollback tests transaction rollback
 func TestDatabase_Transaction_Rollback(t *testing.T) {
-	db := database.New[TestQueries]("test-rollback")
+	db := database.New[TestQueries](database.DriverSQLite, "test-rollback")
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -378,21 +349,18 @@ func TestDatabase_Transaction_Rollback(t *testing.T) {
 
 // TestDatabase_RegisterOnConnectHandler tests on-connect handlers
 func TestDatabase_RegisterOnConnectHandler(t *testing.T) {
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 
 	var handlerCalled atomic.Bool
-	db.RegisterOnConnectHandler(func(sqlDB *sql.DB, config database.Config) error {
+	db.RegisterOnConnectHandler(func(sqlDB *sql.DB) error {
 		handlerCalled.Store(true)
 		_, err := sqlDB.Exec("CREATE TABLE test_table (id INTEGER PRIMARY KEY)")
 		return err
 	})
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -412,17 +380,14 @@ func TestDatabase_RegisterOnConnectHandler(t *testing.T) {
 
 // TestDatabase_RegisterOnConnectHandler_Nil tests registering nil handler
 func TestDatabase_RegisterOnConnectHandler_Nil(t *testing.T) {
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 
 	// Should not panic
 	db.RegisterOnConnectHandler(nil)
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -433,7 +398,7 @@ func TestDatabase_RegisterOnConnectHandler_Nil(t *testing.T) {
 
 // TestDatabase_RegisterMiddleware tests middleware registration
 func TestDatabase_RegisterMiddleware(t *testing.T) {
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 
 	logger := logging.NewNoOpAdapter()
 	mw := database.NewLoggingMiddleware(logger)
@@ -443,12 +408,9 @@ func TestDatabase_RegisterMiddleware(t *testing.T) {
 		t.Error("RegisterMiddleware should return the same instance")
 	}
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -464,7 +426,7 @@ func TestDatabase_RegisterMiddleware(t *testing.T) {
 
 // TestDatabase_RegisterQueries tests registering queries constructor
 func TestDatabase_RegisterQueries(t *testing.T) {
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 
 	result := db.RegisterQueries(NewTestQueries)
 	if result != db {
@@ -480,7 +442,7 @@ func TestDatabase_RegisterQueries(t *testing.T) {
 
 // TestDatabase_Debug tests debug mode
 func TestDatabase_Debug(t *testing.T) {
-	db := database.New[TestQueries]("test-debug")
+	db := database.New[TestQueries](database.DriverSQLite, "test-debug")
 	db.RegisterQueries(NewTestQueries)
 
 	logger := logging.NewNoOpAdapter()
@@ -488,12 +450,9 @@ func TestDatabase_Debug(t *testing.T) {
 	loggingMw.SetEnabled(false) // Disable by default
 	db.RegisterMiddleware(loggingMw)
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -536,15 +495,12 @@ func TestDatabase_Debug(t *testing.T) {
 
 // TestDatabase_Debug_WithoutMiddleware tests debug mode without middleware
 func TestDatabase_Debug_WithoutMiddleware(t *testing.T) {
-	db := database.New[TestQueries]("test-debug-no-mw")
+	db := database.New[TestQueries](database.DriverSQLite, "test-debug-no-mw")
 	db.RegisterQueries(NewTestQueries)
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -572,14 +528,11 @@ func TestDatabase_Backup_SQLite(t *testing.T) {
 	// Initialize flag package for path
 	flag.Init()
 
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   "test_backup",
-	}
+	dsn := "test_backup"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer func() {
 		db.Disconnect()
 		// Clean up test database file
@@ -606,7 +559,7 @@ func TestDatabase_Backup_SQLite(t *testing.T) {
 	backupPath := filepath.Join(flag.Path, "test_backup_file.db")
 	defer os.Remove(backupPath)
 
-	err = db.Backup(backupPath)
+	err = db.Backup(backupPath, dsn, "")
 	if err != nil {
 		t.Errorf("Backup() failed: %v", err)
 	}
@@ -619,18 +572,15 @@ func TestDatabase_Backup_SQLite(t *testing.T) {
 
 // TestDatabase_Backup_InMemory tests backup with in-memory database
 func TestDatabase_Backup_InMemory(t *testing.T) {
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
-	err := db.Backup("backup.db")
+	err := db.Backup("backup.db", dsn, "")
 	if err == nil {
 		t.Error("Backup() should fail for in-memory database")
 	}
@@ -641,13 +591,10 @@ func TestDatabase_Restore_SQLite(t *testing.T) {
 	flag.Init()
 
 	// Create original database
-	db1 := database.New[TestQueries]("test1")
-	config1 := database.Config{
-		Driver: "sqlite3",
-		Name:   "test_restore_orig",
-	}
+	db1 := database.New[TestQueries](database.DriverSQLite, "test1")
+	dsn1 := "test_restore_orig"
 
-	db1.Connect(100*time.Millisecond, config1)
+	db1.Connect(100*time.Millisecond, dsn1)
 	defer func() {
 		db1.Disconnect()
 		os.Remove(filepath.Join(flag.Path, "test_restore_orig.db"))
@@ -673,19 +620,16 @@ func TestDatabase_Restore_SQLite(t *testing.T) {
 	backupPath := filepath.Join(flag.Path, "test_restore_backup.db")
 	defer os.Remove(backupPath)
 
-	err = db1.Backup(backupPath)
+	err = db1.Backup(backupPath, dsn1, "")
 	if err != nil {
 		t.Fatalf("Backup failed: %v", err)
 	}
 
 	// Create new database
-	db2 := database.New[TestQueries]("test2")
-	config2 := database.Config{
-		Driver: "sqlite3",
-		Name:   "test_restore_target",
-	}
+	db2 := database.New[TestQueries](database.DriverSQLite, "test2")
+	dsn2 := "test_restore_target"
 
-	db2.Connect(100*time.Millisecond, config2)
+	db2.Connect(100*time.Millisecond, dsn2)
 	defer func() {
 		db2.Disconnect()
 		os.Remove(filepath.Join(flag.Path, "test_restore_target.db"))
@@ -723,18 +667,15 @@ func TestDatabase_Restore_SQLite(t *testing.T) {
 
 // TestDatabase_Connected tests Connected method
 func TestDatabase_Connected(t *testing.T) {
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 
 	if db.Connected() {
 		t.Error("New database should not be connected")
 	}
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -745,18 +686,15 @@ func TestDatabase_Connected(t *testing.T) {
 
 // TestDatabase_Get tests Get method
 func TestDatabase_Get(t *testing.T) {
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 
 	if db.Get() != nil {
 		t.Error("Get() should return nil when not connected")
 	}
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -774,15 +712,12 @@ func TestDatabase_Get(t *testing.T) {
 
 // TestDatabase_AwaitConnection tests AwaitConnection method
 func TestDatabase_AwaitConnection(t *testing.T) {
-	db := database.New[TestQueries]("test")
+	db := database.New[TestQueries](database.DriverSQLite, "test")
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
 	start := time.Now()
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 
 	// This should block until connected
@@ -801,13 +736,10 @@ func TestDatabase_AwaitConnection(t *testing.T) {
 
 // BenchmarkDatabase_Execute benchmarks Execute method
 func BenchmarkDatabase_Execute(b *testing.B) {
-	db := database.New[TestQueries]("bench")
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	db := database.New[TestQueries](database.DriverSQLite, "bench")
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -828,15 +760,12 @@ func BenchmarkDatabase_Execute(b *testing.B) {
 
 // BenchmarkDatabase_Query benchmarks Query method
 func BenchmarkDatabase_Query(b *testing.B) {
-	db := database.New[TestQueries]("bench")
+	db := database.New[TestQueries](database.DriverSQLite, "bench")
 	db.RegisterQueries(NewTestQueries)
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -857,13 +786,10 @@ func BenchmarkDatabase_Query(b *testing.B) {
 
 // BenchmarkDatabase_Transaction benchmarks Transaction method
 func BenchmarkDatabase_Transaction(b *testing.B) {
-	db := database.New[TestQueries]("bench")
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	db := database.New[TestQueries](database.DriverSQLite, "bench")
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -884,13 +810,10 @@ func BenchmarkDatabase_Transaction(b *testing.B) {
 
 // BenchmarkDatabase_Get benchmarks Get method
 func BenchmarkDatabase_Get(b *testing.B) {
-	db := database.New[TestQueries]("bench")
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	db := database.New[TestQueries](database.DriverSQLite, "bench")
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -902,13 +825,10 @@ func BenchmarkDatabase_Get(b *testing.B) {
 
 // BenchmarkDatabase_Connected benchmarks Connected method
 func BenchmarkDatabase_Connected(b *testing.B) {
-	db := database.New[TestQueries]("bench")
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	db := database.New[TestQueries](database.DriverSQLite, "bench")
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -920,7 +840,7 @@ func BenchmarkDatabase_Connected(b *testing.B) {
 
 // TestDatabase_Transaction_NotConnected tests transaction when not connected
 func TestDatabase_Transaction_NotConnected(t *testing.T) {
-	db := database.New[TestQueries]("test-tx-not-connected")
+	db := database.New[TestQueries](database.DriverSQLite, "test-tx-not-connected")
 
 	err := db.Transaction(func(tx *sql.Tx) error {
 		return nil
@@ -932,7 +852,7 @@ func TestDatabase_Transaction_NotConnected(t *testing.T) {
 
 // TestDatabase_Debug_Chaining tests debug mode returns same instance when already in debug
 func TestDatabase_Debug_Chaining(t *testing.T) {
-	db := database.New[TestQueries]("test-debug-chain")
+	db := database.New[TestQueries](database.DriverSQLite, "test-debug-chain")
 
 	debug1 := db.Debug()
 	debug2 := debug1.Debug()
@@ -944,14 +864,11 @@ func TestDatabase_Debug_Chaining(t *testing.T) {
 
 // TestDatabase_Execute_WithError tests Execute with function that returns error
 func TestDatabase_Execute_WithError(t *testing.T) {
-	db := database.New[TestQueries]("test-exec-error")
+	db := database.New[TestQueries](database.DriverSQLite, "test-exec-error")
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -966,15 +883,12 @@ func TestDatabase_Execute_WithError(t *testing.T) {
 
 // TestDatabase_Query_WithError tests Query with function that returns error
 func TestDatabase_Query_WithError(t *testing.T) {
-	db := database.New[TestQueries]("test-query-error")
+	db := database.New[TestQueries](database.DriverSQLite, "test-query-error")
 	db.RegisterQueries(NewTestQueries)
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 
@@ -989,27 +903,24 @@ func TestDatabase_Query_WithError(t *testing.T) {
 
 // TestDatabase_MultipleOnConnectHandlers tests multiple handlers
 func TestDatabase_MultipleOnConnectHandlers(t *testing.T) {
-	db := database.New[TestQueries]("test-multi-handlers")
+	db := database.New[TestQueries](database.DriverSQLite, "test-multi-handlers")
 
 	var handler1Called atomic.Bool
 	var handler2Called atomic.Bool
 
-	db.RegisterOnConnectHandler(func(sqlDB *sql.DB, config database.Config) error {
+	db.RegisterOnConnectHandler(func(sqlDB *sql.DB) error {
 		handler1Called.Store(true)
 		return nil
 	})
 
-	db.RegisterOnConnectHandler(func(sqlDB *sql.DB, config database.Config) error {
+	db.RegisterOnConnectHandler(func(sqlDB *sql.DB) error {
 		handler2Called.Store(true)
 		return nil
 	})
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 	db.AwaitConnection()
 

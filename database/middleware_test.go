@@ -209,7 +209,7 @@ func TestLoggingMiddleware_WithDriverErrSkip(t *testing.T) {
 // TestMiddleware_Integration tests middleware integration with SQLite database
 func TestMiddleware_Integration(t *testing.T) {
 	// Create a test database with middleware
-	db := database.New[any]("test")
+	db := database.New[any](database.DriverSQLite, "test")
 
 	// Create mock middleware
 	mock := &mockMiddleware{}
@@ -221,16 +221,9 @@ func TestMiddleware_Integration(t *testing.T) {
 	db.RegisterMiddleware(loggingMw)
 
 	// Connect to in-memory SQLite database
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	if err := config.Validate(); err != nil {
-		t.Fatalf("Config validation failed: %v", err)
-	}
-
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 
 	// Wait for connection
@@ -259,7 +252,7 @@ func TestMiddleware_Integration(t *testing.T) {
 
 // TestMiddleware_Chaining tests that multiple middlewares work together
 func TestMiddleware_Chaining(t *testing.T) {
-	db := database.New[any]("test")
+	db := database.New[any](database.DriverSQLite, "test")
 
 	mock1 := &mockMiddleware{}
 	mock2 := &mockMiddleware{}
@@ -267,12 +260,9 @@ func TestMiddleware_Chaining(t *testing.T) {
 	db.RegisterMiddleware(mock1)
 	db.RegisterMiddleware(mock2)
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 
 	time.Sleep(200 * time.Millisecond)
@@ -292,7 +282,7 @@ func TestMiddleware_Chaining(t *testing.T) {
 
 // TestMiddleware_NilMiddleware tests that nil middleware is handled gracefully
 func TestMiddleware_NilMiddleware(t *testing.T) {
-	db := database.New[any]("test")
+	db := database.New[any](database.DriverSQLite, "test")
 
 	// Register nil middleware - should not panic
 	result := db.RegisterMiddleware(nil)
@@ -300,12 +290,9 @@ func TestMiddleware_NilMiddleware(t *testing.T) {
 		t.Error("RegisterMiddleware should return the same database instance")
 	}
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
-	db.Connect(100*time.Millisecond, config)
+	db.Connect(100*time.Millisecond, dsn)
 	defer db.Disconnect()
 
 	time.Sleep(200 * time.Millisecond)
@@ -389,21 +376,18 @@ func BenchmarkLoggingMiddleware_Disabled(b *testing.B) {
 
 // TestMiddleware_DriverReuse tests that the same middleware configuration reuses drivers
 func TestMiddleware_DriverReuse(t *testing.T) {
-	db1 := database.New[TestQueries]("test-reuse-1")
+	db1 := database.New[TestQueries](database.DriverSQLite, "test-reuse-1")
 	db1.RegisterQueries(NewTestQueries)
 
 	logger := logging.NewNoOpAdapter()
 	loggingMW := database.NewLoggingMiddleware(logger)
 	db1.RegisterMiddleware(loggingMW)
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
 	// First connection - count drivers before and after
 	driversBeforeFirst := sql.Drivers()
-	db1.Connect(100*time.Millisecond, config)
+	db1.Connect(100*time.Millisecond, dsn)
 	db1.AwaitConnection()
 	driversAfterFirst := sql.Drivers()
 
@@ -419,7 +403,7 @@ func TestMiddleware_DriverReuse(t *testing.T) {
 		t.Fatalf("failed to disconnect: %v", err)
 	}
 
-	db1.Connect(100*time.Millisecond, config)
+	db1.Connect(100*time.Millisecond, dsn)
 	db1.AwaitConnection()
 	driversAfterReconnect := sql.Drivers()
 
@@ -429,11 +413,11 @@ func TestMiddleware_DriverReuse(t *testing.T) {
 	}
 
 	// Create another database with the SAME middleware instance
-	db2 := database.New[TestQueries]("test-reuse-2")
+	db2 := database.New[TestQueries](database.DriverSQLite, "test-reuse-2")
 	db2.RegisterQueries(NewTestQueries)
 	db2.RegisterMiddleware(loggingMW) // Use the same instance
 
-	db2.Connect(100*time.Millisecond, config)
+	db2.Connect(100*time.Millisecond, dsn)
 	db2.AwaitConnection()
 	driversAfterSecondDB := sql.Drivers()
 
@@ -452,28 +436,25 @@ func TestMiddleware_DifferentInstances(t *testing.T) {
 	logger := logging.NewNoOpAdapter()
 
 	// Create first database with first middleware instance
-	db1 := database.New[TestQueries]("test-diff-1")
+	db1 := database.New[TestQueries](database.DriverSQLite, "test-diff-1")
 	db1.RegisterQueries(NewTestQueries)
 	loggingMW1 := database.NewLoggingMiddleware(logger)
 	db1.RegisterMiddleware(loggingMW1)
 
-	config := database.Config{
-		Driver: "sqlite3",
-		Name:   ":memory:",
-	}
+	dsn := ":memory:"
 
 	driversBeforeFirst := sql.Drivers()
-	db1.Connect(100*time.Millisecond, config)
+	db1.Connect(100*time.Millisecond, dsn)
 	db1.AwaitConnection()
 	driversAfterFirst := sql.Drivers()
 
 	// Create second database with DIFFERENT middleware instance
-	db2 := database.New[TestQueries]("test-diff-2")
+	db2 := database.New[TestQueries](database.DriverSQLite, "test-diff-2")
 	db2.RegisterQueries(NewTestQueries)
 	loggingMW2 := database.NewLoggingMiddleware(logger) // Different instance
 	db2.RegisterMiddleware(loggingMW2)
 
-	db2.Connect(100*time.Millisecond, config)
+	db2.Connect(100*time.Millisecond, dsn)
 	db2.AwaitConnection()
 	driversAfterSecond := sql.Drivers()
 
