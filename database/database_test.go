@@ -561,7 +561,7 @@ func TestDatabase_Backup_SQLite(t *testing.T) {
 	backupPath := filepath.Join(flag.Path, "test_backup_file.db")
 	defer os.Remove(backupPath)
 
-	err = db.Backup(backupPath, dsn, "")
+	err = db.Backup(backupPath, "")
 	if err != nil {
 		t.Errorf("Backup() failed: %v", err)
 	}
@@ -582,7 +582,7 @@ func TestDatabase_Backup_InMemory(t *testing.T) {
 	defer db.Disconnect()
 	db.AwaitConnection()
 
-	err := db.Backup("backup.db", dsn, "")
+	err := db.Backup("backup.db", "")
 	if err == nil {
 		t.Error("Backup() should fail for in-memory database")
 	}
@@ -622,7 +622,7 @@ func TestDatabase_Restore_SQLite(t *testing.T) {
 	backupPath := filepath.Join(flag.Path, "test_restore_backup.db")
 	defer os.Remove(backupPath)
 
-	err = db1.Backup(backupPath, dsn1, "")
+	err = db1.Backup(backupPath, "")
 	if err != nil {
 		t.Fatalf("Backup failed: %v", err)
 	}

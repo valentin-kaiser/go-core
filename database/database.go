@@ -44,12 +44,10 @@
 //		flag.Init()
 //
 //		// Create a new database instance with sqlc integration
-//		// Option 1: Pass sqlc.New as the constructor function
-//		db := database.New("main", sqlc.New)
+//		db := database.New[sqlc.Queries](database.DriverSQLite, "main")
 //
-//		// Option 2: Register queries constructor later
-//		// db := database.New[sqlc.Queries]("main", nil)
-//		// db.RegisterQueries(sqlc.New)
+//		// Register queries constructor
+//		db.RegisterQueries(sqlc.New)
 //
 //		// Register migration steps for this instance
 //		db.RegisterMigrationStep(version.Release{
@@ -91,9 +89,9 @@
 // Multi-Instance Example:
 //
 //	// Connect to multiple databases simultaneously with different sqlc Queries
-//	postgres := database.New("postgres-main", pgSqlc.New)
-//	mysql := database.New("mysql-analytics", mysqlSqlc.New)
-//	sqlite := database.New("sqlite-cache", sqliteSqlc.New)
+//	postgres := database.New[pgSqlc.Queries](database.DriverPostgres, "postgres-main")
+//	mysql := database.New[mysqlSqlc.Queries](database.DriverMySQL, "mysql-analytics")
+//	sqlite := database.New[sqliteSqlc.Queries](database.DriverSQLite, "sqlite-cache")
 //
 //	postgres.Connect(time.Second, "postgres://postgres:secret@localhost:5432/maindb?sslmode=disable")
 //
@@ -104,7 +102,7 @@
 // Middleware Example:
 //
 //	// Create a new database instance with logging middleware
-//	db := database.New("main", sqlc.New)
+//	db := database.New[sqlc.Queries](database.DriverSQLite, "main")
 //
 //	// Register logging middleware to log all SQL statements
 //	logger := logging.GetPackageLogger("database")
@@ -127,7 +125,7 @@
 // Debug Mode Example:
 //
 //	// Create a database instance and register LoggingMiddleware
-//	db := database.New("main", sqlc.New)
+//	db := database.New[sqlc.Queries](database.DriverSQLite, "main")
 //
 //	// LoggingMiddleware must be registered for Debug() to work
 //	logger := logging.GetPackageLogger("database")
@@ -732,7 +730,7 @@ func (d *Database[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
 // For MySQL/MariaDB: creates an SQL dump
 // For PostgreSQL: creates an SQL dump
 // Returns an error if the database is not connected or if the backup fails.
-func (d *Database[Q]) Backup(path string, dsn string, schema string) error {
+func (d *Database[Q]) Backup(path string, schema string) error {
 	if !d.connected.Load() {
 		return apperror.NewErrorf("database is not connected")
 	}
@@ -744,7 +742,7 @@ func (d *Database[Q]) Backup(path string, dsn string, schema string) error {
 
 	switch d.driver {
 	case DriverSQLite:
-		if !strings.HasPrefix(dsn, "file:") {
+		if !strings.HasPrefix(d.dsn, "file:") {
 			return apperror.NewErrorf("database backup is only supported for file-based SQLite databases")
 		}
 
@@ -759,7 +757,7 @@ func (d *Database[Q]) Backup(path string, dsn string, schema string) error {
 		}
 
 		// Parse and validate the SQLite DSN to get the file path
-		sourceFilePath, err := parseSQLiteFilePath(dsn)
+		sourceFilePath, err := parseSQLiteFilePath(d.dsn)
 		if err != nil {
 			return apperror.Wrap(err)
 		}
@@ -821,7 +819,7 @@ func (d *Database[Q]) Backup(path string, dsn string, schema string) error {
 		rows.Close()
 
 		for _, table := range tables {
-			quotedTable, err := quoteIdentifier(table, "mysql")
+			quotedTable, err := quoteIdentifier(table, DriverMySQL)
 			if err != nil {
 				d.logger.Warn().Err(err).Msgf("invalid table name: %s", table)
 				continue
@@ -867,7 +865,7 @@ func (d *Database[Q]) Backup(path string, dsn string, schema string) error {
 
 				colsList := make([]string, len(columns))
 				for i, col := range columns {
-					quotedCol, err := quoteIdentifier(col, "mysql")
+					quotedCol, err := quoteIdentifier(col, DriverMySQL)
 					if err != nil {
 						dataRows.Close()
 						return apperror.NewErrorf("invalid column name").AddError(err)
@@ -878,7 +876,7 @@ func (d *Database[Q]) Backup(path string, dsn string, schema string) error {
 
 				for dataRows.Next() {
 					if !hasData {
-						quotedTableForInsert, err := quoteIdentifier(table, "mysql")
+						quotedTableForInsert, err := quoteIdentifier(table, DriverMySQL)
 						if err != nil {
 							dataRows.Close()
 							return apperror.NewErrorf("invalid table name for insert").AddError(err)
@@ -1023,11 +1021,11 @@ func (d *Database[Q]) Backup(path string, dsn string, schema string) error {
 			}
 
 			// Use schema-qualified table name with proper quoting
-			quotedSchema, err := quoteIdentifier(schema, "postgres")
+			quotedSchema, err := quoteIdentifier(schema, DriverPostgres)
 			if err != nil {
 				return apperror.NewErrorf("invalid schema name").AddError(err)
 			}
-			quotedTableForQuery, err := quoteIdentifier(table, "postgres")
+			quotedTableForQuery, err := quoteIdentifier(table, DriverPostgres)
 			if err != nil {
 				return apperror.NewErrorf("invalid table name").AddError(err)
 			}
@@ -1059,7 +1057,7 @@ func (d *Database[Q]) Backup(path string, dsn string, schema string) error {
 
 				colsList := make([]string, len(columns))
 				for i, col := range columns {
-					quotedCol, err := quoteIdentifier(col, "postgres")
+					quotedCol, err := quoteIdentifier(col, DriverPostgres)
 					if err != nil {
 						dataRows.Close()
 						return apperror.NewErrorf("invalid column name").AddError(err)
@@ -1100,7 +1098,7 @@ func (d *Database[Q]) Backup(path string, dsn string, schema string) error {
 						}
 					}
 
-					quotedTableForInsert, err := quoteIdentifier(table, "postgres")
+					quotedTableForInsert, err := quoteIdentifier(table, DriverPostgres)
 					if err != nil {
 						dataRows.Close()
 						return apperror.NewErrorf("invalid table name").AddError(err)
