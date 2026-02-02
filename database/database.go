@@ -97,7 +97,7 @@
 //
 //	mysql.Connect(time.Second, "root:password@tcp(localhost:3306)/analytics")
 //
-//	sqlite.Connect(time.Second, "file::memory:")
+//	sqlite.Connect(time.Second, ":memory:")
 //
 // Middleware Example:
 //
@@ -1343,9 +1343,6 @@ func parseSQLiteFilePath(dsn string) (string, error) {
 	parts := strings.SplitN(pathWithQuery, "?", 2)
 	filePath := parts[0]
 
-	if filepath.IsAbs(filepath.Clean(filepath.ToSlash(filepath.Clean(strings.TrimSpace(filePath))))) || strings.HasPrefix(filePath, ":") {
-		return filePath, nil
-	}
-
-	return filePath, nil
+	// Clean and normalize the file path
+	return filepath.Clean(strings.TrimSpace(filePath)), nil
 }
