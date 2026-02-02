@@ -68,7 +68,11 @@ func (r *RSACipher) LoadPrivateKey(pemData []byte, passphrase []byte) *RSACipher
 	var privateKey *rsa.PrivateKey
 	var err error
 
-	if block.Type == "ENCRYPTED PRIVATE KEY" && len(passphrase) > 0 {
+	if block.Type == "ENCRYPTED PRIVATE KEY" {
+		if len(passphrase) == 0 {
+			r.Error = apperror.NewError("encrypted private key requires a passphrase")
+			return r
+		}
 		// Decrypt PKCS#8 encrypted private key
 		decryptedBytes, err := decryptPKCS8PrivateKey(block.Bytes, passphrase)
 		if err != nil {
