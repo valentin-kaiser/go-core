@@ -44,12 +44,10 @@
 //		flag.Init()
 //
 //		// Create a new database instance with sqlc integration
-//		// Option 1: Pass sqlc.New as the constructor function
-//		db := database.New("main", sqlc.New)
+//		db := database.New[sqlc.Queries](database.DriverSQLite, "main")
 //
-//		// Option 2: Register queries constructor later
-//		// db := database.New[sqlc.Queries]("main", nil)
-//		// db.RegisterQueries(sqlc.New)
+//		// Register queries constructor
+//		db.RegisterQueries(sqlc.New)
 //
 //		// Register migration steps for this instance
 //		db.RegisterMigrationStep(version.Release{
@@ -66,11 +64,8 @@
 //			return err
 //		})
 //
-//		// Connect to the database
-//		db.Connect(time.Second, database.Config{
-//			Driver: "sqlite",
-//			Name:   "test",
-//		})
+//		// Connect to the database using DSN string
+//		db.Connect(time.Second, "file:test.db")
 //		defer db.Disconnect()
 //
 //		// Wait for connection to be established
@@ -94,48 +89,28 @@
 // Multi-Instance Example:
 //
 //	// Connect to multiple databases simultaneously with different sqlc Queries
-//	postgres := database.New("postgres-main", pgSqlc.New)
-//	mysql := database.New("mysql-analytics", mysqlSqlc.New)
-//	sqlite := database.New("sqlite-cache", sqliteSqlc.New)
+//	postgres := database.New[pgSqlc.Queries](database.DriverPostgres, "postgres-main")
+//	mysql := database.New[mysqlSqlc.Queries](database.DriverMySQL, "mysql-analytics")
+//	sqlite := database.New[sqliteSqlc.Queries](database.DriverSQLite, "sqlite-cache")
 //
-//	postgres.Connect(time.Second, database.Config{
-//		Driver: "postgres",
-//		Host:   "localhost",
-//		Port:   5432,
-//		User:   "postgres",
-//		Password: "secret",
-//		Name:   "maindb",
-//	})
+//	postgres.Connect(time.Second, "postgres://postgres:secret@localhost:5432/maindb?sslmode=disable")
 //
-//	mysql.Connect(time.Second, database.Config{
-//		Driver: "mysql",
-//		Host:   "localhost",
-//		Port:   3306,
-//		User:   "root",
-//		Password: "password",
-//		Name:   "analytics",
-//	})
+//	mysql.Connect(time.Second, "root:password@tcp(localhost:3306)/analytics")
 //
-//	sqlite.Connect(time.Second, database.Config{
-//		Driver: "sqlite",
-//		Name:   ":memory:",
-//	})
+//	sqlite.Connect(time.Second, ":memory:")
 //
 // Middleware Example:
 //
 //	// Create a new database instance with logging middleware
-//	db := database.New("main", sqlc.New)
+//	db := database.New[sqlc.Queries](database.DriverSQLite, "main")
 //
 //	// Register logging middleware to log all SQL statements
 //	logger := logging.GetPackageLogger("database")
 //	loggingMiddleware := database.NewLoggingMiddleware(logger)
 //	db.RegisterMiddleware(loggingMiddleware)
 //
-//	// Connect to the database
-//	db.Connect(time.Second, database.Config{
-//		Driver: "sqlite",
-//		Name:   "example",
-//	})
+//	// Connect to the database using DSN string
+//	db.Connect(time.Second, "file:example.db")
 //	defer db.Disconnect()
 //
 //	// All SQL statements will now be logged with timing information
@@ -150,7 +125,7 @@
 // Debug Mode Example:
 //
 //	// Create a database instance and register LoggingMiddleware
-//	db := database.New("main", sqlc.New)
+//	db := database.New[sqlc.Queries](database.DriverSQLite, "main")
 //
 //	// LoggingMiddleware must be registered for Debug() to work
 //	logger := logging.GetPackageLogger("database")
@@ -158,10 +133,7 @@
 //	loggingMiddleware.SetEnabled(false) // Disabled by default
 //	db.RegisterMiddleware(loggingMiddleware)
 //
-//	db.Connect(time.Second, database.Config{
-//		Driver: "sqlite",
-//		Name:   "example",
-//	})
+//	db.Connect(time.Second, "file:example.db")
 //	defer db.Disconnect()
 //
 //	ctx := context.Background()
@@ -199,9 +171,16 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/flag"
 	"github.com/valentin-kaiser/go-core/interruption"
 	"github.com/valentin-kaiser/go-core/logging"
+)
+
+type Driver string
+
+const (
+	DriverSQLite   Driver = "sqlite3"
+	DriverMySQL    Driver = "mysql"
+	DriverPostgres Driver = "pgx"
 )
 
 // Database represents a database connection instance with its own state and configuration.
@@ -210,13 +189,13 @@ import (
 type Database[Q any] struct {
 	db               *sql.DB
 	dbMutex          sync.RWMutex
-	config           *Config
-	configMutex      sync.RWMutex
+	driver           Driver
+	dsn              string
 	connected        atomic.Bool
 	failed           atomic.Bool
 	cancel           atomic.Bool
 	done             chan bool
-	onConnectHandler []func(db *sql.DB, config Config) error
+	onConnectHandler []func(db *sql.DB) error
 	handlerMutex     sync.Mutex
 	logger           logging.Adapter
 	migrationMutex   sync.RWMutex
@@ -230,11 +209,12 @@ type Database[Q any] struct {
 // New creates a new Database instance with the given name for logging purposes.
 // The name parameter is used to identify this database instance in logs.
 // The generic type parameter Q represents the sqlc-generated Queries type.
-func New[Q any](name string) *Database[Q] {
+func New[Q any](driver Driver, name string) *Database[Q] {
 	return &Database[Q]{
+		driver:           driver,
 		done:             make(chan bool),
 		logger:           logging.GetPackageLogger("database:" + name),
-		onConnectHandler: make([]func(db *sql.DB, config Config) error, 0),
+		onConnectHandler: make([]func(db *sql.DB) error, 0),
 		middlewares:      make([]Middleware, 0),
 	}
 }
@@ -486,12 +466,8 @@ func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 }
 
 // TestConnection tests the database connection by attempting to connect and ping the database.
-func (d *Database[Q]) TestConnection(c Config) error {
-	d.configMutex.Lock()
-	d.config = &c
-	d.configMutex.Unlock()
-
-	instance, err := d.connect()
+func (d *Database[Q]) TestConnection(dsn string) error {
+	instance, err := d.connect(d.driver, dsn)
 	if err != nil {
 		return apperror.NewError("connection test failed").AddError(err)
 	}
@@ -511,11 +487,8 @@ func (d *Database[Q]) Connected() bool {
 }
 
 // Reconnect will set the connected state to false and trigger a reconnect
-func (d *Database[Q]) Reconnect(c Config) {
-	d.configMutex.Lock()
-	d.config = &c
-	d.configMutex.Unlock()
-
+func (d *Database[Q]) Reconnect(dsn string) {
+	d.dsn = dsn
 	d.logger.Trace().Msg("reconnecting...")
 	d.connected.Store(false)
 	d.failed.Store(false)
@@ -545,11 +518,8 @@ func (d *Database[Q]) AwaitConnection() {
 
 // Connect will try to connect to the database every interval until it is connected
 // It will also check if the connection is still alive every interval and reconnect if it is not
-func (d *Database[Q]) Connect(interval time.Duration, c Config) {
-	d.configMutex.Lock()
-	d.config = &c
-	d.configMutex.Unlock()
-
+func (d *Database[Q]) Connect(interval time.Duration, dsn string) {
+	d.dsn = dsn
 	go func() {
 		for {
 			func() {
@@ -559,7 +529,7 @@ func (d *Database[Q]) Connect(interval time.Duration, c Config) {
 				// If we are not connected to the database, try to connect
 				if !d.connected.Load() {
 					var err error
-					instance, err := d.connect()
+					instance, err := d.connect(d.driver, d.dsn)
 					if err != nil {
 						// Prevent spamming the logs with connection errors
 						if !d.failed.Load() {
@@ -574,7 +544,7 @@ func (d *Database[Q]) Connect(interval time.Duration, c Config) {
 					d.dbMutex.Unlock()
 
 					d.handlerMutex.Lock()
-					handlers := make([]func(db *sql.DB, config Config) error, len(d.onConnectHandler))
+					handlers := make([]func(db *sql.DB) error, len(d.onConnectHandler))
 					copy(handlers, d.onConnectHandler)
 					d.handlerMutex.Unlock()
 
@@ -582,7 +552,7 @@ func (d *Database[Q]) Connect(interval time.Duration, c Config) {
 					d.connected.Store(true)
 
 					for _, handler := range handlers {
-						err := handler(instance, c)
+						err := handler(instance)
 						if err != nil {
 							d.logger.Error().Err(err).Msg("onConnect handler failed")
 							d.failed.Store(true)
@@ -644,7 +614,7 @@ func (d *Database[Q]) Connect(interval time.Duration, c Config) {
 }
 
 // RegisterOnConnectHandler registers a function that will be called when the database connection is established
-func (d *Database[Q]) RegisterOnConnectHandler(handler func(db *sql.DB, config Config) error) {
+func (d *Database[Q]) RegisterOnConnectHandler(handler func(db *sql.DB) error) {
 	if handler == nil {
 		return
 	}
@@ -698,30 +668,15 @@ func (d *Database[Q]) findLoggingMiddleware() *LoggingMiddleware {
 }
 
 // connect will try to connect to the database and return the connection
-func (d *Database[Q]) connect() (*sql.DB, error) {
-	d.configMutex.RLock()
-	defer d.configMutex.RUnlock()
-
+func (d *Database[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
 	d.middlewareMutex.RLock()
 	middlewares := make([]Middleware, len(d.middlewares))
 	copy(middlewares, d.middlewares)
 	d.middlewareMutex.RUnlock()
 
-	switch d.config.Driver {
-	case "sqlite":
-		dsn := "file:memdb1?mode=memory&cache=shared&_busy_timeout=5000"
-		if d.config.Name != ":memory:" {
-			_, err := os.Stat(flag.Path)
-			if os.IsNotExist(err) {
-				err := os.Mkdir(flag.Path, 0750)
-				if err != nil {
-					return nil, apperror.Wrap(err)
-				}
-			}
-			dsn = fmt.Sprintf("file:%s?_journal_mode=WAL&_synchronous=NORMAL&_busy_timeout=5000", filepath.Join(flag.Path, d.config.Name+".db"))
-		}
-
-		driverName := wrap("sqlite3", middlewares)
+	switch driver {
+	case DriverSQLite:
+		driverName := wrap(string(driver), middlewares)
 		conn, err := sql.Open(driverName, dsn)
 		if err != nil {
 			return nil, apperror.Wrap(err)
@@ -736,55 +691,10 @@ func (d *Database[Q]) connect() (*sql.DB, error) {
 			return nil, apperror.Wrap(err)
 		}
 
-		// Set database instance with proper locking
-		d.dbMutex.Lock()
-		d.db = conn
-		d.dbMutex.Unlock()
-
 		return conn, nil
 
-	case "mysql", "mariadb":
-		// First connect without database to create it if needed
-		createDSN := fmt.Sprintf(
-			"%v:%v@tcp(%v:%v)/?charset=utf8mb4&parseTime=True&loc=Local",
-			d.config.User,
-			d.config.Password,
-			d.config.Host,
-			d.config.Port,
-		)
-
-		driverName := wrap("mysql", middlewares)
-		create, err := sql.Open(driverName, createDSN)
-		if err != nil {
-			return nil, apperror.Wrap(err)
-		}
-		defer create.Close()
-
-		if err := create.Ping(); err != nil {
-			return nil, apperror.Wrap(err)
-		}
-
-		quotedName, err := quoteIdentifier(d.config.Name, "mysql")
-		if err != nil {
-			return nil, apperror.NewErrorf("invalid database name").AddError(err)
-		}
-
-		_, err = create.Exec(fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s;", quotedName))
-		if err != nil {
-			return nil, apperror.Wrap(err)
-		}
-
-		// Now connect to the actual database
-		dsn := fmt.Sprintf(
-			"%v:%v@tcp(%v:%v)/%v?charset=utf8mb4&parseTime=True&loc=Local&multiStatements=true",
-			d.config.User,
-			d.config.Password,
-			d.config.Host,
-			d.config.Port,
-			d.config.Name,
-		)
-
-		conn, err := sql.Open(driverName, dsn)
+	case DriverMySQL:
+		conn, err := sql.Open(string(driver), dsn)
 		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
@@ -796,60 +706,9 @@ func (d *Database[Q]) connect() (*sql.DB, error) {
 
 		return conn, nil
 
-	case "postgres":
-		// First connect to postgres database to create our database if needed
-		createDSN := fmt.Sprintf(
-			"host=%v port=%v user=%v password=%v dbname=postgres sslmode=disable",
-			d.config.Host,
-			d.config.Port,
-			d.config.User,
-			d.config.Password,
-		)
-
-		driverName := wrap("pgx", middlewares)
-		create, err := sql.Open(driverName, createDSN)
-		if err != nil {
-			return nil, apperror.Wrap(err)
-		}
-		defer create.Close()
-
-		if err := create.Ping(); err != nil {
-			return nil, apperror.Wrap(err)
-		}
-
-		var exists bool
-		err = create.QueryRow("SELECT exists (SELECT 1 FROM pg_database WHERE datname = $1);", d.config.Name).Scan(&exists)
-		if err != nil {
-			return nil, apperror.Wrap(err)
-		}
-
-		if !exists {
-			quotedName, err := quoteIdentifier(d.config.Name, "postgres")
-			if err != nil {
-				return nil, apperror.NewErrorf("invalid database name").AddError(err)
-			}
-			_, err = create.Exec(fmt.Sprintf("CREATE DATABASE %s;", quotedName))
-			if err != nil {
-				return nil, apperror.Wrap(err)
-			}
-		}
-
-		if strings.TrimSpace(d.config.Search) == "" {
-			d.config.Search = "public"
-		}
-
-		// Now connect to the actual database
-		dsn := fmt.Sprintf(
-			"host=%v port=%v user=%v password=%v dbname=%v sslmode=disable search_path=%v",
-			d.config.Host,
-			d.config.Port,
-			d.config.User,
-			d.config.Password,
-			d.config.Name,
-			d.config.Search,
-		)
-
-		conn, err := sql.Open(driverName, dsn)
+	case DriverPostgres:
+		// Use "pgx" as the driver name for jackc/pgx/v5/stdlib
+		conn, err := sql.Open("pgx", dsn)
 		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
@@ -862,30 +721,31 @@ func (d *Database[Q]) connect() (*sql.DB, error) {
 		return conn, nil
 
 	default:
-		return nil, apperror.NewErrorf("unsupported database driver: %v", d.config.Driver)
+		return nil, apperror.NewErrorf("unsupported database driver: %v", driver)
 	}
 }
 
 // Backup creates a backup of the database to the specified path.
 // For SQLite: copies the database file
-// For MySQL/MariaDB: uses mysqldump
-// For PostgreSQL: uses pg_dump
+// For MySQL/MariaDB: creates an SQL dump
+// For PostgreSQL: creates an SQL dump
 // Returns an error if the database is not connected or if the backup fails.
-func (d *Database[Q]) Backup(path string) error {
+func (d *Database[Q]) Backup(path string, schema string) error {
 	if !d.connected.Load() {
 		return apperror.NewErrorf("database is not connected")
 	}
-
-	d.configMutex.RLock()
-	defer d.configMutex.RUnlock()
 
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0750); err != nil {
 		return apperror.NewErrorf("failed to create backup directory").AddError(err)
 	}
 
-	switch d.config.Driver {
-	case "sqlite":
+	switch d.driver {
+	case DriverSQLite:
+		if !strings.HasPrefix(d.dsn, "file:") {
+			return apperror.NewErrorf("database backup is only supported for file-based SQLite databases")
+		}
+
 		d.dbMutex.RLock()
 		dbInstance := d.db
 		d.dbMutex.RUnlock()
@@ -896,15 +756,14 @@ func (d *Database[Q]) Backup(path string) error {
 			return apperror.NewErrorf("failed to checkpoint WAL").AddError(err)
 		}
 
-		// Determine source path
-		var sourcePath string
-		if d.config.Name == ":memory:" {
-			return apperror.NewErrorf("cannot backup in-memory database")
+		// Parse and validate the SQLite DSN to get the file path
+		sourceFilePath, err := parseSQLiteFilePath(d.dsn)
+		if err != nil {
+			return apperror.Wrap(err)
 		}
-		sourcePath = filepath.Join(flag.Path, d.config.Name+".db")
 
 		// Copy the database file
-		sourceData, err := os.ReadFile(sourcePath)
+		sourceData, err := os.ReadFile(sourceFilePath)
 		if err != nil {
 			return apperror.NewErrorf("failed to read database file").AddError(err)
 		}
@@ -917,7 +776,7 @@ func (d *Database[Q]) Backup(path string) error {
 		d.logger.Info().Msgf("database backup created: %s", path)
 		return nil
 
-	case "mysql", "mariadb":
+	case DriverMySQL:
 		d.dbMutex.RLock()
 		dbInstance := d.db
 		d.dbMutex.RUnlock()
@@ -932,8 +791,8 @@ func (d *Database[Q]) Backup(path string) error {
 		}
 		defer backupFile.Close()
 
-		_, err = backupFile.WriteString(fmt.Sprintf("-- MySQL/MariaDB database backup\n-- Database: %s\n-- Generated: %s\n\n",
-			d.config.Name, time.Now().Format(time.RFC3339)))
+		_, err = backupFile.WriteString(fmt.Sprintf("-- MySQL/MariaDB database backup\n-- DSN: %s\n-- Generated: %s\n\n",
+			d.dsn, time.Now().Format(time.RFC3339)))
 		if err != nil {
 			return apperror.NewErrorf("failed to write backup header").AddError(err)
 		}
@@ -960,7 +819,7 @@ func (d *Database[Q]) Backup(path string) error {
 		rows.Close()
 
 		for _, table := range tables {
-			quotedTable, err := quoteIdentifier(table, "mysql")
+			quotedTable, err := quoteIdentifier(table, DriverMySQL)
 			if err != nil {
 				d.logger.Warn().Err(err).Msgf("invalid table name: %s", table)
 				continue
@@ -1006,7 +865,7 @@ func (d *Database[Q]) Backup(path string) error {
 
 				colsList := make([]string, len(columns))
 				for i, col := range columns {
-					quotedCol, err := quoteIdentifier(col, "mysql")
+					quotedCol, err := quoteIdentifier(col, DriverMySQL)
 					if err != nil {
 						dataRows.Close()
 						return apperror.NewErrorf("invalid column name").AddError(err)
@@ -1017,7 +876,7 @@ func (d *Database[Q]) Backup(path string) error {
 
 				for dataRows.Next() {
 					if !hasData {
-						quotedTableForInsert, err := quoteIdentifier(table, "mysql")
+						quotedTableForInsert, err := quoteIdentifier(table, DriverMySQL)
 						if err != nil {
 							dataRows.Close()
 							return apperror.NewErrorf("invalid table name for insert").AddError(err)
@@ -1096,7 +955,7 @@ func (d *Database[Q]) Backup(path string) error {
 		d.logger.Info().Msgf("database backup created: %s", path)
 		return nil
 
-	case "postgres":
+	case DriverPostgres:
 		d.dbMutex.RLock()
 		dbInstance := d.db
 		d.dbMutex.RUnlock()
@@ -1111,8 +970,8 @@ func (d *Database[Q]) Backup(path string) error {
 		}
 		defer backupFile.Close()
 
-		_, err = backupFile.WriteString(fmt.Sprintf("-- PostgreSQL database backup\n-- Database: %s\n-- Generated: %s\n\n",
-			d.config.Name, time.Now().Format(time.RFC3339)))
+		_, err = backupFile.WriteString(fmt.Sprintf("-- PostgreSQL database backup\n-- DSN: %s\n-- Generated: %s\n\n",
+			d.dsn, time.Now().Format(time.RFC3339)))
 		if err != nil {
 			return apperror.NewErrorf("failed to write backup header").AddError(err)
 		}
@@ -1122,7 +981,7 @@ func (d *Database[Q]) Backup(path string) error {
 			FROM pg_tables 
 			WHERE schemaname = $1
 			ORDER BY tablename
-		`, d.config.Name)
+		`, schema)
 		if err != nil {
 			return apperror.NewErrorf("failed to get table list").AddError(err)
 		}
@@ -1150,7 +1009,7 @@ func (d *Database[Q]) Backup(path string) error {
 				JOIN pg_attribute a ON a.attrelid = c.oid
 				WHERE c.relname = $1 AND n.nspname = $2 AND a.attnum > 0 AND NOT a.attisdropped
 				GROUP BY c.relname
-			`, table, d.config.Name).Scan(&createStmt)
+			`, table, schema).Scan(&createStmt)
 			if err != nil {
 				d.logger.Warn().Err(err).Msgf("failed to get schema for table %s", table)
 				continue
@@ -1162,11 +1021,11 @@ func (d *Database[Q]) Backup(path string) error {
 			}
 
 			// Use schema-qualified table name with proper quoting
-			quotedSchema, err := quoteIdentifier(d.config.Name, "postgres")
+			quotedSchema, err := quoteIdentifier(schema, DriverPostgres)
 			if err != nil {
 				return apperror.NewErrorf("invalid schema name").AddError(err)
 			}
-			quotedTableForQuery, err := quoteIdentifier(table, "postgres")
+			quotedTableForQuery, err := quoteIdentifier(table, DriverPostgres)
 			if err != nil {
 				return apperror.NewErrorf("invalid table name").AddError(err)
 			}
@@ -1198,7 +1057,7 @@ func (d *Database[Q]) Backup(path string) error {
 
 				colsList := make([]string, len(columns))
 				for i, col := range columns {
-					quotedCol, err := quoteIdentifier(col, "postgres")
+					quotedCol, err := quoteIdentifier(col, DriverPostgres)
 					if err != nil {
 						dataRows.Close()
 						return apperror.NewErrorf("invalid column name").AddError(err)
@@ -1239,7 +1098,7 @@ func (d *Database[Q]) Backup(path string) error {
 						}
 					}
 
-					quotedTableForInsert, err := quoteIdentifier(table, "postgres")
+					quotedTableForInsert, err := quoteIdentifier(table, DriverPostgres)
 					if err != nil {
 						dataRows.Close()
 						return apperror.NewErrorf("invalid table name").AddError(err)
@@ -1267,7 +1126,7 @@ func (d *Database[Q]) Backup(path string) error {
 		return nil
 
 	default:
-		return apperror.NewErrorf("unsupported database driver for backup: %v", d.config.Driver)
+		return apperror.NewErrorf("unsupported database driver for backup: %v", d.driver)
 	}
 }
 
@@ -1282,21 +1141,14 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		return apperror.NewErrorf("database is not connected")
 	}
 
-	d.configMutex.RLock()
-
 	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
-		d.configMutex.RUnlock()
 		return apperror.NewErrorf("backup file does not exist: %s", backupPath)
 	}
 
-	cp := *d.config
-	driverType := d.config.Driver
-	d.configMutex.RUnlock()
-
-	switch driverType {
-	case "sqlite":
-		if cp.Name == ":memory:" {
-			return apperror.NewErrorf("cannot restore to in-memory database")
+	switch d.driver {
+	case DriverSQLite:
+		if !strings.HasPrefix(d.dsn, "file:") {
+			return apperror.NewErrorf("restore is only supported for file-based SQLite databases")
 		}
 
 		d.dbMutex.RLock()
@@ -1312,7 +1164,12 @@ func (d *Database[Q]) Restore(backupPath string) error {
 
 		d.connected.Store(false)
 
-		targetPath := filepath.Join(flag.Path, cp.Name+".db")
+		// Parse and validate the SQLite DSN to get the file path
+		targetPath, err := parseSQLiteFilePath(d.dsn)
+		if err != nil {
+			return apperror.Wrap(err)
+		}
+
 		backupData, err := os.ReadFile(backupPath)
 		if err != nil {
 			return apperror.NewErrorf("failed to read backup file").AddError(err)
@@ -1328,10 +1185,10 @@ func (d *Database[Q]) Restore(backupPath string) error {
 
 		d.logger.Info().Msgf("database restored from backup: %s", backupPath)
 
-		d.Reconnect(cp)
+		d.Reconnect(d.dsn)
 		return nil
 
-	case "mysql", "mariadb":
+	case DriverMySQL:
 		d.dbMutex.RLock()
 		dbInstance := d.db
 		d.dbMutex.RUnlock()
@@ -1375,7 +1232,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		d.logger.Info().Msgf("database restored from backup: %s", backupPath)
 		return nil
 
-	case "postgres":
+	case DriverPostgres:
 		d.dbMutex.RLock()
 		dbInstance := d.db
 		d.dbMutex.RUnlock()
@@ -1431,7 +1288,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		return nil
 
 	default:
-		return apperror.NewErrorf("unsupported database driver for restore: %v", d.config.Driver)
+		return apperror.NewErrorf("unsupported database driver for restore: %v", d.driver)
 	}
 }
 
@@ -1451,19 +1308,41 @@ func validateIdentifier(identifier string) error {
 }
 
 // quoteIdentifier safely quotes a SQL identifier for the given driver
-func quoteIdentifier(identifier string, driver string) (string, error) {
+func quoteIdentifier(identifier string, driver Driver) (string, error) {
 	err := validateIdentifier(identifier)
 	if err != nil {
 		return "", apperror.Wrap(err)
 	}
 	switch driver {
-	case "mysql", "mariadb":
+	case DriverMySQL:
 		return "`" + identifier + "`", nil
-	case "postgres":
+	case DriverPostgres:
 		return "\"" + identifier + "\"", nil
-	case "sqlite":
+	case DriverSQLite:
 		return "\"" + identifier + "\"", nil
 	default:
 		return "", apperror.NewErrorf("unsupported driver: %s", driver)
 	}
+}
+
+// parseSQLiteFilePath extracts and validates the file path from a SQLite DSN.
+// SQLite DSN format: "file:path/to/db.db[?options]"
+// Returns the file path without the "file:" prefix and query parameters.
+func parseSQLiteFilePath(dsn string) (string, error) {
+	if len(dsn) <= 5 || !strings.HasPrefix(dsn, "file:") {
+		return "", apperror.NewErrorf("invalid SQLite DSN format: %s (expected 'file:path')", dsn)
+	}
+
+	// Remove "file:" prefix
+	pathWithQuery := dsn[5:]
+	if pathWithQuery == "" {
+		return "", apperror.NewErrorf("SQLite DSN contains no file path after 'file:' prefix")
+	}
+
+	// Split on '?' to remove query parameters
+	parts := strings.SplitN(pathWithQuery, "?", 2)
+	filePath := parts[0]
+
+	// Clean and normalize the file path
+	return filepath.Clean(strings.TrimSpace(filePath)), nil
 }
