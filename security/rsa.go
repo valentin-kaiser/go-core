@@ -400,7 +400,7 @@ type algorithmIdentifier struct {
 type pbkdf2Params struct {
 	Salt           []byte
 	IterationCount int
-	KeyLength      int `asn1:"optional"`
+	KeyLength      int                 `asn1:"optional"`
 	PRF            algorithmIdentifier `asn1:"optional"`
 }
 
@@ -415,10 +415,10 @@ type encryptedPrivateKeyInfo struct {
 
 // OIDs for PKCS#5 PBES2 and related algorithms
 var (
-	oidPBES2       = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 5, 13}  // PBES2
-	oidPBKDF2      = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 5, 12}  // PBKDF2
-	oidHMACSHA256  = asn1.ObjectIdentifier{1, 2, 840, 113549, 2, 9}      // HMAC-SHA256
-	oidAES256CBC   = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 1, 42} // AES-256-CBC
+	oidPBES2      = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 5, 13}     // PBES2
+	oidPBKDF2     = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 5, 12}     // PBKDF2
+	oidHMACSHA256 = asn1.ObjectIdentifier{1, 2, 840, 113549, 2, 9}         // HMAC-SHA256
+	oidAES256CBC  = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 1, 42} // AES-256-CBC
 )
 
 // encryptPKCS8PrivateKey encrypts a PKCS#8 private key using standard PBES2 (PKCS#5 v2.0).
