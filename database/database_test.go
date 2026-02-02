@@ -530,7 +530,7 @@ func TestDatabase_Backup_SQLite(t *testing.T) {
 
 	db := database.New[TestQueries](database.DriverSQLite, "test")
 
-	dsn := "test_backup"
+	dsn := "file:test_backup.db"
 
 	db.Connect(100*time.Millisecond, dsn)
 	defer func() {
@@ -544,7 +544,7 @@ func TestDatabase_Backup_SQLite(t *testing.T) {
 
 	// Create table and insert data
 	err := db.Execute(func(sqlDB *sql.DB) error {
-		_, err := sqlDB.Exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+		_, err := sqlDB.Exec("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)")
 		if err != nil {
 			return err
 		}
@@ -592,7 +592,7 @@ func TestDatabase_Restore_SQLite(t *testing.T) {
 
 	// Create original database
 	db1 := database.New[TestQueries](database.DriverSQLite, "test1")
-	dsn1 := "test_restore_orig"
+	dsn1 := "file:test_restore_orig.db"
 
 	db1.Connect(100*time.Millisecond, dsn1)
 	defer func() {
@@ -605,7 +605,7 @@ func TestDatabase_Restore_SQLite(t *testing.T) {
 
 	// Create table and insert data
 	err := db1.Execute(func(sqlDB *sql.DB) error {
-		_, err := sqlDB.Exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
+		_, err := sqlDB.Exec("CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT)")
 		if err != nil {
 			return err
 		}
@@ -627,7 +627,7 @@ func TestDatabase_Restore_SQLite(t *testing.T) {
 
 	// Create new database
 	db2 := database.New[TestQueries](database.DriverSQLite, "test2")
-	dsn2 := "test_restore_target"
+	dsn2 := "file:test_restore_target.db"
 
 	db2.Connect(100*time.Millisecond, dsn2)
 	defer func() {
