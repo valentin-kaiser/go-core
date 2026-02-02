@@ -1345,4 +1345,9 @@ func parseSQLiteFilePath(dsn string) (string, error) {
 	parts := strings.SplitN(pathWithQuery, "?", 2)
 	filePath := parts[0]
 
+	if filepath.IsAbs(filepath.Clean(filepath.ToSlash(filepath.Clean(strings.TrimSpace(filePath))))) || strings.HasPrefix(filePath, ":") {
+		return filePath, nil
+	}
 
+	return filePath, nil
+}
