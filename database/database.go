@@ -729,8 +729,8 @@ func (d *Database[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
 
 // Backup creates a backup of the database to the specified path.
 // For SQLite: copies the database file
-// For MySQL/MariaDB: uses mysqldump
-// For PostgreSQL: uses pg_dump
+// For MySQL/MariaDB: creates an SQL dump
+// For PostgreSQL: creates an SQL dump
 // Returns an error if the database is not connected or if the backup fails.
 func (d *Database[Q]) Backup(path string, dsn string, schema string) error {
 	if !d.connected.Load() {
@@ -1345,9 +1345,4 @@ func parseSQLiteFilePath(dsn string) (string, error) {
 	parts := strings.SplitN(pathWithQuery, "?", 2)
 	filePath := parts[0]
 
-	if filepath.IsAbs(filepath.Clean(filepath.ToSlash(filepath.Clean(strings.TrimSpace(filePath))))) || strings.HasPrefix(filePath, ":") {
-		return filePath, nil
-	}
 
-	return filePath, nil
-}
