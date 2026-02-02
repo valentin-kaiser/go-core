@@ -495,10 +495,6 @@ func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 
 // TestConnection tests the database connection by attempting to connect and ping the database.
 func (d *Database[Q]) TestConnection(dsn string) error {
-	// d.configMutex.Lock()
-	// d.dsn = dsn
-	// d.configMutex.Unlock()
-
 	instance, err := d.connect(d.driver, dsn)
 	if err != nil {
 		return apperror.NewError("connection test failed").AddError(err)
