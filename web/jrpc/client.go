@@ -35,24 +35,24 @@ import (
 //	client := jrpc.NewClient("http://localhost:8080")
 //	req := &MyRequest{Field: "value"}
 //	resp := &MyResponse{}
-//	err := client.Call(ctx, "MyService", "MyMethod", req, resp)
+//	err := client.Call(ctx,
 //
 // Example server streaming call:
 //
 //	out := make(chan proto.Message, 10)
 //	factory := func() proto.Message { return &MyResponse{} }
-//	go client.ServerStream(ctx, "MyService", "StreamMethod", req, factory, out)
+//	go client.ServerStream(ctx, "MyService", "MyMethod", req, factory, out)
 //	for msg := range out {
 //	    // Process each response message
 //	}
 type Client struct {
-	BaseURL    string
-	UserAgent  string
+	mutex      *sync.RWMutex
+	userAgent  string
 	httpClient *http.Client
-	TLSConfig  *tls.Config
+	tlsConfig  *tls.Config
 }
 
-// ClientOption is a function that configures a Client.
+// ClientOption defines a function type for configuring the Client.
 type ClientOption func(*Client)
 
 // ResponseFactory is a function that creates a new instance of a response message.
@@ -63,17 +63,37 @@ type ClientOption func(*Client)
 //	factory := func() proto.Message { return &MyResponse{} }
 type ResponseFactory func() proto.Message
 
+// NewClient creates a new JSON-RPC client with default settings.
+// The baseURL parameter specifies the server endpoint (e.g., "http://localhost:8080").
+func NewClient(opts ...ClientOption) *Client {
+	client := &Client{
+		mutex: &sync.RWMutex{},
+		httpClient: &http.Client{
+			Timeout: 30 * time.Second,
+		},
+		userAgent: "jrpc-client/1.0",
+	}
+	for _, opt := range opts {
+		opt(client)
+	}
+	return client
+}
+
 // WithClient sets a custom HTTP client.
 func WithClient(client *http.Client) ClientOption {
 	return func(c *Client) {
+		c.mutex.Lock()
+		defer c.mutex.Unlock()
 		c.httpClient = client
 	}
 }
 
 // WithUserAgent sets a custom User-Agent header for HTTP and WebSocket requests.
-func WithUserAgent(userAgent string) ClientOption {
+func WithUserAgent(agent string) ClientOption {
 	return func(c *Client) {
-		c.UserAgent = userAgent
+		c.mutex.Lock()
+		defer c.mutex.Unlock()
+		c.userAgent = agent
 	}
 }
 
@@ -87,32 +107,10 @@ func WithUserAgent(userAgent string) ClientOption {
 //	client := jrpc.NewClient("https://localhost:8080", jrpc.WithTLSConfig(tlsConfig))
 func WithTLSConfig(config *tls.Config) ClientOption {
 	return func(c *Client) {
-		c.TLSConfig = config
+		c.mutex.Lock()
+		defer c.mutex.Unlock()
+		c.tlsConfig = config
 	}
-}
-
-// NewClient creates a new jRPC client with the specified base URL.
-// The base URL should be the root URL of the jRPC service (e.g., "http://localhost:8080").
-//
-// Parameters:
-//   - baseURL: The base URL of the jRPC service
-//   - opts: Optional configuration options
-//
-// Returns a configured Client ready to make RPC calls.
-func NewClient(baseURL string, opts ...ClientOption) *Client {
-	c := &Client{
-		BaseURL:   baseURL,
-		UserAgent: "jrpc-client/1.0",
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-	}
-
-	for _, opt := range opts {
-		opt(c)
-	}
-
-	return c
 }
 
 // Call makes a unary RPC call to the specified service and method.
@@ -124,17 +122,22 @@ func NewClient(baseURL string, opts ...ClientOption) *Client {
 //
 // Parameters:
 //   - ctx: Context for the request (for cancellation and timeouts)
-//   - service: The service name (as defined in the .proto file)
-//   - method: The method name (as defined in the .proto file)
+//   - url: The full URL for the request
 //   - req: The request message (must be a proto.Message)
 //   - resp: The response message (must be a proto.Message pointer)
+//   - headers: Optional HTTP headers to include in the request
 //
 // Returns an error if the request fails, marshaling/unmarshaling fails,
 // or the server returns an error response.
-func (c *Client) Call(ctx context.Context, service, method string, req, resp proto.Message) error {
+func (c *Client) Call(ctx context.Context, url url.URL, req, resp proto.Message, headers []http.Header) error {
+	if url.String() == "" {
+		return apperror.NewError("URL cannot be empty")
+	}
+
 	if req == nil {
 		return apperror.NewError("request cannot be nil")
 	}
+
 	if resp == nil {
 		return apperror.NewError("response cannot be nil")
 	}
@@ -145,22 +148,28 @@ func (c *Client) Call(ctx context.Context, service, method string, req, resp pro
 		return apperror.NewError("failed to marshal request").AddError(err)
 	}
 
-	// Build URL with proper path handling
-	requestURL, err := url.JoinPath(c.BaseURL, service, method)
-	if err != nil {
-		return apperror.NewError("failed to build request URL").AddError(err)
-	}
-
 	// Create HTTP request
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(reqBytes))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url.String(), bytes.NewReader(reqBytes))
 	if err != nil {
 		return apperror.NewError("failed to create HTTP request").AddError(err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
-	if c.UserAgent != "" {
-		httpReq.Header.Set("User-Agent", c.UserAgent)
+
+	// Add custom headers if provided
+	for _, header := range headers {
+		for key, values := range header {
+			for _, value := range values {
+				httpReq.Header.Add(key, value)
+			}
+		}
+	}
+
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+	if c.userAgent != "" {
+		httpReq.Header.Set("User-Agent", c.userAgent)
 	}
 
 	// Make HTTP request
@@ -182,7 +191,8 @@ func (c *Client) Call(ctx context.Context, service, method string, req, resp pro
 	}
 
 	// Unmarshal response
-	if err := unmarshalOpts.Unmarshal(respBytes, resp); err != nil {
+	err = unmarshalOpts.Unmarshal(respBytes, resp)
+	if err != nil {
 		return apperror.NewError("failed to unmarshal response").AddError(err)
 	}
 
@@ -194,32 +204,38 @@ func (c *Client) Call(ctx context.Context, service, method string, req, resp pro
 //
 // Parameters:
 //   - ctx: Context for the request (for cancellation)
-//   - service: The service name
-//   - method: The method name
+//   - url: The full URL for the request
 //   - req: The request message
-//   - responseFactory: Factory function to create new response message instances
+//   - factory: Factory function to create new response message instances
 //   - out: Channel to receive response messages (will be closed when stream ends)
 //
 // Returns an error if the connection fails or an error occurs during streaming.
-func (c *Client) ServerStream(ctx context.Context, service, method string, req proto.Message, responseFactory ResponseFactory, out chan proto.Message) error {
+func (c *Client) ServerStream(ctx context.Context, url url.URL, req proto.Message, factory ResponseFactory, out chan proto.Message) error {
+	if url.String() == "" {
+		return apperror.NewError("URL cannot be empty")
+	}
+
 	if req == nil {
 		return apperror.NewError("request cannot be nil")
 	}
-	if responseFactory == nil {
+
+	if factory == nil {
 		return apperror.NewError("response factory cannot be nil")
 	}
+
 	if out == nil {
 		return apperror.NewError("output channel cannot be nil")
 	}
 
-	conn, err := c.dialWebSocket(service, method)
+	conn, err := c.dialWebSocket(url)
 	if err != nil {
 		return err
 	}
 	defer conn.Close()
 
 	// Send initial request
-	if err := c.writeWSMessage(conn, req); err != nil {
+	err = c.writeWSMessage(conn, req)
+	if err != nil {
 		return apperror.NewError("failed to send request").AddError(err)
 	}
 
@@ -229,7 +245,7 @@ func (c *Client) ServerStream(ctx context.Context, service, method string, req p
 		defer close(out)
 		for {
 			// Create a new instance of the response message using the factory
-			msg := responseFactory()
+			msg := factory()
 			if err := c.readWSMessage(conn, &msg); err != nil {
 				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
 					errChan <- nil
@@ -263,21 +279,21 @@ func (c *Client) ServerStream(ctx context.Context, service, method string, req p
 //
 // Parameters:
 //   - ctx: Context for the request (for cancellation)
-//   - service: The service name
-//   - method: The method name
+//   - url: The full URL for the request
 //   - in: Channel to send request messages (should be closed by caller when done)
 //   - resp: The response message (will be populated when stream completes)
 //
 // Returns an error if the connection fails or an error occurs during streaming.
-func (c *Client) ClientStream(ctx context.Context, service, method string, in chan proto.Message, resp proto.Message) error {
-	if in == nil {
-		return apperror.NewError("input channel cannot be nil")
+func (c *Client) ClientStream(ctx context.Context, url url.URL, in chan proto.Message, resp proto.Message) error {
+	if url.String() == "" {
+		return apperror.NewError("URL cannot be empty")
 	}
+
 	if resp == nil {
 		return apperror.NewError("response cannot be nil")
 	}
 
-	conn, err := c.dialWebSocket(service, method)
+	conn, err := c.dialWebSocket(url)
 	if err != nil {
 		return err
 	}
@@ -298,13 +314,15 @@ func (c *Client) ClientStream(ctx context.Context, service, method string, in ch
 			case msg, ok := <-in:
 				if !ok {
 					// Input channel closed, signal end of stream
-					if err := conn.WriteMessage(websocket.CloseMessage,
-						websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
+					err = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+					if err != nil {
 						sendErr = apperror.NewError("failed to close stream").AddError(err)
 					}
 					return
 				}
-				if err := c.writeWSMessage(conn, msg); err != nil {
+
+				err = c.writeWSMessage(conn, msg)
+				if err != nil {
 					sendErr = apperror.NewError("failed to send message").AddError(err)
 					return
 				}
@@ -321,7 +339,8 @@ func (c *Client) ClientStream(ctx context.Context, service, method string, in ch
 	}
 
 	// Read the final response
-	if err := c.readWSMessage(conn, &resp); err != nil {
+	err = c.readWSMessage(conn, &resp)
+	if err != nil {
 		return apperror.NewError("failed to read response").AddError(err)
 	}
 
@@ -340,18 +359,23 @@ func (c *Client) ClientStream(ctx context.Context, service, method string, in ch
 //   - out: Channel to receive response messages (will be closed when stream ends)
 //
 // Returns an error if the connection fails or an error occurs during streaming.
-func (c *Client) BidirectionalStream(ctx context.Context, service, method string, in chan proto.Message, responseFactory ResponseFactory, out chan proto.Message) error {
-	if in == nil {
-		return apperror.NewError("input channel cannot be nil")
+func (c *Client) BidirectionalStream(ctx context.Context, url url.URL, in chan proto.Message, responseFactory ResponseFactory, out chan proto.Message) error {
+	if url.String() == "" {
+		return apperror.NewError("URL cannot be empty")
 	}
+
 	if responseFactory == nil {
 		return apperror.NewError("response factory cannot be nil")
 	}
+
 	if out == nil {
 		return apperror.NewError("output channel cannot be nil")
 	}
 
-	conn, err := c.dialWebSocket(service, method)
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+
+	conn, err := c.dialWebSocket(url)
 	if err != nil {
 		return err
 	}
@@ -385,8 +409,9 @@ func (c *Client) BidirectionalStream(ctx context.Context, service, method string
 					// Input channel closed
 					return
 				}
-				
-				if err := c.writeWSMessage(conn, msg); err != nil {
+
+				err = c.writeWSMessage(conn, msg)
+				if err != nil {
 					writerErr = apperror.NewError("failed to send message").AddError(err)
 					return
 				}
@@ -402,7 +427,8 @@ func (c *Client) BidirectionalStream(ctx context.Context, service, method string
 		for {
 			// Create a new instance of the response message using the factory
 			msg := responseFactory()
-			if err := c.readWSMessage(conn, &msg); err != nil {
+			err = c.readWSMessage(conn, &msg)
+			if err != nil {
 				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
 					// Normal closure, not an error
 					return
@@ -445,39 +471,30 @@ func (c *Client) BidirectionalStream(ctx context.Context, service, method string
 }
 
 // dialWebSocket establishes a WebSocket connection to the service method endpoint.
-func (c *Client) dialWebSocket(service, method string) (*websocket.Conn, error) {
-	// Parse base URL
-	u, err := url.Parse(c.BaseURL)
-	if err != nil {
-		return nil, apperror.NewError("failed to parse base URL").AddError(err)
-	}
+func (c *Client) dialWebSocket(url url.URL) (*websocket.Conn, error) {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
 
 	// Convert HTTP(S) scheme to WS(S)
-	switch u.Scheme {
+	switch url.Scheme {
 	case "http":
-		u.Scheme = "ws"
+		url.Scheme = "ws"
 	case "https":
-		u.Scheme = "wss"
-	}
-
-	// Build WebSocket URL with proper path handling
-	wsURL, err := url.JoinPath(u.String(), service, method)
-	if err != nil {
-		return nil, apperror.NewError("failed to build WebSocket URL").AddError(err)
+		url.Scheme = "wss"
 	}
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: c.httpClient.Timeout,
-		TLSClientConfig:  c.TLSConfig,
+		TLSClientConfig:  c.tlsConfig,
 	}
 
 	// Set User-Agent header for WebSocket handshake
 	headers := http.Header{}
-	if c.UserAgent != "" {
-		headers.Set("User-Agent", c.UserAgent)
+	if c.userAgent != "" {
+		headers.Set("User-Agent", c.userAgent)
 	}
 
-	conn, _, err := dialer.Dial(wsURL, headers)
+	conn, _, err := dialer.Dial(url.String(), headers)
 	if err != nil {
 		return nil, apperror.NewError("failed to connect to WebSocket").AddError(err)
 	}
