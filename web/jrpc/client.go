@@ -191,35 +191,36 @@ func (c *Client) ServerStream(ctx context.Context, service, method string, req p
 	go func() {
 		defer close(out)
 		for {
+			// Read message type from channel
+			// Note: We need to create a new instance of the expected type
+			// This will be handled by the generated code
+			var msg proto.Message
+			if err := c.readWSMessage(conn, &msg); err != nil {
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+					errChan <- nil
+					return
+				}
+				errChan <- err
+				return
+			}
+
 			select {
+			case out <- msg:
 			case <-ctx.Done():
 				errChan <- ctx.Err()
 				return
-			default:
-				// Read message type from channel
-				// Note: We need to create a new instance of the expected type
-				// This will be handled by the generated code
-				var msg proto.Message
-				if err := c.readWSMessage(conn, &msg); err != nil {
-					if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-						errChan <- nil
-						return
-					}
-					errChan <- err
-					return
-				}
-
-				select {
-				case out <- msg:
-				case <-ctx.Done():
-					errChan <- ctx.Err()
-					return
-				}
 			}
 		}
 	}()
 
-	return <-errChan
+	// Monitor context cancellation and close connection immediately
+	select {
+	case err := <-errChan:
+		return err
+	case <-ctx.Done():
+		conn.Close() // Immediately close connection to interrupt blocking read
+		return <-errChan // Wait for goroutine to finish
+	}
 }
 
 // ClientStream makes a client streaming RPC call where the client sends a stream
