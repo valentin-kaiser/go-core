@@ -3,6 +3,7 @@ package jrpc
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
 	"net/http"
@@ -35,6 +36,7 @@ type Client struct {
 	BaseURL    string
 	UserAgent  string
 	httpClient *http.Client
+	TLSConfig  *tls.Config
 }
 
 // ClientOption is a function that configures a Client.
@@ -51,6 +53,20 @@ func WithClient(client *http.Client) ClientOption {
 func WithUserAgent(userAgent string) ClientOption {
 	return func(c *Client) {
 		c.UserAgent = userAgent
+	}
+}
+
+// WithTLSConfig sets a custom TLS configuration for WebSocket connections.
+// This is useful for connecting to servers with self-signed certificates or
+// specific TLS requirements.
+//
+// Example for skipping certificate verification (use with caution):
+//
+//	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+//	client := jrpc.NewClient("https://localhost:8080", jrpc.WithTLSConfig(tlsConfig))
+func WithTLSConfig(config *tls.Config) ClientOption {
+	return func(c *Client) {
+		c.TLSConfig = config
 	}
 }
 
@@ -393,6 +409,7 @@ func (c *Client) dialWebSocket(service, method string) (*websocket.Conn, error) 
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: c.httpClient.Timeout,
+		TLSClientConfig:  c.TLSConfig,
 	}
 
 	// Set User-Agent header for WebSocket handshake
