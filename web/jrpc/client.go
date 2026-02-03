@@ -137,11 +137,14 @@ func (c *Client) Call(ctx context.Context, service, method string, req, resp pro
 		return apperror.NewError("failed to marshal request").AddError(err)
 	}
 
-	// Build URL
-	url := fmt.Sprintf("%s/%s/%s", c.BaseURL, service, method)
+	// Build URL with proper path handling
+	requestURL, err := url.JoinPath(c.BaseURL, service, method)
+	if err != nil {
+		return apperror.NewError("failed to build request URL").AddError(err)
+	}
 
 	// Create HTTP request
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(reqBytes))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(reqBytes))
 	if err != nil {
 		return apperror.NewError("failed to create HTTP request").AddError(err)
 	}
@@ -456,19 +459,25 @@ func (c *Client) BidirectionalStream(ctx context.Context, service, method string
 
 // dialWebSocket establishes a WebSocket connection to the service method endpoint.
 func (c *Client) dialWebSocket(service, method string) (*websocket.Conn, error) {
-	// Convert HTTP(S) URL to WS(S) URL
-	wsURL := c.BaseURL
-	if u, err := url.Parse(wsURL); err == nil {
-		switch u.Scheme {
-		case "http":
-			u.Scheme = "ws"
-		case "https":
-			u.Scheme = "wss"
-		}
-		wsURL = u.String()
+	// Parse base URL
+	u, err := url.Parse(c.BaseURL)
+	if err != nil {
+		return nil, apperror.NewError("failed to parse base URL").AddError(err)
 	}
 
-	wsURL = fmt.Sprintf("%s/%s/%s", wsURL, service, method)
+	// Convert HTTP(S) scheme to WS(S)
+	switch u.Scheme {
+	case "http":
+		u.Scheme = "ws"
+	case "https":
+		u.Scheme = "wss"
+	}
+
+	// Build WebSocket URL with proper path handling
+	wsURL, err := url.JoinPath(u.String(), service, method)
+	if err != nil {
+		return nil, apperror.NewError("failed to build WebSocket URL").AddError(err)
+	}
 
 	dialer := websocket.Dialer{
 		HandshakeTimeout: c.httpClient.Timeout,
