@@ -47,13 +47,6 @@ func WithClient(client *http.Client) ClientOption {
 	}
 }
 
-// WithTimeout sets the HTTP client timeout.
-func WithTimeout(timeout time.Duration) ClientOption {
-	return func(c *Client) {
-		c.httpClient.Timeout = timeout
-	}
-}
-
 // WithUserAgent sets a custom User-Agent header for HTTP and WebSocket requests.
 func WithUserAgent(userAgent string) ClientOption {
 	return func(c *Client) {
@@ -218,7 +211,7 @@ func (c *Client) ServerStream(ctx context.Context, service, method string, req p
 	case err := <-errChan:
 		return err
 	case <-ctx.Done():
-		conn.Close() // Immediately close connection to interrupt blocking read
+		conn.Close()     // Immediately close connection to interrupt blocking read
 		return <-errChan // Wait for goroutine to finish
 	}
 }
