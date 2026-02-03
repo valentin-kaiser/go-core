@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"sync"
 	"time"
 
@@ -196,14 +197,13 @@ func (c *Client) ServerStream(ctx context.Context, service, method string, req p
 	}
 
 	// Read responses until stream ends
+	// Use reflection to create new instances of the same type as the request
 	errChan := make(chan error, 1)
 	go func() {
 		defer close(out)
 		for {
-			// Read message type from channel
-			// Note: We need to create a new instance of the expected type
-			// This will be handled by the generated code
-			var msg proto.Message
+			// Create a new instance of the message type using reflection
+			msg := reflect.New(reflect.TypeOf(req).Elem()).Interface().(proto.Message)
 			if err := c.readWSMessage(conn, &msg); err != nil {
 				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
 					errChan <- nil
@@ -288,7 +288,7 @@ func (c *Client) ClientStream(ctx context.Context, service, method string, in ch
 
 	// Wait for sending to complete, then read final response
 	wg.Wait()
-	
+
 	// If there was an error during sending, return it
 	if sendErr != nil {
 		return sendErr
@@ -341,6 +341,10 @@ func (c *Client) BidirectionalStream(ctx context.Context, service, method string
 		})
 	}
 
+	// Shared message type for reader goroutine
+	var msgType reflect.Type
+	var msgTypeMutex sync.Mutex
+
 	// Writer goroutine - sends messages from input channel
 	wg.Add(1)
 	go func() {
@@ -355,6 +359,14 @@ func (c *Client) BidirectionalStream(ctx context.Context, service, method string
 					// Input channel closed
 					return
 				}
+				
+				// Capture the message type from the first message
+				msgTypeMutex.Lock()
+				if msgType == nil {
+					msgType = reflect.TypeOf(msg)
+				}
+				msgTypeMutex.Unlock()
+				
 				if err := c.writeWSMessage(conn, msg); err != nil {
 					writerErr = apperror.NewError("failed to send message").AddError(err)
 					return
@@ -374,7 +386,19 @@ func (c *Client) BidirectionalStream(ctx context.Context, service, method string
 				readerErr = ctx.Err()
 				return
 			default:
-				var msg proto.Message
+				// Wait for message type to be determined by writer
+				msgTypeMutex.Lock()
+				currentType := msgType
+				msgTypeMutex.Unlock()
+				
+				if currentType == nil {
+					// Type not yet determined, wait briefly and retry
+					time.Sleep(10 * time.Millisecond)
+					continue
+				}
+				
+				// Create a new instance using reflection
+				msg := reflect.New(currentType.Elem()).Interface().(proto.Message)
 				if err := c.readWSMessage(conn, &msg); err != nil {
 					if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
 						// Normal closure, not an error
