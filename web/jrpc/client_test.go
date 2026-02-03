@@ -30,6 +30,10 @@ func TestNewClient(t *testing.T) {
 	if client.httpClient.Timeout != 30*time.Second {
 		t.Errorf("expected default timeout of 30s, got %v", client.httpClient.Timeout)
 	}
+
+	if client.UserAgent != "jrpc-client/1.0" {
+		t.Errorf("expected default UserAgent to be jrpc-client/1.0, got %s", client.UserAgent)
+	}
 }
 
 // TestClientWithTimeout verifies that custom timeout option works
@@ -52,6 +56,16 @@ func TestClientWithHTTPClient(t *testing.T) {
 
 	if client.httpClient != customClient {
 		t.Error("expected custom HTTP client to be used")
+	}
+}
+
+// TestClientWithUserAgent verifies that custom UserAgent option works
+func TestClientWithUserAgent(t *testing.T) {
+	customUserAgent := "my-custom-client/2.0"
+	client := NewClient("http://localhost:8080", WithUserAgent(customUserAgent))
+
+	if client.UserAgent != customUserAgent {
+		t.Errorf("expected UserAgent to be %s, got %s", customUserAgent, client.UserAgent)
 	}
 }
 
@@ -79,6 +93,11 @@ func TestClientCall(t *testing.T) {
 			t.Errorf("expected Accept application/json, got %s", r.Header.Get("Accept"))
 		}
 
+		// Verify User-Agent header
+		if r.Header.Get("User-Agent") != "jrpc-client/1.0" {
+			t.Errorf("expected User-Agent jrpc-client/1.0, got %s", r.Header.Get("User-Agent"))
+		}
+
 		// Return a valid empty response
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
@@ -90,6 +109,35 @@ func TestClientCall(t *testing.T) {
 	client := NewClient(server.URL)
 
 	// Make a call
+	req := &emptypb.Empty{}
+	resp := &emptypb.Empty{}
+
+	err := client.Call(context.Background(), "TestService", "TestMethod", req, resp)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+// TestClientCallCustomUserAgent verifies that custom User-Agent is sent
+func TestClientCallCustomUserAgent(t *testing.T) {
+	customUserAgent := "my-test-client/3.0"
+
+	// Create a test server that verifies the User-Agent
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Verify User-Agent header
+		if r.Header.Get("User-Agent") != customUserAgent {
+			t.Errorf("expected User-Agent %s, got %s", customUserAgent, r.Header.Get("User-Agent"))
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte("{}"))
+	}))
+	defer server.Close()
+
+	// Create client with custom User-Agent
+	client := NewClient(server.URL, WithUserAgent(customUserAgent))
+
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
 

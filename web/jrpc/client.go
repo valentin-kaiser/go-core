@@ -33,6 +33,7 @@ import (
 //	err := client.Call(ctx, "MyService", "MyMethod", req, resp)
 type Client struct {
 	BaseURL    string
+	UserAgent  string
 	httpClient *http.Client
 }
 
@@ -53,6 +54,13 @@ func WithTimeout(timeout time.Duration) ClientOption {
 	}
 }
 
+// WithUserAgent sets a custom User-Agent header for HTTP and WebSocket requests.
+func WithUserAgent(userAgent string) ClientOption {
+	return func(c *Client) {
+		c.UserAgent = userAgent
+	}
+}
+
 // NewClient creates a new jRPC client with the specified base URL.
 // The base URL should be the root URL of the jRPC service (e.g., "http://localhost:8080").
 //
@@ -63,7 +71,8 @@ func WithTimeout(timeout time.Duration) ClientOption {
 // Returns a configured Client ready to make RPC calls.
 func NewClient(baseURL string, opts ...ClientOption) *Client {
 	c := &Client{
-		BaseURL: baseURL,
+		BaseURL:   baseURL,
+		UserAgent: "jrpc-client/1.0",
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
 		},
@@ -117,6 +126,9 @@ func (c *Client) Call(ctx context.Context, service, method string, req, resp pro
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
+	if c.UserAgent != "" {
+		httpReq.Header.Set("User-Agent", c.UserAgent)
+	}
 
 	// Make HTTP request
 	httpResp, err := c.httpClient.Do(httpReq)
@@ -142,17 +154,6 @@ func (c *Client) Call(ctx context.Context, service, method string, req, resp pro
 	}
 
 	return nil
-}
-
-// SetBaseURL updates the base URL for the client.
-// This is useful for updating the target server dynamically.
-func (c *Client) SetBaseURL(baseURL string) {
-	c.BaseURL = baseURL
-}
-
-// GetBaseURL returns the current base URL of the client.
-func (c *Client) GetBaseURL() string {
-	return c.BaseURL
 }
 
 // ServerStream makes a server streaming RPC call where the client sends one request
@@ -400,7 +401,13 @@ func (c *Client) dialWebSocket(service, method string) (*websocket.Conn, error) 
 		HandshakeTimeout: c.httpClient.Timeout,
 	}
 
-	conn, _, err := dialer.Dial(wsURL, nil)
+	// Set User-Agent header for WebSocket handshake
+	headers := http.Header{}
+	if c.UserAgent != "" {
+		headers.Set("User-Agent", c.UserAgent)
+	}
+
+	conn, _, err := dialer.Dial(wsURL, headers)
 	if err != nil {
 		return nil, apperror.NewError("failed to connect to WebSocket").AddError(err)
 	}
