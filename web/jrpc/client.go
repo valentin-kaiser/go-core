@@ -289,6 +289,10 @@ func (c *Client) ClientStream(ctx context.Context, url url.URL, in chan proto.Me
 		return apperror.NewError("URL cannot be empty")
 	}
 
+	if in == nil {
+		return apperror.NewError("input channel cannot be nil")
+	}
+
 	if resp == nil {
 		return apperror.NewError("response cannot be nil")
 	}
@@ -362,6 +366,10 @@ func (c *Client) ClientStream(ctx context.Context, url url.URL, in chan proto.Me
 func (c *Client) BidirectionalStream(ctx context.Context, url url.URL, in chan proto.Message, responseFactory ResponseFactory, out chan proto.Message) error {
 	if url.String() == "" {
 		return apperror.NewError("URL cannot be empty")
+	}
+
+	if in == nil {
+		return apperror.NewError("input channel cannot be nil")
 	}
 
 	if responseFactory == nil {

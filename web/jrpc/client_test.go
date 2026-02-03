@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 )
 
 // Test Coverage Notes:
-// 
+//
 // The streaming methods (ServerStream, ClientStream, BidirectionalStream) are designed
 // to be wrapped by generated code that provides concrete message types. The generic
 // streaming implementations cannot be fully tested without this generated wrapper code
@@ -34,14 +35,10 @@ import (
 
 // TestNewClient verifies that a new client can be created with default settings
 func TestNewClient(t *testing.T) {
-	client := NewClient("http://localhost:8080")
+	client := NewClient()
 
 	if client == nil {
 		t.Fatal("expected non-nil client")
-	}
-
-	if client.BaseURL != "http://localhost:8080" {
-		t.Errorf("expected baseURL to be http://localhost:8080, got %s", client.BaseURL)
 	}
 
 	if client.httpClient == nil {
@@ -52,8 +49,8 @@ func TestNewClient(t *testing.T) {
 		t.Errorf("expected default timeout of 30s, got %v", client.httpClient.Timeout)
 	}
 
-	if client.UserAgent != "jrpc-client/1.0" {
-		t.Errorf("expected default UserAgent to be jrpc-client/1.0, got %s", client.UserAgent)
+	if client.userAgent != "jrpc-client/1.0" {
+		t.Errorf("expected default UserAgent to be jrpc-client/1.0, got %s", client.userAgent)
 	}
 }
 
@@ -61,7 +58,7 @@ func TestNewClient(t *testing.T) {
 func TestClientWithTimeout(t *testing.T) {
 	customTimeout := 5 * time.Second
 	customClient := &http.Client{Timeout: customTimeout}
-	client := NewClient("http://localhost:8080", WithClient(customClient))
+	client := NewClient(WithClient(customClient))
 
 	if client.httpClient.Timeout != customTimeout {
 		t.Errorf("expected timeout of %v, got %v", customTimeout, client.httpClient.Timeout)
@@ -74,7 +71,7 @@ func TestClientWithHTTPClient(t *testing.T) {
 		Timeout: 10 * time.Second,
 	}
 
-	client := NewClient("http://localhost:8080", WithClient(customClient))
+	client := NewClient(WithClient(customClient))
 
 	if client.httpClient != customClient {
 		t.Error("expected custom HTTP client to be used")
@@ -84,10 +81,10 @@ func TestClientWithHTTPClient(t *testing.T) {
 // TestClientWithUserAgent verifies that custom UserAgent option works
 func TestClientWithUserAgent(t *testing.T) {
 	customUserAgent := "my-custom-client/2.0"
-	client := NewClient("http://localhost:8080", WithUserAgent(customUserAgent))
+	client := NewClient(WithUserAgent(customUserAgent))
 
-	if client.UserAgent != customUserAgent {
-		t.Errorf("expected UserAgent to be %s, got %s", customUserAgent, client.UserAgent)
+	if client.userAgent != customUserAgent {
+		t.Errorf("expected UserAgent to be %s, got %s", customUserAgent, client.userAgent)
 	}
 }
 
@@ -124,17 +121,19 @@ func TestClientCall(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("{}"))
-	}))
+}))
 	defer server.Close()
 
-	// Create client pointing to test server
-	client := NewClient(server.URL)
+	// Create client
+	client := NewClient()
 
 	// Make a call
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
 
-	err := client.Call(context.Background(), "TestService", "TestMethod", req, resp)
+	// Parse URL
+	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	err := client.Call(context.Background(), *u, req, resp, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -154,16 +153,17 @@ func TestClientCallCustomUserAgent(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("{}"))
-	}))
+}))
 	defer server.Close()
 
 	// Create client with custom User-Agent
-	client := NewClient(server.URL, WithUserAgent(customUserAgent))
+	client := NewClient(WithUserAgent(customUserAgent))
 
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
 
-	err := client.Call(context.Background(), "TestService", "TestMethod", req, resp)
+	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	err := client.Call(context.Background(), *u, req, resp, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -171,10 +171,11 @@ func TestClientCallCustomUserAgent(t *testing.T) {
 
 // TestClientCallNilRequest verifies that nil request returns an error
 func TestClientCallNilRequest(t *testing.T) {
-	client := NewClient("http://localhost:8080")
+	client := NewClient()
 
 	resp := &emptypb.Empty{}
-	err := client.Call(context.Background(), "TestService", "TestMethod", nil, resp)
+	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
+	err := client.Call(context.Background(), *u, nil, resp, nil)
 
 	if err == nil {
 		t.Fatal("expected error for nil request")
@@ -187,10 +188,11 @@ func TestClientCallNilRequest(t *testing.T) {
 
 // TestClientCallNilResponse verifies that nil response returns an error
 func TestClientCallNilResponse(t *testing.T) {
-	client := NewClient("http://localhost:8080")
+	client := NewClient()
 
 	req := &emptypb.Empty{}
-	err := client.Call(context.Background(), "TestService", "TestMethod", req, nil)
+	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
+	err := client.Call(context.Background(), *u, req, nil, nil)
 
 	if err == nil {
 		t.Fatal("expected error for nil response")
@@ -207,15 +209,16 @@ func TestClientCallServerError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("internal server error"))
-	}))
+}))
 	defer server.Close()
 
-	client := NewClient(server.URL)
+	client := NewClient()
 
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
 
-	err := client.Call(context.Background(), "TestService", "TestMethod", req, resp)
+	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	err := client.Call(context.Background(), *u, req, resp, nil)
 	if err == nil {
 		t.Fatal("expected error for server error response")
 	}
@@ -233,10 +236,10 @@ func TestClientCallContextCancellation(t *testing.T) {
 		time.Sleep(2 * time.Second)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("{}"))
-	}))
+}))
 	defer server.Close()
 
-	client := NewClient(server.URL)
+	client := NewClient()
 
 	// Create context with short timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -245,25 +248,10 @@ func TestClientCallContextCancellation(t *testing.T) {
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
 
-	err := client.Call(ctx, "TestService", "TestMethod", req, resp)
+	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	err := client.Call(ctx, *u, req, resp, nil)
 	if err == nil {
 		t.Fatal("expected error for context timeout")
-	}
-}
-
-// TestClientSetGetBaseURL verifies that base URL can be updated and retrieved
-func TestClientSetGetBaseURL(t *testing.T) {
-	client := NewClient("http://localhost:8080")
-
-	if client.BaseURL != "http://localhost:8080" {
-		t.Errorf("expected initial URL http://localhost:8080, got %s", client.BaseURL)
-	}
-
-	newURL := "http://localhost:9090"
-	client.BaseURL = newURL
-
-	if client.BaseURL != newURL {
-		t.Errorf("expected updated URL %s, got %s", newURL, client.BaseURL)
 	}
 }
 
@@ -274,15 +262,16 @@ func TestClientCallInvalidJSON(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("not valid json"))
-	}))
+}))
 	defer server.Close()
 
-	client := NewClient(server.URL)
+	client := NewClient()
 
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
 
-	err := client.Call(context.Background(), "TestService", "TestMethod", req, resp)
+	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	err := client.Call(context.Background(), *u, req, resp, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON response")
 	}
@@ -295,26 +284,28 @@ func BenchmarkClientCall(b *testing.B) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("{}"))
-	}))
+}))
 	defer server.Close()
 
-	client := NewClient(server.URL)
+	client := NewClient()
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
+	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = client.Call(context.Background(), "TestService", "TestMethod", req, resp)
+		_ = client.Call(context.Background(), *u, req, resp, nil)
 	}
 }
 
 // TestClientServerStreamNilRequest verifies that nil request returns an error
 func TestClientServerStreamNilRequest(t *testing.T) {
-	client := NewClient("http://localhost:8080")
+	client := NewClient()
 	out := make(chan proto.Message, 1)
 	factory := func() proto.Message { return &emptypb.Empty{} }
 
-	err := client.ServerStream(context.Background(), "TestService", "TestMethod", nil, factory, out)
+	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
+	err := client.ServerStream(context.Background(), *u, nil, factory, out)
 	if err == nil {
 		t.Fatal("expected error for nil request")
 	}
@@ -322,11 +313,12 @@ func TestClientServerStreamNilRequest(t *testing.T) {
 
 // TestClientServerStreamNilChannel verifies that nil channel returns an error
 func TestClientServerStreamNilChannel(t *testing.T) {
-	client := NewClient("http://localhost:8080")
+	client := NewClient()
 	req := &emptypb.Empty{}
 	factory := func() proto.Message { return &emptypb.Empty{} }
 
-	err := client.ServerStream(context.Background(), "TestService", "TestMethod", req, factory, nil)
+	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
+	err := client.ServerStream(context.Background(), *u, req, factory, nil)
 	if err == nil {
 		t.Fatal("expected error for nil output channel")
 	}
@@ -334,11 +326,12 @@ func TestClientServerStreamNilChannel(t *testing.T) {
 
 // TestClientServerStreamNilFactory verifies that nil factory returns an error
 func TestClientServerStreamNilFactory(t *testing.T) {
-	client := NewClient("http://localhost:8080")
+	client := NewClient()
 	req := &emptypb.Empty{}
 	out := make(chan proto.Message, 1)
 
-	err := client.ServerStream(context.Background(), "TestService", "TestMethod", req, nil, out)
+	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
+	err := client.ServerStream(context.Background(), *u, req, nil, out)
 	if err == nil {
 		t.Fatal("expected error for nil response factory")
 	}
@@ -346,10 +339,11 @@ func TestClientServerStreamNilFactory(t *testing.T) {
 
 // TestClientClientStreamNilChannel verifies that nil channel returns an error
 func TestClientClientStreamNilChannel(t *testing.T) {
-	client := NewClient("http://localhost:8080")
+	client := NewClient()
 	resp := &emptypb.Empty{}
 
-	err := client.ClientStream(context.Background(), "TestService", "TestMethod", nil, resp)
+	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
+	err := client.ClientStream(context.Background(), *u, nil, resp)
 	if err == nil {
 		t.Fatal("expected error for nil input channel")
 	}
@@ -357,10 +351,11 @@ func TestClientClientStreamNilChannel(t *testing.T) {
 
 // TestClientClientStreamNilResponse verifies that nil response returns an error
 func TestClientClientStreamNilResponse(t *testing.T) {
-	client := NewClient("http://localhost:8080")
+	client := NewClient()
 	in := make(chan proto.Message, 1)
 
-	err := client.ClientStream(context.Background(), "TestService", "TestMethod", in, nil)
+	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
+	err := client.ClientStream(context.Background(), *u, in, nil)
 	if err == nil {
 		t.Fatal("expected error for nil response")
 	}
@@ -368,19 +363,20 @@ func TestClientClientStreamNilResponse(t *testing.T) {
 
 // TestClientBidirectionalStreamNilChannels verifies that nil channels return errors
 func TestClientBidirectionalStreamNilChannels(t *testing.T) {
-	client := NewClient("http://localhost:8080")
+	client := NewClient()
 	factory := func() proto.Message { return &emptypb.Empty{} }
+	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
 
 	// Test nil input channel
 	out := make(chan proto.Message, 1)
-	err := client.BidirectionalStream(context.Background(), "TestService", "TestMethod", nil, factory, out)
+	err := client.BidirectionalStream(context.Background(), *u, nil, factory, out)
 	if err == nil {
 		t.Fatal("expected error for nil input channel")
 	}
 
 	// Test nil output channel
 	in := make(chan proto.Message, 1)
-	err = client.BidirectionalStream(context.Background(), "TestService", "TestMethod", in, factory, nil)
+	err = client.BidirectionalStream(context.Background(), *u, in, factory, nil)
 	if err == nil {
 		t.Fatal("expected error for nil output channel")
 	}
@@ -388,7 +384,7 @@ func TestClientBidirectionalStreamNilChannels(t *testing.T) {
 	// Test nil factory
 	in = make(chan proto.Message, 1)
 	out = make(chan proto.Message, 1)
-	err = client.BidirectionalStream(context.Background(), "TestService", "TestMethod", in, nil, out)
+	err = client.BidirectionalStream(context.Background(), *u, in, nil, out)
 	if err == nil {
 		t.Fatal("expected error for nil response factory")
 	}
@@ -432,32 +428,26 @@ func TestClientServerStreamConnection(t *testing.T) {
 
 		// Just close normally without sending messages
 		// (full message exchange would require generated code)
-		conn.WriteMessage(websocket.CloseMessage, 
-			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 	})
 	defer server.Close()
 
-	// Verify WebSocket URL conversion works
-	client := NewClient(server.URL)
-	
-	// The URL should be converted from http:// to ws://
-	// This is handled in dialWebSocket method
-	if client.BaseURL != server.URL {
-		t.Errorf("expected BaseURL %s, got %s", server.URL, client.BaseURL)
-	}
+	// Streaming would use WebSocket and convert http:// to ws://
+	// This is tested indirectly through the dialWebSocket method
 }
 
 // TestClientServerStreamConnectionFailure tests WebSocket connection failures
 func TestClientServerStreamConnectionFailure(t *testing.T) {
 	// Create client pointing to non-existent server
-	client := NewClient("http://localhost:1")
+	client := NewClient()
 	out := make(chan proto.Message, 1)
 	factory := func() proto.Message { return &emptypb.Empty{} }
 
 	req := &emptypb.Empty{}
-	
-	err := client.ServerStream(context.Background(), "TestService", "TestMethod", req, factory, out)
-	
+	u, _ := url.Parse("http://localhost:1/TestService/TestMethod")
+
+	err := client.ServerStream(context.Background(), *u, req, factory, out)
+
 	// Should get connection error
 	if err == nil {
 		t.Fatal("expected error for connection failure")
@@ -489,22 +479,19 @@ func TestClientClientStreamConnection(t *testing.T) {
 	})
 	defer server.Close()
 
-	// Test that connection can be established
-	client := NewClient(server.URL)
-	if client.BaseURL != server.URL {
-		t.Errorf("expected BaseURL %s, got %s", server.URL, client.BaseURL)
-	}
+	// The WebSocket connection is tested through the streaming methods
 }
 
 // TestClientClientStreamConnectionFailure tests WebSocket connection failures
 func TestClientClientStreamConnectionFailure(t *testing.T) {
 	// Create client pointing to non-existent server
-	client := NewClient("http://localhost:1")
+	client := NewClient()
 	in := make(chan proto.Message, 1)
 
 	resp := &wrapperspb.StringValue{}
-	err := client.ClientStream(context.Background(), "TestService", "TestMethod", in, resp)
-	
+	u, _ := url.Parse("http://localhost:1/TestService/TestMethod")
+	err := client.ClientStream(context.Background(), *u, in, resp)
+
 	// Should get connection error
 	if err == nil {
 		t.Fatal("expected error for connection failure")
@@ -533,23 +520,20 @@ func TestClientBidirectionalStreamConnection(t *testing.T) {
 	})
 	defer server.Close()
 
-	// Test that connection can be established
-	client := NewClient(server.URL)
-	if client.BaseURL != server.URL {
-		t.Errorf("expected BaseURL %s, got %s", server.URL, client.BaseURL)
-	}
+	// The WebSocket connection is tested through the streaming methods
 }
 
 // TestClientBidirectionalStreamConnectionFailure tests WebSocket connection failures
 func TestClientBidirectionalStreamConnectionFailure(t *testing.T) {
 	// Create client pointing to non-existent server
-	client := NewClient("http://localhost:1")
+	client := NewClient()
 	in := make(chan proto.Message, 1)
 	out := make(chan proto.Message, 1)
 	factory := func() proto.Message { return &emptypb.Empty{} }
 
-	err := client.BidirectionalStream(context.Background(), "TestService", "TestMethod", in, factory, out)
-	
+	u, _ := url.Parse("http://localhost:1/TestService/TestMethod")
+	err := client.BidirectionalStream(context.Background(), *u, in, factory, out)
+
 	// Should get connection error
 	if err == nil {
 		t.Fatal("expected error for connection failure")
@@ -559,21 +543,21 @@ func TestClientBidirectionalStreamConnectionFailure(t *testing.T) {
 // TestClientWebSocketURLConversion tests HTTP to WS URL conversion
 func TestClientWebSocketURLConversion(t *testing.T) {
 	tests := []struct {
-		name     string
-		baseURL  string
-		wantWS   bool
+		name   string
+		scheme string
+		wantWS bool
 	}{
-		{"HTTP to WS", "http://localhost:8080", true},
-		{"HTTPS to WSS", "https://localhost:8080", true},
+		{"HTTP to WS", "http", true},
+		{"HTTPS to WSS", "https", true},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// We can't directly test the URL conversion without accessing internals,
 			// but we can verify the client doesn't panic and handles the URL correctly
-			client := NewClient(tt.baseURL)
-			if client.BaseURL != tt.baseURL {
-				t.Errorf("expected BaseURL %s, got %s", tt.baseURL, client.BaseURL)
+			client := NewClient()
+			if client == nil {
+				t.Error("expected non-nil client")
 			}
 		})
 	}
@@ -584,14 +568,14 @@ func TestClientWithTLSConfig(t *testing.T) {
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: true,
 	}
-	
-	client := NewClient("https://localhost:8080", WithTLSConfig(tlsConfig))
 
-	if client.TLSConfig == nil {
+	client := NewClient(WithTLSConfig(tlsConfig))
+
+	if client.tlsConfig == nil {
 		t.Fatal("expected non-nil TLSConfig")
 	}
 
-	if !client.TLSConfig.InsecureSkipVerify {
+	if !client.tlsConfig.InsecureSkipVerify {
 		t.Error("expected InsecureSkipVerify to be true")
 	}
 }
@@ -641,24 +625,24 @@ func TestWebSocketMessageMarshaling(t *testing.T) {
 
 // TestWebSocketDialerConfiguration tests that the WebSocket dialer is properly configured
 func TestWebSocketDialerConfiguration(t *testing.T) {
-	// Test with HTTP URL
-	client := NewClient("http://localhost:8080")
-	if client.BaseURL != "http://localhost:8080" {
-		t.Errorf("expected BaseURL http://localhost:8080, got %s", client.BaseURL)
+	// Test basic client creation
+	client := NewClient()
+	if client == nil {
+		t.Error("expected non-nil client")
 	}
 
-	// Test with HTTPS URL and TLS config
+	// Test with TLS config
 	tlsConfig := &tls.Config{
 		MinVersion: tls.VersionTLS12,
 	}
-	client = NewClient("https://localhost:8443", WithTLSConfig(tlsConfig))
-	
-	if client.TLSConfig == nil {
+	client = NewClient(WithTLSConfig(tlsConfig))
+
+	if client.tlsConfig == nil {
 		t.Fatal("expected non-nil TLSConfig")
 	}
-	
-	if client.TLSConfig.MinVersion != tls.VersionTLS12 {
-		t.Errorf("expected MinVersion TLS 1.2, got %v", client.TLSConfig.MinVersion)
+
+	if client.tlsConfig.MinVersion != tls.VersionTLS12 {
+		t.Errorf("expected MinVersion TLS 1.2, got %v", client.tlsConfig.MinVersion)
 	}
 }
 
@@ -667,26 +651,27 @@ func TestWebSocketConnectionClosure(t *testing.T) {
 	server := newWSTestServer(t, func(conn *websocket.Conn) {
 		// Read one message
 		conn.ReadMessage()
-		
+
 		// Close immediately
 		conn.Close()
 	})
 	defer server.Close()
 
-	client := NewClient(server.URL)
+	client := NewClient()
 	out := make(chan proto.Message, 1)
 	factory := func() proto.Message { return &emptypb.Empty{} }
 
 	req := &emptypb.Empty{}
-	
+	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+
 	// This should fail because server closes immediately
-	err := client.ServerStream(context.Background(), "TestService", "TestMethod", req, factory, out)
-	
+	err := client.ServerStream(context.Background(), *u, req, factory, out)
+
 	// We expect some error (either connection closed or read error)
 	if err == nil {
 		t.Log("Warning: expected error due to immediate connection closure, but got nil")
 	}
-	
+
 	// Give server time to clean up
 	time.Sleep(10 * time.Millisecond)
 }
