@@ -258,8 +258,8 @@ func (c *Client) ClientStream(ctx context.Context, service, method string, in ch
 	defer conn.Close()
 
 	// Start goroutine to send messages from input channel
-	errChan := make(chan error, 1)
 	var wg sync.WaitGroup
+	var sendErr error
 	wg.Add(1)
 
 	go func() {
@@ -267,34 +267,39 @@ func (c *Client) ClientStream(ctx context.Context, service, method string, in ch
 		for {
 			select {
 			case <-ctx.Done():
-				errChan <- ctx.Err()
+				sendErr = ctx.Err()
 				return
 			case msg, ok := <-in:
 				if !ok {
 					// Input channel closed, signal end of stream
-					conn.WriteMessage(websocket.CloseMessage,
-						websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+					if err := conn.WriteMessage(websocket.CloseMessage,
+						websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
+						sendErr = apperror.NewError("failed to close stream").AddError(err)
+					}
 					return
 				}
 				if err := c.writeWSMessage(conn, msg); err != nil {
-					errChan <- apperror.NewError("failed to send message").AddError(err)
+					sendErr = apperror.NewError("failed to send message").AddError(err)
 					return
 				}
 			}
 		}
 	}()
 
-	// Wait for final response
-	go func() {
-		wg.Wait()
-		if err := c.readWSMessage(conn, &resp); err != nil {
-			errChan <- apperror.NewError("failed to read response").AddError(err)
-			return
-		}
-		errChan <- nil
-	}()
+	// Wait for sending to complete, then read final response
+	wg.Wait()
+	
+	// If there was an error during sending, return it
+	if sendErr != nil {
+		return sendErr
+	}
 
-	return <-errChan
+	// Read the final response
+	if err := c.readWSMessage(conn, &resp); err != nil {
+		return apperror.NewError("failed to read response").AddError(err)
+	}
+
+	return nil
 }
 
 // BidirectionalStream makes a bidirectional streaming RPC call where both client
@@ -322,8 +327,19 @@ func (c *Client) BidirectionalStream(ctx context.Context, service, method string
 	}
 	defer conn.Close()
 
-	errChan := make(chan error, 2)
+	errChan := make(chan error, 1)
 	var wg sync.WaitGroup
+	var writerErr, readerErr error
+	var errOnce sync.Once
+
+	// Helper to set error once and signal completion
+	setError := func(err error) {
+		errOnce.Do(func() {
+			if err != nil {
+				errChan <- err
+			}
+		})
+	}
 
 	// Writer goroutine - sends messages from input channel
 	wg.Add(1)
@@ -332,7 +348,7 @@ func (c *Client) BidirectionalStream(ctx context.Context, service, method string
 		for {
 			select {
 			case <-ctx.Done():
-				errChan <- ctx.Err()
+				writerErr = ctx.Err()
 				return
 			case msg, ok := <-in:
 				if !ok {
@@ -340,7 +356,7 @@ func (c *Client) BidirectionalStream(ctx context.Context, service, method string
 					return
 				}
 				if err := c.writeWSMessage(conn, msg); err != nil {
-					errChan <- apperror.NewError("failed to send message").AddError(err)
+					writerErr = apperror.NewError("failed to send message").AddError(err)
 					return
 				}
 			}
@@ -355,40 +371,51 @@ func (c *Client) BidirectionalStream(ctx context.Context, service, method string
 		for {
 			select {
 			case <-ctx.Done():
-				errChan <- ctx.Err()
+				readerErr = ctx.Err()
 				return
 			default:
 				var msg proto.Message
 				if err := c.readWSMessage(conn, &msg); err != nil {
 					if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-						errChan <- nil
+						// Normal closure, not an error
 						return
 					}
-					errChan <- err
+					readerErr = err
 					return
 				}
 
 				select {
 				case out <- msg:
 				case <-ctx.Done():
-					errChan <- ctx.Err()
+					readerErr = ctx.Err()
 					return
 				}
 			}
 		}
 	}()
 
-	// Wait for both goroutines to complete
+	// Wait for both goroutines in a separate goroutine
 	go func() {
 		wg.Wait()
-		// If no error was sent, send nil
-		select {
-		case errChan <- nil:
-		default:
+		// Both goroutines completed, determine final error
+		if writerErr != nil {
+			setError(writerErr)
+		} else if readerErr != nil {
+			setError(readerErr)
+		} else {
+			setError(nil)
 		}
 	}()
 
-	return <-errChan
+	// Monitor context and close connection on cancellation
+	select {
+	case err := <-errChan:
+		return err
+	case <-ctx.Done():
+		conn.Close() // Force close to interrupt blocking operations
+		<-errChan    // Wait for cleanup
+		return ctx.Err()
+	}
 }
 
 // dialWebSocket establishes a WebSocket connection to the service method endpoint.
