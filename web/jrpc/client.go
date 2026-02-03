@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"reflect"
 	"sync"
 	"time"
 
@@ -41,7 +40,8 @@ import (
 // Example server streaming call:
 //
 //	out := make(chan proto.Message, 10)
-//	go client.ServerStream(ctx, "MyService", "StreamMethod", req, out)
+//	factory := func() proto.Message { return &MyResponse{} }
+//	go client.ServerStream(ctx, "MyService", "StreamMethod", req, factory, out)
 //	for msg := range out {
 //	    // Process each response message
 //	}
@@ -54,6 +54,14 @@ type Client struct {
 
 // ClientOption is a function that configures a Client.
 type ClientOption func(*Client)
+
+// ResponseFactory is a function that creates a new instance of a response message.
+// This is used in streaming methods to instantiate response messages of the correct type.
+//
+// Example:
+//
+//	factory := func() proto.Message { return &MyResponse{} }
+type ResponseFactory func() proto.Message
 
 // WithClient sets a custom HTTP client.
 func WithClient(client *http.Client) ClientOption {
@@ -189,12 +197,16 @@ func (c *Client) Call(ctx context.Context, service, method string, req, resp pro
 //   - service: The service name
 //   - method: The method name
 //   - req: The request message
+//   - responseFactory: Factory function to create new response message instances
 //   - out: Channel to receive response messages (will be closed when stream ends)
 //
 // Returns an error if the connection fails or an error occurs during streaming.
-func (c *Client) ServerStream(ctx context.Context, service, method string, req proto.Message, out chan proto.Message) error {
+func (c *Client) ServerStream(ctx context.Context, service, method string, req proto.Message, responseFactory ResponseFactory, out chan proto.Message) error {
 	if req == nil {
 		return apperror.NewError("request cannot be nil")
+	}
+	if responseFactory == nil {
+		return apperror.NewError("response factory cannot be nil")
 	}
 	if out == nil {
 		return apperror.NewError("output channel cannot be nil")
@@ -212,13 +224,12 @@ func (c *Client) ServerStream(ctx context.Context, service, method string, req p
 	}
 
 	// Read responses until stream ends
-	// Use reflection to create new instances of the same type as the request
 	errChan := make(chan error, 1)
 	go func() {
 		defer close(out)
 		for {
-			// Create a new instance of the message type using reflection
-			msg := reflect.New(reflect.TypeOf(req).Elem()).Interface().(proto.Message)
+			// Create a new instance of the response message using the factory
+			msg := responseFactory()
 			if err := c.readWSMessage(conn, &msg); err != nil {
 				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
 					errChan <- nil
@@ -325,12 +336,16 @@ func (c *Client) ClientStream(ctx context.Context, service, method string, in ch
 //   - service: The service name
 //   - method: The method name
 //   - in: Channel to send request messages (should be closed by caller when done)
+//   - responseFactory: Factory function to create new response message instances
 //   - out: Channel to receive response messages (will be closed when stream ends)
 //
 // Returns an error if the connection fails or an error occurs during streaming.
-func (c *Client) BidirectionalStream(ctx context.Context, service, method string, in chan proto.Message, out chan proto.Message) error {
+func (c *Client) BidirectionalStream(ctx context.Context, service, method string, in chan proto.Message, responseFactory ResponseFactory, out chan proto.Message) error {
 	if in == nil {
 		return apperror.NewError("input channel cannot be nil")
+	}
+	if responseFactory == nil {
+		return apperror.NewError("response factory cannot be nil")
 	}
 	if out == nil {
 		return apperror.NewError("output channel cannot be nil")
@@ -356,10 +371,6 @@ func (c *Client) BidirectionalStream(ctx context.Context, service, method string
 		})
 	}
 
-	// Shared message type for reader goroutine
-	var msgType reflect.Type
-	var msgTypeMutex sync.Mutex
-
 	// Writer goroutine - sends messages from input channel
 	wg.Add(1)
 	go func() {
@@ -374,13 +385,6 @@ func (c *Client) BidirectionalStream(ctx context.Context, service, method string
 					// Input channel closed
 					return
 				}
-				
-				// Capture the message type from the first message
-				msgTypeMutex.Lock()
-				if msgType == nil {
-					msgType = reflect.TypeOf(msg)
-				}
-				msgTypeMutex.Unlock()
 				
 				if err := c.writeWSMessage(conn, msg); err != nil {
 					writerErr = apperror.NewError("failed to send message").AddError(err)
@@ -401,19 +405,8 @@ func (c *Client) BidirectionalStream(ctx context.Context, service, method string
 				readerErr = ctx.Err()
 				return
 			default:
-				// Wait for message type to be determined by writer
-				msgTypeMutex.Lock()
-				currentType := msgType
-				msgTypeMutex.Unlock()
-				
-				if currentType == nil {
-					// Type not yet determined, wait briefly and retry
-					time.Sleep(10 * time.Millisecond)
-					continue
-				}
-				
-				// Create a new instance using reflection
-				msg := reflect.New(currentType.Elem()).Interface().(proto.Message)
+				// Create a new instance of the response message using the factory
+				msg := responseFactory()
 				if err := c.readWSMessage(conn, &msg); err != nil {
 					if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
 						// Normal closure, not an error
