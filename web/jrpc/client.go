@@ -17,22 +17,34 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Client provides a client implementation for making JSON-RPC calls over HTTP.
-// It handles request serialization, HTTP communication, and response deserialization
+// Client provides a client implementation for making JSON-RPC calls over HTTP and WebSocket.
+// It handles request serialization, HTTP/WebSocket communication, and response deserialization
 // using Protocol Buffer JSON format.
 //
 // The client supports:
-//   - Unary RPC calls
+//   - Unary RPC calls (HTTP POST)
+//   - Server streaming RPC calls (WebSocket)
+//   - Client streaming RPC calls (WebSocket)
+//   - Bidirectional streaming RPC calls (WebSocket)
 //   - Automatic request/response marshaling
 //   - Custom HTTP client configuration
 //   - Request timeout management
+//   - Custom TLS configuration for secure WebSocket connections
 //
-// Example:
+// Example unary call:
 //
 //	client := jrpc.NewClient("http://localhost:8080")
 //	req := &MyRequest{Field: "value"}
 //	resp := &MyResponse{}
 //	err := client.Call(ctx, "MyService", "MyMethod", req, resp)
+//
+// Example server streaming call:
+//
+//	out := make(chan proto.Message, 10)
+//	go client.ServerStream(ctx, "MyService", "StreamMethod", req, out)
+//	for msg := range out {
+//	    // Process each response message
+//	}
 type Client struct {
 	BaseURL    string
 	UserAgent  string
