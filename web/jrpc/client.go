@@ -400,28 +400,22 @@ func (c *Client) BidirectionalStream(ctx context.Context, service, method string
 		defer wg.Done()
 		defer close(out)
 		for {
+			// Create a new instance of the response message using the factory
+			msg := responseFactory()
+			if err := c.readWSMessage(conn, &msg); err != nil {
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+					// Normal closure, not an error
+					return
+				}
+				readerErr = err
+				return
+			}
+
 			select {
+			case out <- msg:
 			case <-ctx.Done():
 				readerErr = ctx.Err()
 				return
-			default:
-				// Create a new instance of the response message using the factory
-				msg := responseFactory()
-				if err := c.readWSMessage(conn, &msg); err != nil {
-					if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-						// Normal closure, not an error
-						return
-					}
-					readerErr = err
-					return
-				}
-
-				select {
-				case out <- msg:
-				case <-ctx.Done():
-					readerErr = ctx.Err()
-					return
-				}
 			}
 		}
 	}()
