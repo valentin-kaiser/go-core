@@ -459,16 +459,19 @@ func (c *Client) BidirectionalStream(ctx context.Context, url url.URL, in chan p
 }
 
 // dialWebSocket establishes a WebSocket connection to the service method endpoint.
-func (c *Client) dialWebSocket(url url.URL) (*websocket.Conn, error) {
+func (c *Client) dialWebSocket(u url.URL) (*websocket.Conn, error) {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 
+	// Create a copy of the URL to avoid mutating the caller's data
+	dialURL := u
+
 	// Convert HTTP(S) scheme to WS(S)
-	switch url.Scheme {
+	switch dialURL.Scheme {
 	case "http":
-		url.Scheme = "ws"
+		dialURL.Scheme = "ws"
 	case "https":
-		url.Scheme = "wss"
+		dialURL.Scheme = "wss"
 	}
 
 	dialer := websocket.Dialer{
@@ -482,7 +485,7 @@ func (c *Client) dialWebSocket(url url.URL) (*websocket.Conn, error) {
 		headers.Set("User-Agent", c.userAgent)
 	}
 
-	conn, _, err := dialer.Dial(url.String(), headers)
+	conn, _, err := dialer.Dial(dialURL.String(), headers)
 	if err != nil {
 		return nil, apperror.NewError("failed to connect to WebSocket").AddError(err)
 	}
