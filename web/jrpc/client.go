@@ -370,6 +370,7 @@ func (c *Client) BidirectionalStream(ctx context.Context, url url.URL, in chan p
 	errChan := make(chan error, 1)
 	var wg sync.WaitGroup
 	var writerErr, readerErr error
+	var errMutex sync.Mutex
 	var errOnce sync.Once
 
 	// Helper to set error once and signal completion
@@ -386,7 +387,9 @@ func (c *Client) BidirectionalStream(ctx context.Context, url url.URL, in chan p
 		for {
 			select {
 			case <-ctx.Done():
+				errMutex.Lock()
 				writerErr = ctx.Err()
+				errMutex.Unlock()
 				return
 			case msg, ok := <-in:
 				if !ok {
@@ -394,9 +397,11 @@ func (c *Client) BidirectionalStream(ctx context.Context, url url.URL, in chan p
 					return
 				}
 
-				err = c.writeWSMessage(conn, msg)
-				if err != nil {
-					writerErr = apperror.NewError("failed to send message").AddError(err)
+				writeErr := c.writeWSMessage(conn, msg)
+				if writeErr != nil {
+					errMutex.Lock()
+					writerErr = apperror.NewError("failed to send message").AddError(writeErr)
+					errMutex.Unlock()
 					return
 				}
 			}
@@ -411,20 +416,24 @@ func (c *Client) BidirectionalStream(ctx context.Context, url url.URL, in chan p
 		for {
 			// Create a new instance of the response message using the factory
 			msg := responseFactory()
-			err = c.readWSMessage(conn, &msg)
-			if err != nil {
-				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+			readErr := c.readWSMessage(conn, &msg)
+			if readErr != nil {
+				if websocket.IsCloseError(readErr, websocket.CloseNormalClosure) {
 					// Normal closure, not an error
 					return
 				}
-				readerErr = err
+				errMutex.Lock()
+				readerErr = readErr
+				errMutex.Unlock()
 				return
 			}
 
 			select {
 			case out <- msg:
 			case <-ctx.Done():
+				errMutex.Lock()
 				readerErr = ctx.Err()
+				errMutex.Unlock()
 				return
 			}
 		}
@@ -434,13 +443,15 @@ func (c *Client) BidirectionalStream(ctx context.Context, url url.URL, in chan p
 	go func() {
 		wg.Wait()
 		// Both goroutines completed, determine final error
+		errMutex.Lock()
+		var finalErr error
 		if writerErr != nil {
-			setError(writerErr)
+			finalErr = writerErr
 		} else if readerErr != nil {
-			setError(readerErr)
-		} else {
-			setError(nil)
+			finalErr = readerErr
 		}
+		errMutex.Unlock()
+		setError(finalErr)
 	}()
 
 	// Monitor context and close connection on cancellation

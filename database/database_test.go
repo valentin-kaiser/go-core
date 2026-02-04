@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	_ "github.com/mattn/go-sqlite3"
 	"github.com/valentin-kaiser/go-core/database"
 	"github.com/valentin-kaiser/go-core/flag"
 	"github.com/valentin-kaiser/go-core/logging"

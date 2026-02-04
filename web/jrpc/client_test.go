@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -659,7 +660,8 @@ func TestClientBidirectionalStreamConnection(t *testing.T) {
 	}()
 
 	// Collect received messages with timeout
-	receivedCount := 0
+	var receivedCount int
+	var countMutex sync.Mutex
 	done := make(chan struct{})
 	go func() {
 		for msg := range out {
@@ -667,7 +669,9 @@ func TestClientBidirectionalStreamConnection(t *testing.T) {
 				t.Error("received nil message")
 				continue
 			}
+			countMutex.Lock()
 			receivedCount++
+			countMutex.Unlock()
 		}
 		close(done)
 	}()
@@ -682,11 +686,14 @@ func TestClientBidirectionalStreamConnection(t *testing.T) {
 	}
 
 	// Verify we received at least some echoed messages
-	if receivedCount == 0 {
+	countMutex.Lock()
+	count := receivedCount
+	countMutex.Unlock()
+	if count == 0 {
 		t.Error("expected to receive at least some echoed messages, got 0")
-	} else if receivedCount != len(sentMessages) {
+	} else if count != len(sentMessages) {
 		// Log but don't fail - timing issues with close frames
-		t.Logf("received %d messages, sent %d (close frame timing may affect this)", receivedCount, len(sentMessages))
+		t.Logf("received %d messages, sent %d (close frame timing may affect this)", count, len(sentMessages))
 	}
 }
 
