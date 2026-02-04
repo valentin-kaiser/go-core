@@ -290,52 +290,53 @@ func (c *Client) ClientStream(ctx context.Context, url url.URL, in chan proto.Me
 	}
 	defer conn.Close()
 
-	// Start goroutine to send messages from input channel
-	var wg sync.WaitGroup
-	var sendErr error
-	wg.Add(1)
+	errChan := make(chan error, 1)
 
+	// Start goroutine to send messages from input channel
 	go func() {
-		defer wg.Done()
 		for {
 			select {
 			case <-ctx.Done():
-				sendErr = ctx.Err()
+				errChan <- ctx.Err()
 				return
 			case msg, ok := <-in:
 				if !ok {
 					// Input channel closed, signal end of stream
-					err = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+					err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 					if err != nil {
-						sendErr = apperror.NewError("failed to close stream").AddError(err)
+						errChan <- apperror.NewError("failed to close stream").AddError(err)
+						return
 					}
+					// Sending complete, now read response in a separate goroutine
+					go func() {
+						err := c.readWSMessage(conn, &resp)
+						if err != nil {
+							errChan <- apperror.NewError("failed to read response").AddError(err)
+							return
+						}
+						errChan <- nil
+					}()
 					return
 				}
 
-				err = c.writeWSMessage(conn, msg)
+				err := c.writeWSMessage(conn, msg)
 				if err != nil {
-					sendErr = apperror.NewError("failed to send message").AddError(err)
+					errChan <- apperror.NewError("failed to send message").AddError(err)
 					return
 				}
 			}
 		}
 	}()
 
-	// Wait for sending to complete, then read final response
-	wg.Wait()
-
-	// If there was an error during sending, return it
-	if sendErr != nil {
-		return sendErr
+	// Monitor context and wait for completion
+	select {
+	case err := <-errChan:
+		return err
+	case <-ctx.Done():
+		conn.Close() // Force close to interrupt blocking operations
+		<-errChan    // Wait for cleanup
+		return ctx.Err()
 	}
-
-	// Read the final response
-	err = c.readWSMessage(conn, &resp)
-	if err != nil {
-		return apperror.NewError("failed to read response").AddError(err)
-	}
-
-	return nil
 }
 
 // BidirectionalStream makes a bidirectional streaming RPC call where both client
