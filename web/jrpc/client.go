@@ -32,16 +32,16 @@ import (
 //
 // Example unary call:
 //
-//	client := jrpc.NewClient("http://localhost:8080")
+//	client := jrpc.NewClient()
 //	req := &MyRequest{Field: "value"}
 //	resp := &MyResponse{}
-//	err := client.Call(ctx,
+//	err := client.Call(ctx, url.URL{Scheme: "http", Host: "localhost:8080", Path: "/MyService/MyMethod"}, req, resp, nil)
 //
 // Example server streaming call:
 //
 //	out := make(chan proto.Message, 10)
 //	factory := func() proto.Message { return &MyResponse{} }
-//	go client.ServerStream(ctx, "MyService", "MyMethod", req, factory, out)
+//	go client.ServerStream(ctx, url.URL{Scheme: "http", Host: "localhost:8080", Path: "/MyService/MyMethod"}, req, factory, out)
 //	for msg := range out {
 //	    // Process each response message
 //	}
@@ -343,8 +343,7 @@ func (c *Client) ClientStream(ctx context.Context, url url.URL, in chan proto.Me
 //
 // Parameters:
 //   - ctx: Context for the request (for cancellation)
-//   - service: The service name
-//   - method: The method name
+//   - url: The full URL for the request
 //   - in: Channel to send request messages (should be closed by caller when done)
 //   - responseFactory: Factory function to create new response message instances
 //   - out: Channel to receive response messages (will be closed when stream ends)
