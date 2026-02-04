@@ -291,8 +291,6 @@ func (c *Client) ClientStream(ctx context.Context, url url.URL, in chan proto.Me
 	defer conn.Close()
 
 	errChan := make(chan error, 1)
-
-	// Start goroutine to send messages from input channel
 	go func() {
 		for {
 			select {
