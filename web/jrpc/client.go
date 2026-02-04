@@ -376,9 +376,7 @@ func (c *Client) BidirectionalStream(ctx context.Context, url url.URL, in chan p
 	// Helper to set error once and signal completion
 	setError := func(err error) {
 		errOnce.Do(func() {
-			if err != nil {
-				errChan <- err
-			}
+			errChan <- err
 		})
 	}
 
