@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -530,18 +529,24 @@ func TestDatabase_Backup_SQLite(t *testing.T) {
 	// Initialize flag package for path
 	flag.Init()
 
+	// Ensure the data directory exists
+	if err := os.MkdirAll(flag.Path, 0750); err != nil {
+		t.Fatalf("Failed to create data directory: %v", err)
+	}
+
 	db := database.New[TestQueries](database.DriverSQLite, "test")
 
-	// Use a DSN that creates the database in flag.Path directory to match cleanup
-	dsn := fmt.Sprintf("file:%s", filepath.Join(flag.Path, "test_backup.db"))
+	// Use a DSN with file: prefix (required for backup functionality)
+	dbPath := filepath.Join(flag.Path, "test_backup.db")
+	dsn := "file:" + dbPath
 
 	db.Connect(100*time.Millisecond, dsn)
 	defer func() {
 		db.Disconnect()
 		// Clean up test database file
-		os.Remove(filepath.Join(flag.Path, "test_backup.db"))
-		os.Remove(filepath.Join(flag.Path, "test_backup.db-wal"))
-		os.Remove(filepath.Join(flag.Path, "test_backup.db-shm"))
+		os.Remove(dbPath)
+		os.Remove(dbPath + "-wal")
+		os.Remove(dbPath + "-shm")
 	}()
 	db.AwaitConnection()
 
