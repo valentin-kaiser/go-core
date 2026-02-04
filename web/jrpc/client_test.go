@@ -123,7 +123,7 @@ func TestClientCall(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("{}"))
-}))
+	}))
 	defer server.Close()
 
 	// Create client
@@ -155,7 +155,7 @@ func TestClientCallCustomUserAgent(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("{}"))
-}))
+	}))
 	defer server.Close()
 
 	// Create client with custom User-Agent
@@ -211,7 +211,7 @@ func TestClientCallServerError(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("internal server error"))
-}))
+	}))
 	defer server.Close()
 
 	client := NewClient()
@@ -238,7 +238,7 @@ func TestClientCallContextCancellation(t *testing.T) {
 		time.Sleep(2 * time.Second)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("{}"))
-}))
+	}))
 	defer server.Close()
 
 	client := NewClient()
@@ -264,7 +264,7 @@ func TestClientCallInvalidJSON(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("not valid json"))
-}))
+	}))
 	defer server.Close()
 
 	client := NewClient()
@@ -286,7 +286,7 @@ func BenchmarkClientCall(b *testing.B) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("{}"))
-}))
+	}))
 	defer server.Close()
 
 	client := NewClient()
@@ -503,13 +503,13 @@ func TestClientServerStreamConnectionFailure(t *testing.T) {
 func TestClientClientStreamConnection(t *testing.T) {
 	messagesReceived := 0
 	responseSent := false
-	
+
 	// Create WebSocket server that accepts connection
 	server := newWSTestServer(t, func(conn *websocket.Conn) {
 		// Read messages from client
 		for {
 			msgType, data, err := conn.ReadMessage()
-			
+
 			// If we get a close message, try to send response
 			if msgType == websocket.CloseMessage {
 				// Send response - this may or may not work due to WebSocket state
@@ -520,7 +520,7 @@ func TestClientClientStreamConnection(t *testing.T) {
 				}
 				return
 			}
-			
+
 			// If error, connection is closed
 			if err != nil {
 				return
@@ -558,7 +558,7 @@ func TestClientClientStreamConnection(t *testing.T) {
 
 	// Wait for stream to complete
 	err := <-errCh
-	
+
 	// The error about websocket close is expected due to protocol timing
 	// We verify that messages were received by the server
 	if err != nil && !strings.Contains(err.Error(), "websocket: close") {
@@ -572,7 +572,7 @@ func TestClientClientStreamConnection(t *testing.T) {
 	if messagesReceived != 3 {
 		t.Errorf("expected server to receive 3 messages, got %d", messagesReceived)
 	}
-	
+
 	// Note: We don't verify the response because WebSocket close frame protocol
 	// makes it unreliable. Full end-to-end testing should be done with generated code.
 	t.Logf("Server received %d messages, response sent: %v", messagesReceived, responseSent)
@@ -602,7 +602,7 @@ func TestClientBidirectionalStreamConnection(t *testing.T) {
 	server := newWSTestServer(t, func(conn *websocket.Conn) {
 		// Set a deadline to avoid hanging
 		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		
+
 		// Read messages and echo them back immediately
 		for {
 			msgType, data, err := conn.ReadMessage()
