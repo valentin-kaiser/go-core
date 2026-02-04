@@ -64,7 +64,7 @@ type ClientOption func(*Client)
 type ResponseFactory func() proto.Message
 
 // NewClient creates a new JSON-RPC client with default settings.
-// The baseURL parameter specifies the server endpoint (e.g., "http://localhost:8080").
+// Optional ClientOptions can be provided to customize the client's behavior.
 func NewClient(opts ...ClientOption) *Client {
 	client := &Client{
 		mutex: &sync.RWMutex{},
@@ -129,11 +129,7 @@ func WithTLSConfig(config *tls.Config) ClientOption {
 //
 // Returns an error if the request fails, marshaling/unmarshaling fails,
 // or the server returns an error response.
-func (c *Client) Call(ctx context.Context, url url.URL, req, resp proto.Message, headers []http.Header) error {
-	if url.String() == "" {
-		return apperror.NewError("URL cannot be empty")
-	}
-
+func (c *Client) Call(ctx context.Context, url url.URL, req, resp proto.Message, header http.Header) error {
 	if req == nil {
 		return apperror.NewError("request cannot be nil")
 	}
@@ -158,22 +154,20 @@ func (c *Client) Call(ctx context.Context, url url.URL, req, resp proto.Message,
 	httpReq.Header.Set("Accept", "application/json")
 
 	// Add custom headers if provided
-	for _, header := range headers {
-		for key, values := range header {
-			for _, value := range values {
-				httpReq.Header.Add(key, value)
-			}
+	for key, values := range header {
+		for _, value := range values {
+			httpReq.Header.Add(key, value)
 		}
 	}
 
 	c.mutex.RLock()
-	defer c.mutex.RUnlock()
 	if c.userAgent != "" {
 		httpReq.Header.Set("User-Agent", c.userAgent)
 	}
 
 	// Make HTTP request
 	httpResp, err := c.httpClient.Do(httpReq)
+	c.mutex.RUnlock()
 	if err != nil {
 		return apperror.NewError("HTTP request failed").AddError(err)
 	}
@@ -211,9 +205,6 @@ func (c *Client) Call(ctx context.Context, url url.URL, req, resp proto.Message,
 //
 // Returns an error if the connection fails or an error occurs during streaming.
 func (c *Client) ServerStream(ctx context.Context, url url.URL, req proto.Message, factory ResponseFactory, out chan proto.Message) error {
-	if url.String() == "" {
-		return apperror.NewError("URL cannot be empty")
-	}
 
 	if req == nil {
 		return apperror.NewError("request cannot be nil")
@@ -285,10 +276,6 @@ func (c *Client) ServerStream(ctx context.Context, url url.URL, req proto.Messag
 //
 // Returns an error if the connection fails or an error occurs during streaming.
 func (c *Client) ClientStream(ctx context.Context, url url.URL, in chan proto.Message, resp proto.Message) error {
-	if url.String() == "" {
-		return apperror.NewError("URL cannot be empty")
-	}
-
 	if in == nil {
 		return apperror.NewError("input channel cannot be nil")
 	}
@@ -364,10 +351,6 @@ func (c *Client) ClientStream(ctx context.Context, url url.URL, in chan proto.Me
 //
 // Returns an error if the connection fails or an error occurs during streaming.
 func (c *Client) BidirectionalStream(ctx context.Context, url url.URL, in chan proto.Message, responseFactory ResponseFactory, out chan proto.Message) error {
-	if url.String() == "" {
-		return apperror.NewError("URL cannot be empty")
-	}
-
 	if in == nil {
 		return apperror.NewError("input channel cannot be nil")
 	}
@@ -379,9 +362,6 @@ func (c *Client) BidirectionalStream(ctx context.Context, url url.URL, in chan p
 	if out == nil {
 		return apperror.NewError("output channel cannot be nil")
 	}
-
-	c.mutex.RLock()
-	defer c.mutex.RUnlock()
 
 	conn, err := c.dialWebSocket(url)
 	if err != nil {
