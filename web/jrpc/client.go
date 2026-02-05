@@ -210,10 +210,11 @@ func ServerStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, r
 		return apperror.NewError("response factory cannot be nil")
 	}
 
-	conn, err := c.dialWebSocket(u)
+	conn, resp, err := c.dialWebSocket(u)
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 	defer conn.Close()
 
 	// Send initial request
@@ -279,10 +280,11 @@ func ClientStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, i
 		return apperror.NewError("response cannot be nil")
 	}
 
-	conn, err := c.dialWebSocket(u)
+	conn, r, err := c.dialWebSocket(u)
 	if err != nil {
 		return err
 	}
+	defer r.Body.Close()
 	defer conn.Close()
 
 	errChan := make(chan error, 1)
@@ -302,12 +304,13 @@ func ClientStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, i
 		}
 		// Input stream closed, signal end of stream to server
 		closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
-		if err := conn.WriteMessage(websocket.CloseMessage, closeMsg); err != nil {
+		err := conn.WriteMessage(websocket.CloseMessage, closeMsg)
+		if err != nil {
 			errChan <- apperror.NewError("failed to send close message").AddError(err)
 			return
 		}
 		// Read final response - may fail with close error due to WebSocket protocol
-		err := c.readWSMessage(conn, &resp)
+		err = c.readWSMessage(conn, &resp)
 		if err != nil {
 			// WebSocket close errors are expected after sending close message
 			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
@@ -359,10 +362,11 @@ func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx
 		return apperror.NewError("response factory cannot be nil")
 	}
 
-	conn, err := c.dialWebSocket(u)
+	conn, resp, err := c.dialWebSocket(u)
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 	defer conn.Close()
 
 	errChan := make(chan error, 1)
@@ -453,7 +457,7 @@ func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx
 }
 
 // dialWebSocket establishes a WebSocket connection to the service method endpoint.
-func (c *Client) dialWebSocket(u *url.URL) (*websocket.Conn, error) {
+func (c *Client) dialWebSocket(u *url.URL) (*websocket.Conn, *http.Response, error) {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 
@@ -479,12 +483,12 @@ func (c *Client) dialWebSocket(u *url.URL) (*websocket.Conn, error) {
 		headers.Set("User-Agent", c.userAgent)
 	}
 
-	conn, _, err := dialer.Dial(dialURL.String(), headers)
+	conn, resp, err := dialer.Dial(dialURL.String(), headers)
 	if err != nil {
-		return nil, apperror.NewError("failed to connect to WebSocket").AddError(err)
+		return nil, nil, apperror.NewError("failed to connect to WebSocket").AddError(err)
 	}
 
-	return conn, nil
+	return conn, resp, nil
 }
 
 // writeWSMessage writes a proto message to the WebSocket connection.

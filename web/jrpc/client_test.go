@@ -295,7 +295,7 @@ func BenchmarkClientCall(b *testing.B) {
 	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
 
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		_ = client.Call(context.Background(), u, req, resp, nil)
 	}
 }
