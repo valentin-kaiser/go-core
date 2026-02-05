@@ -202,6 +202,14 @@ func ServerStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, r
 		return apperror.NewError("url cannot be nil")
 	}
 
+	if out == nil {
+		return apperror.NewError("output channel cannot be nil")
+	}
+
+	if factory == nil {
+		return apperror.NewError("response factory cannot be nil")
+	}
+
 	conn, err := c.dialWebSocket(u)
 	if err != nil {
 		return err
@@ -263,6 +271,14 @@ func ClientStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, i
 		return apperror.NewError("url cannot be nil")
 	}
 
+	if in == nil {
+		return apperror.NewError("input channel cannot be nil")
+	}
+
+	if resp == nil {
+		return apperror.NewError("response cannot be nil")
+	}
+
 	conn, err := c.dialWebSocket(u)
 	if err != nil {
 		return err
@@ -318,6 +334,18 @@ func ClientStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, i
 func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx context.Context, u *url.URL, in chan TReq, out chan TResp, respFactory func() TResp) error {
 	if u == nil {
 		return apperror.NewError("url cannot be nil")
+	}
+
+	if in == nil {
+		return apperror.NewError("input channel cannot be nil")
+	}
+
+	if out == nil {
+		return apperror.NewError("output channel cannot be nil")
+	}
+
+	if respFactory == nil {
+		return apperror.NewError("response factory cannot be nil")
 	}
 
 	conn, err := c.dialWebSocket(u)
