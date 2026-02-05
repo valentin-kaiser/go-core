@@ -55,14 +55,6 @@ type Client struct {
 // ClientOption defines a function type for configuring the Client.
 type ClientOption func(*Client)
 
-// ResponseFactory is a function that creates a new instance of a response message.
-// This is used in streaming methods to instantiate response messages of the correct type.
-//
-// Example:
-//
-//	factory := func() proto.Message { return &MyResponse{} }
-type ResponseFactory func() proto.Message
-
 // NewClient creates a new JSON-RPC client with default settings.
 // Optional ClientOptions can be provided to customize the client's behavior.
 func NewClient(opts ...ClientOption) *Client {
@@ -122,14 +114,14 @@ func WithTLSConfig(config *tls.Config) ClientOption {
 //
 // Parameters:
 //   - ctx: Context for the request (for cancellation and timeouts)
-//   - url: The full URL for the request
+//   - u: The full URL for the request
 //   - req: The request message (must be a proto.Message)
 //   - resp: The response message (must be a proto.Message pointer)
 //   - headers: Optional HTTP headers to include in the request
 //
 // Returns an error if the request fails, marshaling/unmarshaling fails,
 // or the server returns an error response.
-func (c *Client) Call(ctx context.Context, url url.URL, req, resp proto.Message, header http.Header) error {
+func (c *Client) Call(ctx context.Context, u *url.URL, req, resp proto.Message, header http.Header) error {
 	if req == nil {
 		return apperror.NewError("request cannot be nil")
 	}
@@ -145,7 +137,7 @@ func (c *Client) Call(ctx context.Context, url url.URL, req, resp proto.Message,
 	}
 
 	// Create HTTP request
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url.String(), bytes.NewReader(reqBytes))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(reqBytes))
 	if err != nil {
 		return apperror.NewError("failed to create HTTP request").AddError(err)
 	}
@@ -193,35 +185,36 @@ func (c *Client) Call(ctx context.Context, url url.URL, req, resp proto.Message,
 	return nil
 }
 
-// ServerStream makes a server streaming RPC call where the client sends one request
+// ServerStream makes a server streaming RPC call with typed channels where the client sends one request
 // and receives a stream of responses over WebSocket.
 //
 // Parameters:
+//   - c: The client instance
 //   - ctx: Context for the request (for cancellation)
-//   - url: The full URL for the request
+//   - u: The full URL for the request
 //   - req: The request message
+//   - out: Typed channel to receive response messages (will be closed when stream ends)
 //   - factory: Factory function to create new response message instances
-//   - out: Channel to receive response messages (will be closed when stream ends)
 //
 // Returns an error if the connection fails or an error occurs during streaming.
-func (c *Client) ServerStream(ctx context.Context, url url.URL, req proto.Message, factory ResponseFactory, out chan proto.Message) error {
-
-	if req == nil {
-		return apperror.NewError("request cannot be nil")
-	}
-
-	if factory == nil {
-		return apperror.NewError("response factory cannot be nil")
+func ServerStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, req proto.Message, out chan T, factory func() T) error {
+	if u == nil {
+		return apperror.NewError("url cannot be nil")
 	}
 
 	if out == nil {
 		return apperror.NewError("output channel cannot be nil")
 	}
 
-	conn, err := c.dialWebSocket(url)
+	if factory == nil {
+		return apperror.NewError("response factory cannot be nil")
+	}
+
+	conn, resp, err := c.dialWebSocket(u)
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 	defer conn.Close()
 
 	// Send initial request
@@ -230,52 +223,55 @@ func (c *Client) ServerStream(ctx context.Context, url url.URL, req proto.Messag
 		return apperror.NewError("failed to send request").AddError(err)
 	}
 
-	// Read responses until stream ends
 	errChan := make(chan error, 1)
 	go func() {
 		defer close(out)
 		for {
-			// Create a new instance of the response message using the factory
-			msg := factory()
-			if err := c.readWSMessage(conn, &msg); err != nil {
-				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+			resp := factory()
+			var protoResp proto.Message = resp
+			err := c.readWSMessage(conn, &protoResp)
+			if err != nil {
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 					errChan <- nil
 					return
 				}
-				errChan <- err
+				errChan <- apperror.NewError("failed to read message").AddError(err)
 				return
 			}
-
 			select {
-			case out <- msg:
 			case <-ctx.Done():
 				errChan <- ctx.Err()
 				return
+			case out <- resp:
 			}
 		}
 	}()
 
-	// Monitor context cancellation and close connection immediately
 	select {
 	case err := <-errChan:
 		return err
 	case <-ctx.Done():
-		conn.Close()     // Immediately close connection to interrupt blocking read
-		return <-errChan // Wait for goroutine to finish
+		conn.Close()
+		return <-errChan
 	}
 }
 
-// ClientStream makes a client streaming RPC call where the client sends a stream
+// ClientStream makes a client streaming RPC call with typed channels where the client sends a stream
 // of requests and receives one response over WebSocket.
 //
 // Parameters:
+//   - c: The client instance
 //   - ctx: Context for the request (for cancellation)
-//   - url: The full URL for the request
-//   - in: Channel to send request messages (should be closed by caller when done)
+//   - u: The full URL for the request
+//   - in: Typed channel to send request messages (should be closed by caller when done)
 //   - resp: The response message (will be populated when stream completes)
 //
 // Returns an error if the connection fails or an error occurs during streaming.
-func (c *Client) ClientStream(ctx context.Context, url url.URL, in chan proto.Message, resp proto.Message) error {
+func ClientStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, in chan T, resp proto.Message) error {
+	if u == nil {
+		return apperror.NewError("url cannot be nil")
+	}
+
 	if in == nil {
 		return apperror.NewError("input channel cannot be nil")
 	}
@@ -284,39 +280,21 @@ func (c *Client) ClientStream(ctx context.Context, url url.URL, in chan proto.Me
 		return apperror.NewError("response cannot be nil")
 	}
 
-	conn, err := c.dialWebSocket(url)
+	conn, r, err := c.dialWebSocket(u)
 	if err != nil {
 		return err
 	}
+	defer r.Body.Close()
 	defer conn.Close()
 
 	errChan := make(chan error, 1)
 	go func() {
-		for {
+		for msg := range in {
 			select {
 			case <-ctx.Done():
 				errChan <- ctx.Err()
 				return
-			case msg, ok := <-in:
-				if !ok {
-					// Input channel closed, signal end of stream
-					err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-					if err != nil {
-						errChan <- apperror.NewError("failed to close stream").AddError(err)
-						return
-					}
-					// Sending complete, now read response in a separate goroutine
-					go func() {
-						err := c.readWSMessage(conn, &resp)
-						if err != nil {
-							errChan <- apperror.NewError("failed to read response").AddError(err)
-							return
-						}
-						errChan <- nil
-					}()
-					return
-				}
-
+			default:
 				err := c.writeWSMessage(conn, msg)
 				if err != nil {
 					errChan <- apperror.NewError("failed to send message").AddError(err)
@@ -324,47 +302,71 @@ func (c *Client) ClientStream(ctx context.Context, url url.URL, in chan proto.Me
 				}
 			}
 		}
+		// Input stream closed, signal end of stream to server
+		closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
+		err := conn.WriteMessage(websocket.CloseMessage, closeMsg)
+		if err != nil {
+			errChan <- apperror.NewError("failed to send close message").AddError(err)
+			return
+		}
+		// Read final response - may fail with close error due to WebSocket protocol
+		err = c.readWSMessage(conn, &resp)
+		if err != nil {
+			// WebSocket close errors are expected after sending close message
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				errChan <- nil
+				return
+			}
+			errChan <- apperror.NewError("failed to read response").AddError(err)
+			return
+		}
+		errChan <- nil
 	}()
 
-	// Monitor context and wait for completion
 	select {
 	case err := <-errChan:
 		return err
 	case <-ctx.Done():
-		conn.Close() // Force close to interrupt blocking operations
-		<-errChan    // Wait for cleanup
+		conn.Close()
+		<-errChan
 		return ctx.Err()
 	}
 }
 
-// BidirectionalStream makes a bidirectional streaming RPC call where both client
+// BidirectionalStream makes a bidirectional streaming RPC call with typed channels where both client
 // and server send streams of messages over WebSocket.
 //
 // Parameters:
+//   - c: The client instance
 //   - ctx: Context for the request (for cancellation)
-//   - url: The full URL for the request
-//   - in: Channel to send request messages (should be closed by caller when done)
-//   - responseFactory: Factory function to create new response message instances
-//   - out: Channel to receive response messages (will be closed when stream ends)
+//   - u: The full URL for the request
+//   - in: Typed channel to send request messages (should be closed by caller when done)
+//   - out: Typed channel to receive response messages (will be closed when stream ends)
+//   - respFactory: Factory function to create new response message instances
 //
 // Returns an error if the connection fails or an error occurs during streaming.
-func (c *Client) BidirectionalStream(ctx context.Context, url url.URL, in chan proto.Message, responseFactory ResponseFactory, out chan proto.Message) error {
-	if in == nil {
-		return apperror.NewError("input channel cannot be nil")
+func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx context.Context, u *url.URL, in chan TReq, out chan TResp, respFactory func() TResp) error {
+	if u == nil {
+		return apperror.NewError("url cannot be nil")
 	}
 
-	if responseFactory == nil {
-		return apperror.NewError("response factory cannot be nil")
+	if in == nil {
+		return apperror.NewError("input channel cannot be nil")
 	}
 
 	if out == nil {
 		return apperror.NewError("output channel cannot be nil")
 	}
 
-	conn, err := c.dialWebSocket(url)
+	if respFactory == nil {
+		return apperror.NewError("response factory cannot be nil")
+	}
+
+	conn, resp, err := c.dialWebSocket(u)
 	if err != nil {
 		return err
 	}
+	defer resp.Body.Close()
 	defer conn.Close()
 
 	errChan := make(chan error, 1)
@@ -373,34 +375,28 @@ func (c *Client) BidirectionalStream(ctx context.Context, url url.URL, in chan p
 	var errMutex sync.Mutex
 	var errOnce sync.Once
 
-	// Helper to set error once and signal completion
 	setError := func(err error) {
 		errOnce.Do(func() {
 			errChan <- err
 		})
 	}
 
-	// Writer goroutine - sends messages from input channel
+	// Writer goroutine
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		for {
+		for msg := range in {
 			select {
 			case <-ctx.Done():
 				errMutex.Lock()
 				writerErr = ctx.Err()
 				errMutex.Unlock()
 				return
-			case msg, ok := <-in:
-				if !ok {
-					// Input channel closed
-					return
-				}
-
-				writeErr := c.writeWSMessage(conn, msg)
-				if writeErr != nil {
+			default:
+				err := c.writeWSMessage(conn, msg)
+				if err != nil {
 					errMutex.Lock()
-					writerErr = apperror.NewError("failed to send message").AddError(writeErr)
+					writerErr = apperror.NewError("failed to send message").AddError(err)
 					errMutex.Unlock()
 					return
 				}
@@ -408,41 +404,37 @@ func (c *Client) BidirectionalStream(ctx context.Context, url url.URL, in chan p
 		}
 	}()
 
-	// Reader goroutine - receives messages and sends to output channel
+	// Reader goroutine
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		defer close(out)
 		for {
-			// Create a new instance of the response message using the factory
-			msg := responseFactory()
-			readErr := c.readWSMessage(conn, &msg)
-			if readErr != nil {
-				if websocket.IsCloseError(readErr, websocket.CloseNormalClosure) {
-					// Normal closure, not an error
+			resp := respFactory()
+			var protoResp proto.Message = resp
+			err := c.readWSMessage(conn, &protoResp)
+			if err != nil {
+				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 					return
 				}
 				errMutex.Lock()
-				readerErr = readErr
+				readerErr = apperror.NewError("failed to read message").AddError(err)
 				errMutex.Unlock()
 				return
 			}
-
 			select {
-			case out <- msg:
 			case <-ctx.Done():
 				errMutex.Lock()
 				readerErr = ctx.Err()
 				errMutex.Unlock()
 				return
+			case out <- resp:
 			}
 		}
 	}()
 
-	// Wait for both goroutines in a separate goroutine
 	go func() {
 		wg.Wait()
-		// Both goroutines completed, determine final error
 		errMutex.Lock()
 		var finalErr error
 		if writerErr != nil {
@@ -454,24 +446,23 @@ func (c *Client) BidirectionalStream(ctx context.Context, url url.URL, in chan p
 		setError(finalErr)
 	}()
 
-	// Monitor context and close connection on cancellation
 	select {
 	case err := <-errChan:
 		return err
 	case <-ctx.Done():
-		conn.Close() // Force close to interrupt blocking operations
-		<-errChan    // Wait for cleanup
+		conn.Close()
+		<-errChan
 		return ctx.Err()
 	}
 }
 
 // dialWebSocket establishes a WebSocket connection to the service method endpoint.
-func (c *Client) dialWebSocket(u url.URL) (*websocket.Conn, error) {
+func (c *Client) dialWebSocket(u *url.URL) (*websocket.Conn, *http.Response, error) {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 
 	// Create a copy of the URL to avoid mutating the caller's data
-	dialURL := u
+	dialURL := *u
 
 	// Convert HTTP(S) scheme to WS(S)
 	switch dialURL.Scheme {
@@ -492,12 +483,12 @@ func (c *Client) dialWebSocket(u url.URL) (*websocket.Conn, error) {
 		headers.Set("User-Agent", c.userAgent)
 	}
 
-	conn, _, err := dialer.Dial(dialURL.String(), headers)
+	conn, resp, err := dialer.Dial(dialURL.String(), headers)
 	if err != nil {
-		return nil, apperror.NewError("failed to connect to WebSocket").AddError(err)
+		return nil, nil, apperror.NewError("failed to connect to WebSocket").AddError(err)
 	}
 
-	return conn, nil
+	return conn, resp, nil
 }
 
 // writeWSMessage writes a proto message to the WebSocket connection.
