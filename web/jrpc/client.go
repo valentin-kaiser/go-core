@@ -114,14 +114,14 @@ func WithTLSConfig(config *tls.Config) ClientOption {
 //
 // Parameters:
 //   - ctx: Context for the request (for cancellation and timeouts)
-//   - url: The full URL for the request
+//   - u: The full URL for the request
 //   - req: The request message (must be a proto.Message)
 //   - resp: The response message (must be a proto.Message pointer)
 //   - headers: Optional HTTP headers to include in the request
 //
 // Returns an error if the request fails, marshaling/unmarshaling fails,
 // or the server returns an error response.
-func (c *Client) Call(ctx context.Context, url url.URL, req, resp proto.Message, header http.Header) error {
+func (c *Client) Call(ctx context.Context, u *url.URL, req, resp proto.Message, header http.Header) error {
 	if req == nil {
 		return apperror.NewError("request cannot be nil")
 	}
@@ -137,7 +137,7 @@ func (c *Client) Call(ctx context.Context, url url.URL, req, resp proto.Message,
 	}
 
 	// Create HTTP request
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url.String(), bytes.NewReader(reqBytes))
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(reqBytes))
 	if err != nil {
 		return apperror.NewError("failed to create HTTP request").AddError(err)
 	}
@@ -191,14 +191,18 @@ func (c *Client) Call(ctx context.Context, url url.URL, req, resp proto.Message,
 // Parameters:
 //   - c: The client instance
 //   - ctx: Context for the request (for cancellation)
-//   - url: The full URL for the request
+//   - u: The full URL for the request
 //   - req: The request message
 //   - out: Typed channel to receive response messages (will be closed when stream ends)
 //   - factory: Factory function to create new response message instances
 //
 // Returns an error if the connection fails or an error occurs during streaming.
-func ServerStream[T proto.Message](c *Client, ctx context.Context, url url.URL, req proto.Message, out chan T, factory func() T) error {
-	conn, err := c.dialWebSocket(url)
+func ServerStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, req proto.Message, out chan T, factory func() T) error {
+	if u == nil {
+		return apperror.NewError("url cannot be nil")
+	}
+
+	conn, err := c.dialWebSocket(u)
 	if err != nil {
 		return err
 	}
@@ -249,13 +253,17 @@ func ServerStream[T proto.Message](c *Client, ctx context.Context, url url.URL, 
 // Parameters:
 //   - c: The client instance
 //   - ctx: Context for the request (for cancellation)
-//   - url: The full URL for the request
+//   - u: The full URL for the request
 //   - in: Typed channel to send request messages (should be closed by caller when done)
 //   - resp: The response message (will be populated when stream completes)
 //
 // Returns an error if the connection fails or an error occurs during streaming.
-func ClientStream[T proto.Message](c *Client, ctx context.Context, url url.URL, in chan T, resp proto.Message) error {
-	conn, err := c.dialWebSocket(url)
+func ClientStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, in chan T, resp proto.Message) error {
+	if u == nil {
+		return apperror.NewError("url cannot be nil")
+	}
+
+	conn, err := c.dialWebSocket(u)
 	if err != nil {
 		return err
 	}
@@ -301,14 +309,18 @@ func ClientStream[T proto.Message](c *Client, ctx context.Context, url url.URL, 
 // Parameters:
 //   - c: The client instance
 //   - ctx: Context for the request (for cancellation)
-//   - url: The full URL for the request
+//   - u: The full URL for the request
 //   - in: Typed channel to send request messages (should be closed by caller when done)
 //   - out: Typed channel to receive response messages (will be closed when stream ends)
 //   - respFactory: Factory function to create new response message instances
 //
 // Returns an error if the connection fails or an error occurs during streaming.
-func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx context.Context, url url.URL, in chan TReq, out chan TResp, respFactory func() TResp) error {
-	conn, err := c.dialWebSocket(url)
+func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx context.Context, u *url.URL, in chan TReq, out chan TResp, respFactory func() TResp) error {
+	if u == nil {
+		return apperror.NewError("url cannot be nil")
+	}
+
+	conn, err := c.dialWebSocket(u)
 	if err != nil {
 		return err
 	}
@@ -402,12 +414,12 @@ func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx
 }
 
 // dialWebSocket establishes a WebSocket connection to the service method endpoint.
-func (c *Client) dialWebSocket(u url.URL) (*websocket.Conn, error) {
+func (c *Client) dialWebSocket(u *url.URL) (*websocket.Conn, error) {
 	c.mutex.RLock()
 	defer c.mutex.RUnlock()
 
 	// Create a copy of the URL to avoid mutating the caller's data
-	dialURL := u
+	dialURL := *u
 
 	// Convert HTTP(S) scheme to WS(S)
 	switch dialURL.Scheme {
@@ -460,6 +472,3 @@ func (c *Client) readWSMessage(conn *websocket.Conn, msg *proto.Message) error {
 
 	return unmarshalOpts.Unmarshal(data, *msg)
 }
-
-
-
