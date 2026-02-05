@@ -135,7 +135,7 @@ func TestClientCall(t *testing.T) {
 
 	// Parse URL
 	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
-	err := client.Call(context.Background(), *u, req, resp, nil)
+	err := client.Call(context.Background(), u, req, resp, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestClientCallCustomUserAgent(t *testing.T) {
 	resp := &emptypb.Empty{}
 
 	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
-	err := client.Call(context.Background(), *u, req, resp, nil)
+	err := client.Call(context.Background(), u, req, resp, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestClientCallNilRequest(t *testing.T) {
 
 	resp := &emptypb.Empty{}
 	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
-	err := client.Call(context.Background(), *u, nil, resp, nil)
+	err := client.Call(context.Background(), u, nil, resp, nil)
 
 	if err == nil {
 		t.Fatal("expected error for nil request")
@@ -194,7 +194,7 @@ func TestClientCallNilResponse(t *testing.T) {
 
 	req := &emptypb.Empty{}
 	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
-	err := client.Call(context.Background(), *u, req, nil, nil)
+	err := client.Call(context.Background(), u, req, nil, nil)
 
 	if err == nil {
 		t.Fatal("expected error for nil response")
@@ -220,7 +220,7 @@ func TestClientCallServerError(t *testing.T) {
 	resp := &emptypb.Empty{}
 
 	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
-	err := client.Call(context.Background(), *u, req, resp, nil)
+	err := client.Call(context.Background(), u, req, resp, nil)
 	if err == nil {
 		t.Fatal("expected error for server error response")
 	}
@@ -251,7 +251,7 @@ func TestClientCallContextCancellation(t *testing.T) {
 	resp := &emptypb.Empty{}
 
 	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
-	err := client.Call(ctx, *u, req, resp, nil)
+	err := client.Call(ctx, u, req, resp, nil)
 	if err == nil {
 		t.Fatal("expected error for context timeout")
 	}
@@ -273,7 +273,7 @@ func TestClientCallInvalidJSON(t *testing.T) {
 	resp := &emptypb.Empty{}
 
 	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
-	err := client.Call(context.Background(), *u, req, resp, nil)
+	err := client.Call(context.Background(), u, req, resp, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON response")
 	}
@@ -296,7 +296,7 @@ func BenchmarkClientCall(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = client.Call(context.Background(), *u, req, resp, nil)
+		_ = client.Call(context.Background(), u, req, resp, nil)
 	}
 }
 
