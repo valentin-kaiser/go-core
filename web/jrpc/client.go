@@ -300,9 +300,20 @@ func ClientStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, i
 				}
 			}
 		}
-		// Input stream closed, read final response
+		// Input stream closed, signal end of stream to server
+		closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
+		if err := conn.WriteMessage(websocket.CloseMessage, closeMsg); err != nil {
+			errChan <- apperror.NewError("failed to send close message").AddError(err)
+			return
+		}
+		// Read final response - may fail with close error due to WebSocket protocol
 		err := c.readWSMessage(conn, &resp)
 		if err != nil {
+			// WebSocket close errors are expected after sending close message
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				errChan <- nil
+				return
+			}
 			errChan <- apperror.NewError("failed to read response").AddError(err)
 			return
 		}
