@@ -303,11 +303,11 @@ func BenchmarkClientCall(b *testing.B) {
 // TestClientServerStreamNilRequest verifies that nil request returns an error
 func TestClientServerStreamNilRequest(t *testing.T) {
 	client := NewClient()
-	out := make(chan proto.Message, 1)
-	factory := func() proto.Message { return &emptypb.Empty{} }
+	out := make(chan *emptypb.Empty, 1)
+	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
 
 	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
-	err := client.ServerStream(context.Background(), *u, nil, factory, out)
+	err := ServerStream[*emptypb.Empty](client, context.Background(), *u, nil, out, factory)
 	if err == nil {
 		t.Fatal("expected error for nil request")
 	}
@@ -317,10 +317,10 @@ func TestClientServerStreamNilRequest(t *testing.T) {
 func TestClientServerStreamNilChannel(t *testing.T) {
 	client := NewClient()
 	req := &emptypb.Empty{}
-	factory := func() proto.Message { return &emptypb.Empty{} }
+	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
 
 	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
-	err := client.ServerStream(context.Background(), *u, req, factory, nil)
+	err := ServerStream[*emptypb.Empty](client, context.Background(), *u, req, nil, factory)
 	if err == nil {
 		t.Fatal("expected error for nil output channel")
 	}
@@ -330,10 +330,10 @@ func TestClientServerStreamNilChannel(t *testing.T) {
 func TestClientServerStreamNilFactory(t *testing.T) {
 	client := NewClient()
 	req := &emptypb.Empty{}
-	out := make(chan proto.Message, 1)
+	out := make(chan *emptypb.Empty, 1)
 
 	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
-	err := client.ServerStream(context.Background(), *u, req, nil, out)
+	err := ServerStream[*emptypb.Empty](client, context.Background(), *u, req, out, nil)
 	if err == nil {
 		t.Fatal("expected error for nil response factory")
 	}
@@ -345,7 +345,7 @@ func TestClientClientStreamNilChannel(t *testing.T) {
 	resp := &emptypb.Empty{}
 
 	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
-	err := client.ClientStream(context.Background(), *u, nil, resp)
+	err := ClientStream[*emptypb.Empty](client, context.Background(), *u, nil, resp)
 	if err == nil {
 		t.Fatal("expected error for nil input channel")
 	}
@@ -354,10 +354,10 @@ func TestClientClientStreamNilChannel(t *testing.T) {
 // TestClientClientStreamNilResponse verifies that nil response returns an error
 func TestClientClientStreamNilResponse(t *testing.T) {
 	client := NewClient()
-	in := make(chan proto.Message, 1)
+	in := make(chan *emptypb.Empty, 1)
 
 	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
-	err := client.ClientStream(context.Background(), *u, in, nil)
+	err := ClientStream[*emptypb.Empty](client, context.Background(), *u, in, nil)
 	if err == nil {
 		t.Fatal("expected error for nil response")
 	}
@@ -366,27 +366,27 @@ func TestClientClientStreamNilResponse(t *testing.T) {
 // TestClientBidirectionalStreamNilChannels verifies that nil channels return errors
 func TestClientBidirectionalStreamNilChannels(t *testing.T) {
 	client := NewClient()
-	factory := func() proto.Message { return &emptypb.Empty{} }
+	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
 	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
 
 	// Test nil input channel
-	out := make(chan proto.Message, 1)
-	err := client.BidirectionalStream(context.Background(), *u, nil, factory, out)
+	out := make(chan *emptypb.Empty, 1)
+	err := BidirectionalStream[*emptypb.Empty, *emptypb.Empty](client, context.Background(), *u, nil, out, factory)
 	if err == nil {
 		t.Fatal("expected error for nil input channel")
 	}
 
 	// Test nil output channel
-	in := make(chan proto.Message, 1)
-	err = client.BidirectionalStream(context.Background(), *u, in, factory, nil)
+	in := make(chan *emptypb.Empty, 1)
+	err = BidirectionalStream[*emptypb.Empty, *emptypb.Empty](client, context.Background(), *u, in, nil, factory)
 	if err == nil {
 		t.Fatal("expected error for nil output channel")
 	}
 
 	// Test nil factory
-	in = make(chan proto.Message, 1)
-	out = make(chan proto.Message, 1)
-	err = client.BidirectionalStream(context.Background(), *u, in, nil, out)
+	in = make(chan *emptypb.Empty, 1)
+	out = make(chan *emptypb.Empty, 1)
+	err = BidirectionalStream[*emptypb.Empty, *emptypb.Empty](client, context.Background(), *u, in, out, nil)
 	if err == nil {
 		t.Fatal("expected error for nil response factory")
 	}
@@ -444,8 +444,8 @@ func TestClientServerStreamConnection(t *testing.T) {
 
 	// Create client and test server streaming
 	client := NewClient()
-	out := make(chan proto.Message, 10)
-	factory := func() proto.Message { return &wrapperspb.StringValue{} }
+	out := make(chan *wrapperspb.StringValue, 10)
+	factory := func() *wrapperspb.StringValue { return &wrapperspb.StringValue{} }
 
 	req := &emptypb.Empty{}
 	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
@@ -453,7 +453,7 @@ func TestClientServerStreamConnection(t *testing.T) {
 	// Start server stream in goroutine
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- client.ServerStream(context.Background(), *u, req, factory, out)
+		errCh <- ServerStream[*wrapperspb.StringValue](client, context.Background(), *u, req, out, factory)
 	}()
 
 	// Read messages from output channel
@@ -482,13 +482,13 @@ func TestClientServerStreamConnection(t *testing.T) {
 func TestClientServerStreamConnectionFailure(t *testing.T) {
 	// Create client pointing to non-existent server
 	client := NewClient()
-	out := make(chan proto.Message, 1)
-	factory := func() proto.Message { return &emptypb.Empty{} }
+	out := make(chan *emptypb.Empty, 1)
+	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
 
 	req := &emptypb.Empty{}
 	u, _ := url.Parse("http://localhost:1/TestService/TestMethod")
 
-	err := client.ServerStream(context.Background(), *u, req, factory, out)
+	err := ServerStream[*emptypb.Empty](client, context.Background(), *u, req, out, factory)
 
 	// Should get connection error
 	if err == nil {
@@ -539,7 +539,7 @@ func TestClientClientStreamConnection(t *testing.T) {
 
 	// Create client and test client streaming
 	client := NewClient()
-	in := make(chan proto.Message, 10)
+	in := make(chan *wrapperspb.StringValue, 10)
 	resp := &wrapperspb.StringValue{}
 
 	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
@@ -547,7 +547,7 @@ func TestClientClientStreamConnection(t *testing.T) {
 	// Start client stream in goroutine
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- client.ClientStream(context.Background(), *u, in, resp)
+		errCh <- ClientStream[*wrapperspb.StringValue](client, context.Background(), *u, in, resp)
 	}()
 
 	// Send messages through input channel
@@ -582,11 +582,11 @@ func TestClientClientStreamConnection(t *testing.T) {
 func TestClientClientStreamConnectionFailure(t *testing.T) {
 	// Create client pointing to non-existent server
 	client := NewClient()
-	in := make(chan proto.Message, 1)
+	in := make(chan *wrapperspb.StringValue, 1)
 
 	resp := &wrapperspb.StringValue{}
 	u, _ := url.Parse("http://localhost:1/TestService/TestMethod")
-	err := client.ClientStream(context.Background(), *u, in, resp)
+	err := ClientStream[*wrapperspb.StringValue](client, context.Background(), *u, in, resp)
 
 	// Should get connection error
 	if err == nil {
@@ -633,9 +633,9 @@ func TestClientBidirectionalStreamConnection(t *testing.T) {
 
 	// Create client and test bidirectional streaming
 	client := NewClient()
-	in := make(chan proto.Message, 10)
-	out := make(chan proto.Message, 10)
-	factory := func() proto.Message { return &wrapperspb.StringValue{} }
+	in := make(chan *wrapperspb.StringValue, 10)
+	out := make(chan *wrapperspb.StringValue, 10)
+	factory := func() *wrapperspb.StringValue { return &wrapperspb.StringValue{} }
 
 	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
 
@@ -646,7 +646,7 @@ func TestClientBidirectionalStreamConnection(t *testing.T) {
 	// Start bidirectional stream in goroutine
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- client.BidirectionalStream(ctx, *u, in, factory, out)
+		errCh <- BidirectionalStream[*wrapperspb.StringValue, *wrapperspb.StringValue](client, ctx, *u, in, out, factory)
 	}()
 
 	// Send a few messages
@@ -701,12 +701,12 @@ func TestClientBidirectionalStreamConnection(t *testing.T) {
 func TestClientBidirectionalStreamConnectionFailure(t *testing.T) {
 	// Create client pointing to non-existent server
 	client := NewClient()
-	in := make(chan proto.Message, 1)
-	out := make(chan proto.Message, 1)
-	factory := func() proto.Message { return &emptypb.Empty{} }
+	in := make(chan *emptypb.Empty, 1)
+	out := make(chan *emptypb.Empty, 1)
+	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
 
 	u, _ := url.Parse("http://localhost:1/TestService/TestMethod")
-	err := client.BidirectionalStream(context.Background(), *u, in, factory, out)
+	err := BidirectionalStream[*emptypb.Empty, *emptypb.Empty](client, context.Background(), *u, in, out, factory)
 
 	// Should get connection error
 	if err == nil {
@@ -832,14 +832,14 @@ func TestWebSocketConnectionClosure(t *testing.T) {
 	defer server.Close()
 
 	client := NewClient()
-	out := make(chan proto.Message, 1)
-	factory := func() proto.Message { return &emptypb.Empty{} }
+	out := make(chan *emptypb.Empty, 1)
+	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
 
 	req := &emptypb.Empty{}
 	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
 
 	// This should fail because server closes immediately
-	err := client.ServerStream(context.Background(), *u, req, factory, out)
+	err := ServerStream[*emptypb.Empty](client, context.Background(), *u, req, out, factory)
 
 	// We expect some error (either connection closed or read error)
 	if err == nil {
