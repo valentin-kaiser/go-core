@@ -674,55 +674,19 @@ func (d *Database[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
 	copy(middlewares, d.middlewares)
 	d.middlewareMutex.RUnlock()
 
-	switch driver {
-	case DriverSQLite:
-		driverName := wrap(string(driver), middlewares)
-		conn, err := sql.Open(driverName, dsn)
-		if err != nil {
-			return nil, apperror.Wrap(err)
-		}
-
-		conn.SetMaxOpenConns(16)
-		conn.SetMaxIdleConns(8)
-
-		// Test the connection
-		if err := conn.Ping(); err != nil {
-			conn.Close()
-			return nil, apperror.Wrap(err)
-		}
-
-		return conn, nil
-
-	case DriverMySQL:
-		conn, err := sql.Open(string(driver), dsn)
-		if err != nil {
-			return nil, apperror.Wrap(err)
-		}
-
-		if err := conn.Ping(); err != nil {
-			conn.Close()
-			return nil, apperror.Wrap(err)
-		}
-
-		return conn, nil
-
-	case DriverPostgres:
-		// Use "pgx" as the driver name for jackc/pgx/v5/stdlib
-		conn, err := sql.Open("pgx", dsn)
-		if err != nil {
-			return nil, apperror.Wrap(err)
-		}
-
-		if err := conn.Ping(); err != nil {
-			conn.Close()
-			return nil, apperror.Wrap(err)
-		}
-
-		return conn, nil
-
-	default:
-		return nil, apperror.NewErrorf("unsupported database driver: %v", driver)
+	driverName := wrap(string(driver), middlewares)
+	conn, err := sql.Open(driverName, dsn)
+	if err != nil {
+		return nil, apperror.Wrap(err)
 	}
+
+	err = conn.Ping()
+	if err != nil {
+		conn.Close()
+		return nil, apperror.Wrap(err)
+	}
+
+	return conn, nil
 }
 
 // Backup creates a backup of the database to the specified path.

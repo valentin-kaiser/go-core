@@ -319,7 +319,7 @@ func (m *LoggingMiddleware) AfterExec(ctx context.Context, query string, args []
 	if result != nil {
 		rowsAffected, _ = result.RowsAffected()
 	}
-	l := m.logger.Debug().
+	l := m.logger.Trace().
 		Field("type", "exec").
 		Field("args", convertNamedValuesToInterface(args)).
 		Field("rows_affected", rowsAffected).
