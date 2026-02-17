@@ -6,6 +6,10 @@ import (
 )
 
 func TestParse(t *testing.T) {
+	// Parse depends on the global bundle, set it up first
+	Init(WithMap(English, map[string]string{"k": "v"}), WithMap(German, map[string]string{"k": "v"}))
+	defer Init()
+
 	tests := []struct {
 		input string
 		want  Language
@@ -15,7 +19,7 @@ func TestParse(t *testing.T) {
 		{"de", German},
 		{"De", German},
 		{" de ", German},
-		{"fr", Default},
+		{"fr", Default}, // not loaded
 		{"", Default},
 	}
 	for _, tt := range tests {
@@ -27,6 +31,10 @@ func TestParse(t *testing.T) {
 }
 
 func TestValid(t *testing.T) {
+	// Valid depends on the global bundle
+	Init(WithMap(English, map[string]string{"k": "v"}), WithMap(German, map[string]string{"k": "v"}))
+	defer Init()
+
 	tests := []struct {
 		input string
 		want  bool
@@ -46,11 +54,18 @@ func TestValid(t *testing.T) {
 }
 
 func TestSupported(t *testing.T) {
+	Init(WithMap(English, map[string]string{"a": "b"}), WithMap(German, map[string]string{"a": "c"}))
+	defer Init()
+
 	langs := Supported()
 	if len(langs) != 2 {
 		t.Fatalf("expected 2 supported languages, got %d", len(langs))
 	}
-	if langs[0] != English || langs[1] != German {
+	has := map[Language]bool{}
+	for _, l := range langs {
+		has[l] = true
+	}
+	if !has[English] || !has[German] {
 		t.Errorf("unexpected supported languages: %v", langs)
 	}
 }
@@ -226,4 +241,82 @@ func TestSetDefault(t *testing.T) {
 
 	// Reset
 	Init()
+}
+
+// ---------------------------------------------------------------------------
+// Tests for arbitrary / dynamic language support
+// ---------------------------------------------------------------------------
+
+func TestArbitraryLanguage(t *testing.T) {
+	b := New(
+		WithMap("fr", map[string]string{"hello": "Bonjour"}),
+		WithMap("ja", map[string]string{"hello": "こんにちは"}),
+		WithMap(English, map[string]string{"hello": "Hello"}),
+	)
+
+	if got := b.T("fr", "hello"); got != "Bonjour" {
+		t.Errorf("T(fr) = %q, want %q", got, "Bonjour")
+	}
+	if got := b.T("ja", "hello"); got != "こんにちは" {
+		t.Errorf("T(ja) = %q, want %q", got, "こんにちは")
+	}
+	if !b.HasLanguage("fr") {
+		t.Error("HasLanguage(fr) = false, want true")
+	}
+	if b.HasLanguage("es") {
+		t.Error("HasLanguage(es) = true, want false")
+	}
+}
+
+func TestParseArbitraryLanguage(t *testing.T) {
+	Init(
+		WithMap(English, map[string]string{"k": "v"}),
+		WithMap("fr", map[string]string{"k": "v"}),
+		WithMap("zh-cn", map[string]string{"k": "v"}),
+	)
+	defer Init()
+
+	if got := Parse("fr"); got != "fr" {
+		t.Errorf("Parse(fr) = %q, want %q", got, "fr")
+	}
+	if got := Parse("FR"); got != "fr" {
+		t.Errorf("Parse(FR) = %q, want %q", got, "fr")
+	}
+	if got := Parse("zh-CN"); got != "zh-cn" {
+		t.Errorf("Parse(zh-CN) = %q, want %q", got, "zh-cn")
+	}
+	if got := Parse("unknown"); got != Default {
+		t.Errorf("Parse(unknown) = %q, want %q", got, Default)
+	}
+}
+
+func TestWithFSAutoDiscovery(t *testing.T) {
+	fsys := fstest.MapFS{
+		"locales/en.json":    &fstest.MapFile{Data: []byte(`{"hello": "Hello"}`)},
+		"locales/de.json":    &fstest.MapFile{Data: []byte(`{"hello": "Hallo"}`)},
+		"locales/fr.json":    &fstest.MapFile{Data: []byte(`{"hello": "Bonjour"}`)},
+		"locales/ja.json":    &fstest.MapFile{Data: []byte(`{"hello": "こんにちは"}`)},
+		"locales/zh-cn.json": &fstest.MapFile{Data: []byte(`{"hello": "你好"}`)},
+		"locales/readme.txt": &fstest.MapFile{Data: []byte(`not a json locale`)},
+	}
+
+	b := New(WithFS(fsys, "locales"))
+
+	expected := map[Language]string{
+		"en":    "Hello",
+		"de":    "Hallo",
+		"fr":    "Bonjour",
+		"ja":    "こんにちは",
+		"zh-cn": "你好",
+	}
+	for lang, want := range expected {
+		if got := b.T(lang, "hello"); got != want {
+			t.Errorf("T(%s) = %q, want %q", lang, got, want)
+		}
+	}
+
+	// Should have exactly 5 languages (readme.txt ignored)
+	if got := len(b.Languages()); got != 5 {
+		t.Errorf("len(Languages()) = %d, want 5", got)
+	}
 }

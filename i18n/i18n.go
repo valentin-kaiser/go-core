@@ -64,26 +64,25 @@ const (
 	Default Language = English
 )
 
-// Supported returns all built-in supported language codes.
+// Supported returns all languages that have translations loaded in the global
+// default bundle. If no translations have been loaded yet the list may be empty.
 func Supported() []Language {
-	return []Language{English, German}
+	return global.Languages()
 }
 
-// Valid checks if a language code maps to a built-in supported language.
+// Valid checks if a language code has translations loaded in the global bundle.
 func Valid(lang string) bool {
-	switch Language(strings.ToLower(lang)) {
-	case English, German:
-		return true
-	}
-	return false
+	return global.HasLanguage(Language(strings.ToLower(strings.TrimSpace(lang))))
 }
 
-// Parse normalizes and validates a language string. If the input does not match
-// a known language code, Default is returned.
+// Parse normalizes a language string. If the language has no translations
+// loaded in the global bundle, Default is returned.
 func Parse(lang string) Language {
 	l := Language(strings.ToLower(strings.TrimSpace(lang)))
-	switch l {
-	case English, German:
+	if l == "" {
+		return Default
+	}
+	if global.HasLanguage(l) {
 		return l
 	}
 	return Default
@@ -99,19 +98,14 @@ type Bundle struct {
 // Option configures a Bundle during creation.
 type Option func(*Bundle)
 
-// WithFS loads translation files from an embed.FS (or any fs.FS). It expects
-// flat JSON files named by language code (e.g. "en.json", "de.json") inside the
-// given directory. Files that cannot be read or parsed are silently skipped.
+// WithFS loads translation files from an embed.FS (or any fs.FS). It scans the
+// given directory for JSON files named by language code (e.g. "en.json",
+// "fr.json", "ja.json") and loads each one automatically. Any language is
+// supported — the language code is derived from the filename.
+// Files that cannot be read or parsed are silently skipped.
 func WithFS(fsys fs.FS, dir string) Option {
 	return func(b *Bundle) {
-		for _, lang := range Supported() {
-			p := path.Join(dir, fmt.Sprintf("%s.json", lang))
-			data, err := fs.ReadFile(fsys, p)
-			if err != nil {
-				continue
-			}
-			b.loadJSON(lang, data)
-		}
+		loadDir(b, fsys, dir)
 	}
 }
 
@@ -218,17 +212,10 @@ func (b *Bundle) RegisterJSON(lang Language, data []byte) error {
 	return nil
 }
 
-// Load loads translations from an fs.FS at runtime, looking for files named
-// by language code (e.g. "en.json", "de.json") inside the given directory.
+// Load loads translations from an fs.FS at runtime. It scans the directory for
+// all *.json files and derives the language code from each filename.
 func (b *Bundle) Load(fsys fs.FS, dir string) {
-	for _, lang := range Supported() {
-		p := path.Join(dir, fmt.Sprintf("%s.json", lang))
-		data, err := fs.ReadFile(fsys, p)
-		if err != nil {
-			continue
-		}
-		b.loadJSON(lang, data)
-	}
+	loadDir(b, fsys, dir)
 }
 
 // Languages returns all languages that have at least one translation loaded.
@@ -241,6 +228,14 @@ func (b *Bundle) Languages() []Language {
 		langs = append(langs, lang)
 	}
 	return langs
+}
+
+// HasLanguage reports whether the bundle contains translations for the given language.
+func (b *Bundle) HasLanguage(lang Language) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	_, ok := b.translations[lang]
+	return ok
 }
 
 // loadJSON parses a flat JSON object and merges it into the bundle for the given language.
@@ -256,6 +251,31 @@ func (b *Bundle) loadJSON(lang Language, data []byte) {
 	}
 	for k, v := range m {
 		b.translations[lang][k] = v
+	}
+}
+
+// loadDir scans a directory in an fs.FS for *.json files and loads each one
+// into the bundle. The language code is derived from the filename (e.g.
+// "en.json" → "en", "zh-CN.json" → "zh-cn").
+func loadDir(b *Bundle, fsys fs.FS, dir string) {
+	entries, err := fs.ReadDir(fsys, dir)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if path.Ext(name) != ".json" {
+			continue
+		}
+		lang := Language(strings.ToLower(strings.TrimSuffix(name, ".json")))
+		data, err := fs.ReadFile(fsys, path.Join(dir, name))
+		if err != nil {
+			continue
+		}
+		b.loadJSON(lang, data)
 	}
 }
 
