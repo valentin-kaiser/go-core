@@ -141,8 +141,10 @@ const (
 // protocol buffer message handling, and context enrichment.
 type Service struct {
 	Server
-	methods map[string]*methodInfo                  // cached method information for faster lookup
-	types   map[protoreflect.FullName]proto.Message // cached message types
+	methods            map[string]*methodInfo                  // cached method information for faster lookup
+	types              map[protoreflect.FullName]proto.Message // cached message types
+	caseInsensitive    bool                                    // enables case-insensitive method lookups
+	allowedHTTPMethods map[string]bool                         // allowed HTTP methods for API calls
 }
 
 // Server represents a jRPC service implementation.
@@ -221,6 +223,34 @@ func Register(s Server) *Service {
 	return service
 }
 
+// WithCaseInsensitiveMethods configures the service to perform case-insensitive method lookups.
+func (s *Service) WithCaseInsensitiveMethods() *Service {
+	s.caseInsensitive = true
+	
+	// Rebuild methods map with lowercase keys for case-insensitive lookups
+	newMethods := make(map[string]*methodInfo, len(s.methods))
+	for key, info := range s.methods {
+		newMethods[strings.ToLower(key)] = info
+	}
+	s.methods = newMethods
+	
+	return s
+}
+
+// WithHTTPMethods configures the service to only accept specific HTTP methods (e.g., POST) for API calls.
+func (s *Service) WithHTTPMethods(methods ...string) *Service {
+	if len(methods) == 0 {
+		return s
+	}
+	
+	s.allowedHTTPMethods = make(map[string]bool, len(methods))
+	for _, method := range methods {
+		s.allowedHTTPMethods[strings.ToUpper(method)] = true
+	}
+	
+	return s
+}
+
 // SetUpgrader allows setting a custom WebSocket upgrader with specific options.
 func SetUpgrader(u websocket.Upgrader) {
 	upgrader = u
@@ -244,6 +274,12 @@ func (s *Service) HandlerFunc(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	// Validate HTTP method if restrictions are configured
+	if len(s.allowedHTTPMethods) > 0 && !s.allowedHTTPMethods[r.Method] {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
@@ -563,7 +599,12 @@ func (s *Service) call(ctx context.Context, service, method string, req proto.Me
 }
 
 func (s *Service) find(service, method string) (*methodInfo, error) {
-	md, exists := s.methods[service+"."+method]
+	key := service + "." + method
+	if s.caseInsensitive {
+		key = strings.ToLower(key)
+	}
+	
+	md, exists := s.methods[key]
 	if !exists {
 		return nil, apperror.Wrap(errMethodNotFound)
 	}
