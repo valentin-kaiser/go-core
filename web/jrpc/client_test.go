@@ -12,9 +12,22 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
+)
+
+// Test-specific marshal/unmarshal options
+var (
+	testMarshalOpts = protojson.MarshalOptions{
+		EmitUnpopulated: true,
+		UseEnumNumbers:  true,
+	}
+
+	testUnmarshalOpts = protojson.UnmarshalOptions{
+		DiscardUnknown: true,
+	}
 )
 
 // Test Coverage Notes:
@@ -423,7 +436,7 @@ func TestClientServerStreamConnection(t *testing.T) {
 
 		// Verify it's valid JSON (protobuf JSON format)
 		req := &emptypb.Empty{}
-		if err := unmarshalOpts.Unmarshal(reqData, req); err != nil {
+		if err := testUnmarshalOpts.Unmarshal(reqData, req); err != nil {
 			t.Errorf("failed to unmarshal request: %v", err)
 			return
 		}
@@ -431,7 +444,7 @@ func TestClientServerStreamConnection(t *testing.T) {
 		// Send two messages to the client
 		for i := 0; i < 2; i++ {
 			msg := wrapperspb.String("message")
-			data, _ := marshalOpts.Marshal(msg)
+			data, _ := testMarshalOpts.Marshal(msg)
 			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
 				return
 			}
@@ -514,7 +527,7 @@ func TestClientClientStreamConnection(t *testing.T) {
 			if msgType == websocket.CloseMessage {
 				// Send response - this may or may not work due to WebSocket state
 				resp := wrapperspb.String("received")
-				respData, _ := marshalOpts.Marshal(resp)
+				respData, _ := testMarshalOpts.Marshal(resp)
 				if err := conn.WriteMessage(websocket.TextMessage, respData); err == nil {
 					responseSent = true
 				}
@@ -528,7 +541,7 @@ func TestClientClientStreamConnection(t *testing.T) {
 
 			// Verify it's valid JSON
 			msg := &wrapperspb.StringValue{}
-			if err := unmarshalOpts.Unmarshal(data, msg); err != nil {
+			if err := testUnmarshalOpts.Unmarshal(data, msg); err != nil {
 				t.Errorf("failed to unmarshal message: %v", err)
 				return
 			}
@@ -618,7 +631,7 @@ func TestClientBidirectionalStreamConnection(t *testing.T) {
 
 			// Verify it's valid JSON
 			msg := &wrapperspb.StringValue{}
-			if err := unmarshalOpts.Unmarshal(data, msg); err != nil {
+			if err := testUnmarshalOpts.Unmarshal(data, msg); err != nil {
 				t.Errorf("failed to unmarshal message: %v", err)
 				return
 			}
@@ -770,7 +783,7 @@ func TestWebSocketMessageMarshaling(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Marshal
-			data, err := marshalOpts.Marshal(tt.msg)
+			data, err := testMarshalOpts.Marshal(tt.msg)
 			if err != nil {
 				t.Fatalf("failed to marshal: %v", err)
 			}
@@ -785,7 +798,7 @@ func TestWebSocketMessageMarshaling(t *testing.T) {
 			proto.Reset(newMsg)
 
 			// Unmarshal
-			if err := unmarshalOpts.Unmarshal(data, newMsg); err != nil {
+			if err := testUnmarshalOpts.Unmarshal(data, newMsg); err != nil {
 				t.Fatalf("failed to unmarshal: %v", err)
 			}
 

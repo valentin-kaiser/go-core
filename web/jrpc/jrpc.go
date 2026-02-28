@@ -99,15 +99,6 @@ var (
 	// Cached reflection types to avoid repeated type operations
 	contextType = reflect.TypeOf((*context.Context)(nil)).Elem()
 	errorType   = reflect.TypeOf((*error)(nil)).Elem()
-
-	// Reusable marshal options to avoid allocation
-	marshalOpts = protojson.MarshalOptions{
-		EmitUnpopulated: true,
-	}
-
-	unmarshalOpts = protojson.UnmarshalOptions{
-		DiscardUnknown: true,
-	}
 )
 
 // upgrader is the WebSocket upgrader with default options
@@ -145,6 +136,8 @@ type Service struct {
 	types              map[protoreflect.FullName]proto.Message // cached message types
 	caseInsensitive    bool                                    // enables case-insensitive method lookups
 	allowedHTTPMethods map[string]bool                         // allowed HTTP methods for API calls
+	marshalOpts        protojson.MarshalOptions                // custom marshal options for protocol buffers
+	unmarshalOpts      protojson.UnmarshalOptions              // custom unmarshal options for protocol buffers
 }
 
 // Server represents a jRPC service implementation.
@@ -172,6 +165,13 @@ func Register(s Server) *Service {
 		Server:  s,
 		methods: make(map[string]*methodInfo),
 		types:   make(map[protoreflect.FullName]proto.Message),
+		marshalOpts: protojson.MarshalOptions{
+			EmitUnpopulated: true,
+			UseEnumNumbers:  true,
+		},
+		unmarshalOpts: protojson.UnmarshalOptions{
+			DiscardUnknown: true,
+		},
 	}
 
 	sv := reflect.ValueOf(s)
@@ -226,14 +226,14 @@ func Register(s Server) *Service {
 // WithCaseInsensitiveMethods configures the service to perform case-insensitive method lookups.
 func (s *Service) WithCaseInsensitiveMethods() *Service {
 	s.caseInsensitive = true
-	
+
 	// Rebuild methods map with lowercase keys for case-insensitive lookups
 	newMethods := make(map[string]*methodInfo, len(s.methods))
 	for key, info := range s.methods {
 		newMethods[strings.ToLower(key)] = info
 	}
 	s.methods = newMethods
-	
+
 	return s
 }
 
@@ -242,12 +242,26 @@ func (s *Service) WithHTTPMethods(methods ...string) *Service {
 	if len(methods) == 0 {
 		return s
 	}
-	
+
 	s.allowedHTTPMethods = make(map[string]bool, len(methods))
 	for _, method := range methods {
 		s.allowedHTTPMethods[strings.ToUpper(method)] = true
 	}
-	
+
+	return s
+}
+
+// WithMarshalOptions configures custom protojson marshal options for the service.
+// These options control how protocol buffer messages are marshaled to JSON.
+func (s *Service) WithMarshalOptions(opts protojson.MarshalOptions) *Service {
+	s.marshalOpts = opts
+	return s
+}
+
+// WithUnmarshalOptions configures custom protojson unmarshal options for the service.
+// These options control how JSON is unmarshaled into protocol buffer messages.
+func (s *Service) WithUnmarshalOptions(opts protojson.UnmarshalOptions) *Service {
+	s.unmarshalOpts = opts
 	return s
 }
 
@@ -355,7 +369,7 @@ func (s *Service) unary(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		err = unmarshalOpts.Unmarshal(buf, msg)
+		err = s.unmarshalOpts.Unmarshal(buf, msg)
 		if err != nil {
 			http.Error(w, apperror.Wrap(err).Error(), http.StatusBadRequest)
 			return
@@ -563,7 +577,7 @@ func (s *Service) call(ctx context.Context, service, method string, req proto.Me
 		defer bufferPool.Put(buf[:0])
 
 		reqPtr := reflect.New(wanted.Elem())
-		b, err := marshalOpts.Marshal(req)
+		b, err := s.marshalOpts.Marshal(req)
 		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
@@ -571,7 +585,7 @@ func (s *Service) call(ctx context.Context, service, method string, req proto.Me
 		if !ok {
 			return nil, apperror.Wrap(errExpectedProtoMessage)
 		}
-		err = unmarshalOpts.Unmarshal(b, pm)
+		err = s.unmarshalOpts.Unmarshal(b, pm)
 		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
@@ -580,7 +594,6 @@ func (s *Service) call(ctx context.Context, service, method string, req proto.Me
 
 	outs := m.Call([]reflect.Value{reflect.ValueOf(ctx), reqVal})
 	res := outs[0].Interface()
-	var err error
 	if e := outs[1].Interface(); e != nil {
 		var ok bool
 		err, ok = e.(error)
@@ -603,7 +616,6 @@ func (s *Service) find(service, method string) (*methodInfo, error) {
 	if s.caseInsensitive {
 		key = strings.ToLower(key)
 	}
-	
 	md, exists := s.methods[key]
 	if !exists {
 		return nil, apperror.Wrap(errMethodNotFound)
@@ -627,7 +639,7 @@ func (s *Service) marshal(m any) ([]byte, error) {
 
 	switch msg := m.(type) {
 	case proto.Message:
-		out, err := marshalOpts.Marshal(msg)
+		out, err := s.marshalOpts.Marshal(msg)
 		if err != nil {
 			return nil, apperror.NewError("failed to marshal response").AddError(err)
 		}
@@ -706,12 +718,12 @@ func (s *Service) handleServerStream(ctx context.Context, conn *websocket.Conn, 
 			s.closeWS(conn, websocket.CloseInternalServerErr, apperror.NewError("request message is not a proto message"))
 			return
 		}
-		b, err := marshalOpts.Marshal(pmsg)
+		b, err := s.marshalOpts.Marshal(pmsg)
 		if err != nil {
 			s.closeWS(conn, websocket.CloseInternalServerErr, apperror.Wrap(err))
 			return
 		}
-		err = unmarshalOpts.Unmarshal(b, msg)
+		err = s.unmarshalOpts.Unmarshal(b, msg)
 		if err != nil {
 			s.closeWS(conn, websocket.CloseInternalServerErr, apperror.Wrap(err))
 			return
@@ -836,7 +848,7 @@ func (s *Service) readWSMessage(conn *websocket.Conn, msgPtr reflect.Value) erro
 	}
 
 	if len(payload) > 0 {
-		err = unmarshalOpts.Unmarshal(payload, msg)
+		err = s.unmarshalOpts.Unmarshal(payload, msg)
 		if err != nil {
 			return apperror.NewError("failed to unmarshal websocket message").AddError(err)
 		}

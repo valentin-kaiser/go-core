@@ -13,6 +13,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"github.com/valentin-kaiser/go-core/apperror"
+	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -46,10 +47,12 @@ import (
 //	    // Process each response message
 //	}
 type Client struct {
-	mutex      *sync.RWMutex
-	userAgent  string
-	httpClient *http.Client
-	tlsConfig  *tls.Config
+	mutex         *sync.RWMutex
+	userAgent     string
+	httpClient    *http.Client
+	tlsConfig     *tls.Config
+	marshalOpts   protojson.MarshalOptions
+	unmarshalOpts protojson.UnmarshalOptions
 }
 
 // ClientOption defines a function type for configuring the Client.
@@ -64,6 +67,13 @@ func NewClient(opts ...ClientOption) *Client {
 			Timeout: 30 * time.Second,
 		},
 		userAgent: "jrpc-client/1.0",
+		marshalOpts: protojson.MarshalOptions{
+			EmitUnpopulated: true,
+			UseEnumNumbers:  true,
+		},
+		unmarshalOpts: protojson.UnmarshalOptions{
+			DiscardUnknown: true,
+		},
 	}
 	for _, opt := range opts {
 		opt(client)
@@ -105,6 +115,26 @@ func WithTLSConfig(config *tls.Config) ClientOption {
 	}
 }
 
+// WithMarshalOptions sets custom protojson marshal options for the client.
+// These options control how protocol buffer messages are marshaled to JSON.
+func WithMarshalOptions(opts protojson.MarshalOptions) ClientOption {
+	return func(c *Client) {
+		c.mutex.Lock()
+		defer c.mutex.Unlock()
+		c.marshalOpts = opts
+	}
+}
+
+// WithUnmarshalOptions sets custom protojson unmarshal options for the client.
+// These options control how JSON is unmarshaled into protocol buffer messages.
+func WithUnmarshalOptions(opts protojson.UnmarshalOptions) ClientOption {
+	return func(c *Client) {
+		c.mutex.Lock()
+		defer c.mutex.Unlock()
+		c.unmarshalOpts = opts
+	}
+}
+
 // Call makes a unary RPC call to the specified service and method.
 // It marshals the request message to Protocol Buffer JSON format,
 // sends it via HTTP POST, and unmarshals the response.
@@ -131,7 +161,9 @@ func (c *Client) Call(ctx context.Context, u *url.URL, req, resp proto.Message, 
 	}
 
 	// Marshal request to JSON
-	reqBytes, err := marshalOpts.Marshal(req)
+	c.mutex.RLock()
+	reqBytes, err := c.marshalOpts.Marshal(req)
+	c.mutex.RUnlock()
 	if err != nil {
 		return apperror.NewError("failed to marshal request").AddError(err)
 	}
@@ -177,7 +209,9 @@ func (c *Client) Call(ctx context.Context, u *url.URL, req, resp proto.Message, 
 	}
 
 	// Unmarshal response
-	err = unmarshalOpts.Unmarshal(respBytes, resp)
+	c.mutex.RLock()
+	err = c.unmarshalOpts.Unmarshal(respBytes, resp)
+	c.mutex.RUnlock()
 	if err != nil {
 		return apperror.NewError("failed to unmarshal response").AddError(err)
 	}
@@ -493,7 +527,9 @@ func (c *Client) dialWebSocket(u *url.URL) (*websocket.Conn, *http.Response, err
 
 // writeWSMessage writes a proto message to the WebSocket connection.
 func (c *Client) writeWSMessage(conn *websocket.Conn, msg proto.Message) error {
-	data, err := marshalOpts.Marshal(msg)
+	c.mutex.RLock()
+	data, err := c.marshalOpts.Marshal(msg)
+	c.mutex.RUnlock()
 	if err != nil {
 		return err
 	}
@@ -513,5 +549,8 @@ func (c *Client) readWSMessage(conn *websocket.Conn, msg *proto.Message) error {
 		return apperror.NewError("message pointer cannot be nil")
 	}
 
-	return unmarshalOpts.Unmarshal(data, *msg)
+	c.mutex.RLock()
+	err = c.unmarshalOpts.Unmarshal(data, *msg)
+	c.mutex.RUnlock()
+	return err
 }
