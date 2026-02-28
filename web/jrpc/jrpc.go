@@ -517,9 +517,9 @@ func GetWebSocketConn(ctx context.Context) (*websocket.Conn, bool) {
 }
 
 func (s *Service) call(ctx context.Context, service, method string, req proto.Message) (any, error) {
-	methodInfo, exists := s.methods[service+"."+method]
-	if !exists {
-		return nil, apperror.Wrap(errMethodNotFound)
+	methodInfo, err := s.find(service, method)
+	if err != nil {
+		return nil, err
 	}
 
 	if !methodInfo.method.IsValid() {
