@@ -844,7 +844,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 							dataRows.Close()
 							return apperror.NewErrorf("invalid table name for insert").AddError(err)
 						}
-						_, err = fmt.Fprintf(backupFile, "INSERT INTO %s (%s) VALUES\n", quotedTableForInsert, colsStr))
+						_, err = fmt.Fprintf(backupFile, "INSERT INTO %s (%s) VALUES\n", quotedTableForInsert, colsStr)
 						if err != nil {
 							dataRows.Close()
 							return apperror.NewErrorf("failed to write insert header").AddError(err)
@@ -891,7 +891,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 						}
 					}
 
-					_, err = fmt.Fprintf(backupFile, "(%s)", strings.Join(valueStrings, ", ")))
+					_, err = fmt.Fprintf(backupFile, "(%s)", strings.Join(valueStrings, ", "))
 					if err != nil {
 						dataRows.Close()
 						return apperror.NewErrorf("failed to write values").AddError(err)
@@ -978,7 +978,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 				continue
 			}
 
-			_, err = fmt.Fprintf(backupFile, "\n-- Table: %s\n%s\n\n", table, createStmt))
+			_, err = fmt.Fprintf(backupFile, "\n-- Table: %s\n%s\n\n", table, createStmt)
 			if err != nil {
 				return apperror.NewErrorf("failed to write table schema").AddError(err)
 			}
@@ -1006,7 +1006,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 			}
 
 			if len(columns) > 0 {
-				_, err = fmt.Fprintf(backupFile, "-- Data for table: %s\n", table))
+				_, err = fmt.Fprintf(backupFile, "-- Data for table: %s\n", table)
 				if err != nil {
 					dataRows.Close()
 					return apperror.NewErrorf("failed to write data header").AddError(err)
