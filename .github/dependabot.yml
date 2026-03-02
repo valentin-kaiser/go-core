@@ -10,4 +10,4 @@ updates:
       gomod-dev:
         dependency-type: "development"
     assignees:
-      - "Valentin-Kaiser"
+      - "valentin-kaiser"
