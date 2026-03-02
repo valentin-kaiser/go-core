@@ -272,7 +272,9 @@ func TestBundleLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	b.Load(fsys, "i18n")
+	if err := b.Load(fsys, "i18n"); err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
 
 	if got := b.T(i18n.English, "foo"); got != "bar" {
 		t.Errorf("T after Load = %q, want %q", got, "bar")

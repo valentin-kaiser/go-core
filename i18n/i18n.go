@@ -32,7 +32,10 @@
 //
 //	func main() {
 //	    // Load translations from an embedded filesystem
-//	    bundle := i18n.New(i18n.WithFS(localesFS, "locales"))
+//	    bundle, err := i18n.New(i18n.WithFS(localesFS, "locales"))
+//	    if err != nil {
+//	        panic(err)
+//	    }
 //
 //	    // Translate a key
 //	    fmt.Println(bundle.T(i18n.German, "user.created"))
@@ -124,8 +127,8 @@ func WithEmbedFS(fsys embed.FS, dir string) Option {
 
 // WithJSON registers translations for a language from raw JSON bytes.
 // The JSON must be a flat object mapping string keys to string values.
-// This function panics if the JSON data is malformed, as it indicates
-// a programming error that should be caught during development.
+// If the JSON data is malformed, an error is returned when the bundle is created,
+// as it indicates a programming error that should be caught during development.
 func WithJSON(lang Language, data []byte) Option {
 	return func(b *Bundle) error {
 		err := b.loadJSON(lang, data)
