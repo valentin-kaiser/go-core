@@ -198,7 +198,6 @@ type Database[Q any] struct {
 	onConnectHandler []func(db *sql.DB) error
 	handlerMutex     sync.Mutex
 	logger           logging.Adapter
-	migrationMutex   sync.RWMutex
 	middlewares      []Middleware
 	middlewareMutex  sync.RWMutex
 	queries          any
@@ -755,8 +754,8 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 		}
 		defer backupFile.Close()
 
-		_, err = backupFile.WriteString(fmt.Sprintf("-- MySQL/MariaDB database backup\n-- DSN: %s\n-- Generated: %s\n\n",
-			d.dsn, time.Now().Format(time.RFC3339)))
+		_, err = fmt.Fprintf(backupFile, "-- MySQL/MariaDB database backup\n-- DSN: %s\n-- Generated: %s\n\n",
+			d.dsn, time.Now().Format(time.RFC3339))
 		if err != nil {
 			return apperror.NewErrorf("failed to write backup header").AddError(err)
 		}
@@ -795,8 +794,8 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 				continue
 			}
 
-			_, err = backupFile.WriteString(fmt.Sprintf("\n-- Table structure for %s\nDROP TABLE IF EXISTS `%s`;\n%s;\n\n",
-				table, table, createStmt))
+			_, err = fmt.Fprintf(backupFile, "\n-- Table structure for %s\nDROP TABLE IF EXISTS `%s`;\n%s;\n\n",
+				table, table, createStmt)
 			if err != nil {
 				return apperror.NewErrorf("failed to write table schema").AddError(err)
 			}
@@ -814,7 +813,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 			}
 
 			if len(columns) > 0 {
-				_, err = backupFile.WriteString(fmt.Sprintf("-- Data for table %s\n", table))
+				_, err = fmt.Fprintf(backupFile, "-- Data for table %s\n", table)
 				if err != nil {
 					dataRows.Close()
 					return apperror.NewErrorf("failed to write data header").AddError(err)
@@ -845,7 +844,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 							dataRows.Close()
 							return apperror.NewErrorf("invalid table name for insert").AddError(err)
 						}
-						_, err = backupFile.WriteString(fmt.Sprintf("INSERT INTO %s (%s) VALUES\n", quotedTableForInsert, colsStr))
+						_, err = fmt.Fprintf(backupFile, "INSERT INTO %s (%s) VALUES\n", quotedTableForInsert, colsStr)
 						if err != nil {
 							dataRows.Close()
 							return apperror.NewErrorf("failed to write insert header").AddError(err)
@@ -892,7 +891,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 						}
 					}
 
-					_, err = backupFile.WriteString(fmt.Sprintf("(%s)", strings.Join(valueStrings, ", ")))
+					_, err = fmt.Fprintf(backupFile, "(%s)", strings.Join(valueStrings, ", "))
 					if err != nil {
 						dataRows.Close()
 						return apperror.NewErrorf("failed to write values").AddError(err)
@@ -934,8 +933,8 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 		}
 		defer backupFile.Close()
 
-		_, err = backupFile.WriteString(fmt.Sprintf("-- PostgreSQL database backup\n-- DSN: %s\n-- Generated: %s\n\n",
-			d.dsn, time.Now().Format(time.RFC3339)))
+		_, err = fmt.Fprintf(backupFile, "-- PostgreSQL database backup\n-- DSN: %s\n-- Generated: %s\n\n",
+			d.dsn, time.Now().Format(time.RFC3339))
 		if err != nil {
 			return apperror.NewErrorf("failed to write backup header").AddError(err)
 		}
@@ -979,7 +978,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 				continue
 			}
 
-			_, err = backupFile.WriteString(fmt.Sprintf("\n-- Table: %s\n%s\n\n", table, createStmt))
+			_, err = fmt.Fprintf(backupFile, "\n-- Table: %s\n%s\n\n", table, createStmt)
 			if err != nil {
 				return apperror.NewErrorf("failed to write table schema").AddError(err)
 			}
@@ -1007,7 +1006,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 			}
 
 			if len(columns) > 0 {
-				_, err = backupFile.WriteString(fmt.Sprintf("-- Data for table: %s\n", table))
+				_, err = fmt.Fprintf(backupFile, "-- Data for table: %s\n", table)
 				if err != nil {
 					dataRows.Close()
 					return apperror.NewErrorf("failed to write data header").AddError(err)
@@ -1263,8 +1262,8 @@ func validateIdentifier(identifier string) error {
 		return apperror.NewErrorf("identifier cannot be empty")
 	}
 	for _, char := range identifier {
-		if !((char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
-			(char >= '0' && char <= '9') || char == '_' || char == '-' || char == '.') {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
+			(char < '0' || char > '9') && char != '_' && char != '-' && char != '.' {
 			return apperror.NewErrorf("invalid character in identifier: %c", char)
 		}
 	}

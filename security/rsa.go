@@ -404,10 +404,6 @@ type pbkdf2Params struct {
 	PRF            algorithmIdentifier `asn1:"optional"`
 }
 
-type aes256CBCParams struct {
-	IV []byte
-}
-
 type encryptedPrivateKeyInfo struct {
 	EncryptionAlgorithm algorithmIdentifier
 	EncryptedData       []byte
