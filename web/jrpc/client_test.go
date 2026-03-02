@@ -103,6 +103,44 @@ func TestClientWithUserAgent(t *testing.T) {
 	}
 }
 
+// TestClientWithMarshalOptions verifies that custom marshal options are applied correctly
+func TestClientWithMarshalOptions(t *testing.T) {
+	customOpts := protojson.MarshalOptions{
+		EmitUnpopulated: false,
+		UseEnumNumbers:  false,
+		UseProtoNames:   true,
+	}
+
+	client := NewClient(WithMarshalOptions(customOpts))
+
+	if client.marshalOpts.EmitUnpopulated != customOpts.EmitUnpopulated {
+		t.Errorf("expected EmitUnpopulated to be %v, got %v", customOpts.EmitUnpopulated, client.marshalOpts.EmitUnpopulated)
+	}
+	if client.marshalOpts.UseEnumNumbers != customOpts.UseEnumNumbers {
+		t.Errorf("expected UseEnumNumbers to be %v, got %v", customOpts.UseEnumNumbers, client.marshalOpts.UseEnumNumbers)
+	}
+	if client.marshalOpts.UseProtoNames != customOpts.UseProtoNames {
+		t.Errorf("expected UseProtoNames to be %v, got %v", customOpts.UseProtoNames, client.marshalOpts.UseProtoNames)
+	}
+}
+
+// TestClientWithUnmarshalOptions verifies that custom unmarshal options are applied correctly
+func TestClientWithUnmarshalOptions(t *testing.T) {
+	customOpts := protojson.UnmarshalOptions{
+		DiscardUnknown: false,
+		AllowPartial:   true,
+	}
+
+	client := NewClient(WithUnmarshalOptions(customOpts))
+
+	if client.unmarshalOpts.DiscardUnknown != customOpts.DiscardUnknown {
+		t.Errorf("expected DiscardUnknown to be %v, got %v", customOpts.DiscardUnknown, client.unmarshalOpts.DiscardUnknown)
+	}
+	if client.unmarshalOpts.AllowPartial != customOpts.AllowPartial {
+		t.Errorf("expected AllowPartial to be %v, got %v", customOpts.AllowPartial, client.unmarshalOpts.AllowPartial)
+	}
+}
+
 // TestClientCall verifies that the Call method makes correct HTTP requests
 func TestClientCall(t *testing.T) {
 	// Create a test server that returns a valid response
