@@ -50,6 +50,7 @@ import (
 	"path"
 	"strings"
 	"sync"
+	"sync/atomic"
 )
 
 // Language represents a BCP 47 language code.
@@ -67,12 +68,12 @@ const (
 // Supported returns all languages that have translations loaded in the global
 // default bundle. If no translations have been loaded yet the list may be empty.
 func Supported() []Language {
-	return global.Languages()
+	return globalBundle.Load().Languages()
 }
 
 // Valid checks if a language code has translations loaded in the global bundle.
 func Valid(lang string) bool {
-	return global.HasLanguage(Language(strings.ToLower(strings.TrimSpace(lang))))
+	return globalBundle.Load().HasLanguage(Language(strings.ToLower(strings.TrimSpace(lang))))
 }
 
 // Parse normalizes a language string. If the language has no translations
@@ -82,7 +83,7 @@ func Parse(lang string) Language {
 	if l == "" {
 		return Default
 	}
-	if global.HasLanguage(l) {
+	if globalBundle.Load().HasLanguage(l) {
 		return l
 	}
 	return Default
@@ -283,31 +284,40 @@ func loadDir(b *Bundle, fsys fs.FS, dir string) {
 // Global default bundle with package-level convenience functions
 // ---------------------------------------------------------------------------
 
-var global = New()
+var globalBundle atomic.Pointer[Bundle]
+
+func init() {
+	globalBundle.Store(New())
+}
 
 // SetDefault replaces the global default bundle. It should be called early
 // during application startup before any T/Tf calls are made.
+// This function is safe for concurrent use.
 func SetDefault(b *Bundle) {
-	global = b
+	globalBundle.Store(b)
 }
 
 // GetDefault returns the global default bundle.
+// This function is safe for concurrent use.
 func GetDefault() *Bundle {
-	return global
+	return globalBundle.Load()
 }
 
 // Init initialises the global default bundle with the given options, replacing
 // any previously loaded translations.
+// This function is safe for concurrent use.
 func Init(opts ...Option) {
-	global = New(opts...)
+	globalBundle.Store(New(opts...))
 }
 
 // T translates a key using the global default bundle.
+// This function is safe for concurrent use.
 func T(lang Language, key string) string {
-	return global.T(lang, key)
+	return globalBundle.Load().T(lang, key)
 }
 
 // Tf translates and formats a key using the global default bundle.
+// This function is safe for concurrent use.
 func Tf(lang Language, key string, args ...any) string {
-	return global.Tf(lang, key, args...)
+	return globalBundle.Load().Tf(lang, key, args...)
 }
