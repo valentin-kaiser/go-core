@@ -111,7 +111,8 @@ var upgrader = websocket.Upgrader{
 // bufferPool provides a pool of byte buffers for JSON operations
 var bufferPool = sync.Pool{
 	New: func() interface{} {
-		return make([]byte, 0, 1024) // Pre-allocate 1KB buffers
+		buf := make([]byte, 0, 1024) // Pre-allocate 1KB buffers
+		return &buf
 	},
 }
 
@@ -349,27 +350,33 @@ func (s *Service) unary(w http.ResponseWriter, r *http.Request) {
 
 	if r.ContentLength > 0 {
 		// Use buffer pool for body reading
-		buf, ok := bufferPool.Get().([]byte)
+		bufPtr, ok := bufferPool.Get().(*[]byte)
 		if !ok {
 			http.Error(w, "failed to get buffer from pool", http.StatusInternalServerError)
 			return
 		}
-		defer bufferPool.Put(buf[:0])
+		defer func() {
+			*bufPtr = (*bufPtr)[:0]
+			bufferPool.Put(bufPtr)
+		}()
 
+		buf := *bufPtr
 		// Ensure buffer is large enough
 		if cap(buf) < int(r.ContentLength) {
 			buf = make([]byte, r.ContentLength)
+			*bufPtr = buf
 		} else {
 			buf = buf[:r.ContentLength]
+			*bufPtr = buf
 		}
 
-		_, err := io.ReadFull(r.Body, buf)
+		_, err := io.ReadFull(r.Body, *bufPtr)
 		if err != nil {
 			http.Error(w, "failed to read request body", http.StatusBadRequest)
 			return
 		}
 
-		err = s.unmarshalOpts.Unmarshal(buf, msg)
+		err = s.unmarshalOpts.Unmarshal(*bufPtr, msg)
 		if err != nil {
 			http.Error(w, apperror.Wrap(err).Error(), http.StatusBadRequest)
 			return
@@ -570,11 +577,14 @@ func (s *Service) call(ctx context.Context, service, method string, req proto.Me
 	if !reqVal.Type().AssignableTo(wanted) {
 		// Convert via JSON round-trip using protojson to the expected type.
 		// Use buffer pool for better performance
-		buf, ok := bufferPool.Get().([]byte)
+		bufPtr, ok := bufferPool.Get().(*[]byte)
 		if !ok {
 			return nil, errors.New("failed to get buffer from pool")
 		}
-		defer bufferPool.Put(buf[:0])
+		defer func() {
+			*bufPtr = (*bufPtr)[:0]
+			bufferPool.Put(bufPtr)
+		}()
 
 		reqPtr := reflect.New(wanted.Elem())
 		b, err := s.marshalOpts.Marshal(req)

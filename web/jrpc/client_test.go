@@ -259,7 +259,7 @@ func TestClientCallNilResponse(t *testing.T) {
 // TestClientCallServerError verifies that server errors are handled correctly
 func TestClientCallServerError(t *testing.T) {
 	// Create a test server that returns an error
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte("internal server error"))
 	}))
@@ -285,7 +285,7 @@ func TestClientCallServerError(t *testing.T) {
 // TestClientCallContextCancellation verifies that context cancellation works
 func TestClientCallContextCancellation(t *testing.T) {
 	// Create a test server that delays response
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(2 * time.Second)
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("{}"))
@@ -311,7 +311,7 @@ func TestClientCallContextCancellation(t *testing.T) {
 // TestClientCallInvalidJSON verifies that invalid JSON responses are handled
 func TestClientCallInvalidJSON(t *testing.T) {
 	// Create a test server that returns invalid JSON
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("not valid json"))
@@ -333,7 +333,7 @@ func TestClientCallInvalidJSON(t *testing.T) {
 // BenchmarkClientCall benchmarks the client call performance
 func BenchmarkClientCall(b *testing.B) {
 	// Create a test server
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("{}"))
@@ -446,7 +446,7 @@ func TestClientBidirectionalStreamNilChannels(t *testing.T) {
 // Helper function to create a WebSocket test server
 func newWSTestServer(t *testing.T, handler func(*websocket.Conn)) *httptest.Server {
 	upgrader := websocket.Upgrader{
-		CheckOrigin: func(r *http.Request) bool { return true },
+		CheckOrigin: func(_ *http.Request) bool { return true },
 	}
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
