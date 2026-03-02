@@ -7,7 +7,9 @@ import (
 
 func TestParse(t *testing.T) {
 	// Parse depends on the global bundle, set it up first
-	Init(WithMap(English, map[string]string{"k": "v"}), WithMap(German, map[string]string{"k": "v"}))
+	if err := Init(WithMap(English, map[string]string{"k": "v"}), WithMap(German, map[string]string{"k": "v"})); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
 	defer Init()
 
 	tests := []struct {
@@ -32,7 +34,9 @@ func TestParse(t *testing.T) {
 
 func TestValid(t *testing.T) {
 	// Valid depends on the global bundle
-	Init(WithMap(English, map[string]string{"k": "v"}), WithMap(German, map[string]string{"k": "v"}))
+	if err := Init(WithMap(English, map[string]string{"k": "v"}), WithMap(German, map[string]string{"k": "v"})); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
 	defer Init()
 
 	tests := []struct {
@@ -54,7 +58,9 @@ func TestValid(t *testing.T) {
 }
 
 func TestSupported(t *testing.T) {
-	Init(WithMap(English, map[string]string{"a": "b"}), WithMap(German, map[string]string{"a": "c"}))
+	if err := Init(WithMap(English, map[string]string{"a": "b"}), WithMap(German, map[string]string{"a": "c"})); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
 	defer Init()
 
 	langs := Supported()
@@ -71,7 +77,7 @@ func TestSupported(t *testing.T) {
 }
 
 func TestBundleT(t *testing.T) {
-	b := New(
+	b, err := New(
 		WithMap(English, map[string]string{
 			"hello":   "Hello",
 			"goodbye": "Goodbye",
@@ -80,6 +86,9 @@ func TestBundleT(t *testing.T) {
 			"hello": "Hallo",
 		}),
 	)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 
 	// Direct lookup
 	if got := b.T(English, "hello"); got != "Hello" {
@@ -101,9 +110,12 @@ func TestBundleT(t *testing.T) {
 }
 
 func TestBundleTf(t *testing.T) {
-	b := New(WithMap(English, map[string]string{
+	b, err := New(WithMap(English, map[string]string{
 		"greeting": "Hello, %s! You have %d messages.",
 	}))
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 
 	got := b.Tf(English, "greeting", "Alice", 5)
 	want := "Hello, Alice! You have 5 messages."
@@ -113,7 +125,10 @@ func TestBundleTf(t *testing.T) {
 }
 
 func TestBundleHas(t *testing.T) {
-	b := New(WithMap(English, map[string]string{"key": "val"}))
+	b, err := New(WithMap(English, map[string]string{"key": "val"}))
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 
 	if !b.Has(English, "key") {
 		t.Error("Has(English, key) = false, want true")
@@ -127,10 +142,13 @@ func TestBundleHas(t *testing.T) {
 }
 
 func TestBundleLanguages(t *testing.T) {
-	b := New(
+	b, err := New(
 		WithMap(English, map[string]string{"a": "b"}),
 		WithMap(German, map[string]string{"a": "c"}),
 	)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 	langs := b.Languages()
 	if len(langs) != 2 {
 		t.Fatalf("expected 2 languages, got %d", len(langs))
@@ -138,7 +156,10 @@ func TestBundleLanguages(t *testing.T) {
 }
 
 func TestBundleRegister(t *testing.T) {
-	b := New()
+	b, err := New()
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 	b.Register(English, map[string]string{"hello": "Hello"})
 
 	if got := b.T(English, "hello"); got != "Hello" {
@@ -157,8 +178,11 @@ func TestBundleRegister(t *testing.T) {
 }
 
 func TestBundleRegisterJSON(t *testing.T) {
-	b := New()
-	err := b.RegisterJSON(English, []byte(`{"hello": "Hello", "world": "World"}`))
+	b, err := New()
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	err = b.RegisterJSON(English, []byte(`{"hello": "Hello", "world": "World"}`))
 	if err != nil {
 		t.Fatalf("RegisterJSON failed: %v", err)
 	}
@@ -174,9 +198,19 @@ func TestBundleRegisterJSON(t *testing.T) {
 }
 
 func TestWithJSON(t *testing.T) {
-	b := New(WithJSON(German, []byte(`{"test": "Test"}`)))
+	b, err := New(WithJSON(German, []byte(`{"test": "Test"}`)))
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 	if got := b.T(German, "test"); got != "Test" {
 		t.Errorf("T = %q, want %q", got, "Test")
+	}
+}
+
+func TestWithJSONReturnsErrorOnMalformedJSON(t *testing.T) {
+	_, err := New(WithJSON(English, []byte(`{invalid json}`)))
+	if err == nil {
+		t.Error("expected error for malformed JSON, got nil")
 	}
 }
 
@@ -186,7 +220,10 @@ func TestWithFS(t *testing.T) {
 		"locales/de.json": &fstest.MapFile{Data: []byte(`{"hello": "Hallo"}`)},
 	}
 
-	b := New(WithFS(fsys, "locales"))
+	b, err := New(WithFS(fsys, "locales"))
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 	if got := b.T(English, "hello"); got != "Hello" {
 		t.Errorf("T(English) = %q, want %q", got, "Hello")
 	}
@@ -195,12 +232,44 @@ func TestWithFS(t *testing.T) {
 	}
 }
 
+func TestWithFSSkipsMalformedJSON(t *testing.T) {
+	fsys := fstest.MapFS{
+		"locales/en.json":      &fstest.MapFile{Data: []byte(`{"valid": "Valid"}`)},
+		"locales/invalid.json": &fstest.MapFile{Data: []byte(`{malformed json}`)},
+		"locales/de.json":      &fstest.MapFile{Data: []byte(`{"valid": "Gültig"}`)},
+	}
+
+	// Should not error; should silently skip invalid.json
+	b, err := New(WithFS(fsys, "locales"))
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	if got := b.T(English, "valid"); got != "Valid" {
+		t.Errorf("T(English) = %q, want %q", got, "Valid")
+	}
+	if got := b.T(German, "valid"); got != "Gültig" {
+		t.Errorf("T(German) = %q, want %q", got, "Gültig")
+	}
+
+	// Invalid language should not be loaded
+	langs := b.Languages()
+	for _, lang := range langs {
+		if lang == "invalid" {
+			t.Error("Malformed JSON file should not have been loaded")
+		}
+	}
+}
+
 func TestBundleLoad(t *testing.T) {
 	fsys := fstest.MapFS{
 		"i18n/en.json": &fstest.MapFile{Data: []byte(`{"foo": "bar"}`)},
 	}
 
-	b := New()
+	b, err := New()
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 	b.Load(fsys, "i18n")
 
 	if got := b.T(English, "foo"); got != "bar" {
@@ -210,10 +279,12 @@ func TestBundleLoad(t *testing.T) {
 
 func TestGlobalFunctions(t *testing.T) {
 	// Set up a global bundle
-	Init(WithMap(English, map[string]string{
+	if err := Init(WithMap(English, map[string]string{
 		"global.key": "Global Value",
 		"format.key": "Hello %s",
-	}))
+	})); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
 
 	if got := T(English, "global.key"); got != "Global Value" {
 		t.Errorf("global T = %q, want %q", got, "Global Value")
@@ -227,7 +298,10 @@ func TestGlobalFunctions(t *testing.T) {
 }
 
 func TestSetDefault(t *testing.T) {
-	b := New(WithMap(German, map[string]string{"x": "y"}))
+	b, err := New(WithMap(German, map[string]string{"x": "y"}))
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 	SetDefault(b)
 
 	if got := T(German, "x"); got != "y" {
@@ -248,11 +322,14 @@ func TestSetDefault(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestArbitraryLanguage(t *testing.T) {
-	b := New(
+	b, err := New(
 		WithMap("fr", map[string]string{"hello": "Bonjour"}),
 		WithMap("ja", map[string]string{"hello": "こんにちは"}),
 		WithMap(English, map[string]string{"hello": "Hello"}),
 	)
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 
 	if got := b.T("fr", "hello"); got != "Bonjour" {
 		t.Errorf("T(fr) = %q, want %q", got, "Bonjour")
@@ -269,11 +346,13 @@ func TestArbitraryLanguage(t *testing.T) {
 }
 
 func TestParseArbitraryLanguage(t *testing.T) {
-	Init(
+	if err := Init(
 		WithMap(English, map[string]string{"k": "v"}),
 		WithMap("fr", map[string]string{"k": "v"}),
 		WithMap("zh-cn", map[string]string{"k": "v"}),
-	)
+	); err != nil {
+		t.Fatalf("Init failed: %v", err)
+	}
 	defer Init()
 
 	if got := Parse("fr"); got != "fr" {
@@ -300,7 +379,10 @@ func TestWithFSAutoDiscovery(t *testing.T) {
 		"locales/readme.txt": &fstest.MapFile{Data: []byte(`not a json locale`)},
 	}
 
-	b := New(WithFS(fsys, "locales"))
+	b, err := New(WithFS(fsys, "locales"))
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
 
 	expected := map[Language]string{
 		"en":    "Hello",

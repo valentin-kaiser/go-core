@@ -51,6 +51,8 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+
+	"github.com/valentin-kaiser/go-core/apperror"
 )
 
 // Language represents a BCP 47 language code.
@@ -97,7 +99,7 @@ type Bundle struct {
 }
 
 // Option configures a Bundle during creation.
-type Option func(*Bundle)
+type Option func(*Bundle) error
 
 // WithFS loads translation files from an embed.FS (or any fs.FS). It scans the
 // given directory for JSON files named by language code (e.g. "en.json",
@@ -105,8 +107,12 @@ type Option func(*Bundle)
 // supported — the language code is derived from the filename.
 // Files that cannot be read or parsed are silently skipped.
 func WithFS(fsys fs.FS, dir string) Option {
-	return func(b *Bundle) {
-		loadDir(b, fsys, dir)
+	return func(b *Bundle) error {
+		err := loadDir(b, fsys, dir)
+		if err != nil {
+			return apperror.Wrap(err)
+		}
+		return nil
 	}
 }
 
@@ -118,15 +124,21 @@ func WithEmbedFS(fsys embed.FS, dir string) Option {
 
 // WithJSON registers translations for a language from raw JSON bytes.
 // The JSON must be a flat object mapping string keys to string values.
+// This function panics if the JSON data is malformed, as it indicates
+// a programming error that should be caught during development.
 func WithJSON(lang Language, data []byte) Option {
-	return func(b *Bundle) {
-		b.loadJSON(lang, data)
+	return func(b *Bundle) error {
+		err := b.loadJSON(lang, data)
+		if err != nil {
+			return apperror.NewErrorf("failed to load JSON for language %q: %v", lang, err)
+		}
+		return nil
 	}
 }
 
 // WithMap registers translations for a language from a Go map.
 func WithMap(lang Language, translations map[string]string) Option {
-	return func(b *Bundle) {
+	return func(b *Bundle) error {
 		b.mu.Lock()
 		defer b.mu.Unlock()
 		if b.translations[lang] == nil {
@@ -135,18 +147,22 @@ func WithMap(lang Language, translations map[string]string) Option {
 		for k, v := range translations {
 			b.translations[lang][k] = v
 		}
+		return nil
 	}
 }
 
 // New creates a new Bundle and applies the given options to load translations.
-func New(opts ...Option) *Bundle {
+func New(opts ...Option) (*Bundle, error) {
 	b := &Bundle{
 		translations: make(map[Language]map[string]string),
 	}
 	for _, opt := range opts {
-		opt(b)
+		err := opt(b)
+		if err != nil {
+			return nil, apperror.Wrap(err)
+		}
 	}
-	return b
+	return b, nil
 }
 
 // T translates a key for the given language. If the key is not found in the
@@ -215,8 +231,12 @@ func (b *Bundle) RegisterJSON(lang Language, data []byte) error {
 
 // Load loads translations from an fs.FS at runtime. It scans the directory for
 // all *.json files and derives the language code from each filename.
-func (b *Bundle) Load(fsys fs.FS, dir string) {
-	loadDir(b, fsys, dir)
+func (b *Bundle) Load(fsys fs.FS, dir string) error {
+	err := loadDir(b, fsys, dir)
+	if err != nil {
+		return apperror.Wrap(err)
+	}
+	return nil
 }
 
 // Languages returns all languages that have at least one translation loaded.
@@ -240,10 +260,11 @@ func (b *Bundle) HasLanguage(lang Language) bool {
 }
 
 // loadJSON parses a flat JSON object and merges it into the bundle for the given language.
-func (b *Bundle) loadJSON(lang Language, data []byte) {
+// Returns an error if the JSON cannot be parsed.
+func (b *Bundle) loadJSON(lang Language, data []byte) error {
 	m := make(map[string]string)
 	if err := json.Unmarshal(data, &m); err != nil {
-		return
+		return err
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -253,15 +274,16 @@ func (b *Bundle) loadJSON(lang Language, data []byte) {
 	for k, v := range m {
 		b.translations[lang][k] = v
 	}
+	return nil
 }
 
 // loadDir scans a directory in an fs.FS for *.json files and loads each one
 // into the bundle. The language code is derived from the filename (e.g.
 // "en.json" → "en", "zh-CN.json" → "zh-cn").
-func loadDir(b *Bundle, fsys fs.FS, dir string) {
+func loadDir(b *Bundle, fsys fs.FS, dir string) error {
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
-		return
+		return apperror.NewErrorf("failed to read directory %q: %v", dir, err)
 	}
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -276,8 +298,9 @@ func loadDir(b *Bundle, fsys fs.FS, dir string) {
 		if err != nil {
 			continue
 		}
-		b.loadJSON(lang, data)
+		_ = b.loadJSON(lang, data) // Silently skip files with parse errors
 	}
+	return nil
 }
 
 // ---------------------------------------------------------------------------
@@ -287,7 +310,11 @@ func loadDir(b *Bundle, fsys fs.FS, dir string) {
 var globalBundle atomic.Pointer[Bundle]
 
 func init() {
-	globalBundle.Store(New())
+	bundle, err := New()
+	if err != nil {
+		panic(fmt.Sprintf("failed to initialize i18n bundle: %v", err))
+	}
+	globalBundle.Store(bundle)
 }
 
 // SetDefault replaces the global default bundle. It should be called early
@@ -306,8 +333,13 @@ func GetDefault() *Bundle {
 // Init initialises the global default bundle with the given options, replacing
 // any previously loaded translations.
 // This function is safe for concurrent use.
-func Init(opts ...Option) {
-	globalBundle.Store(New(opts...))
+func Init(opts ...Option) error {
+	bundle, err := New(opts...)
+	if err != nil {
+		return apperror.Wrap(err)
+	}
+	globalBundle.Store(bundle)
+	return nil
 }
 
 // T translates a key using the global default bundle.
