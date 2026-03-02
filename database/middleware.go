@@ -80,6 +80,9 @@ func (c *connection) BeginTx(ctx context.Context, opts d.TxOptions) (d.Tx, error
 	if connBeginTx, ok := c.conn.(d.ConnBeginTx); ok {
 		return connBeginTx.BeginTx(ctx, opts)
 	}
+	// Fallback for drivers that don't implement ConnBeginTx
+	// This ignores context and options but maintains backward compatibility
+	//nolint:staticcheck // SA1019: Fallback for legacy drivers
 	return c.conn.Begin()
 }
 
