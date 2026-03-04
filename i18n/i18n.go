@@ -8,12 +8,34 @@
 // Consumers are responsible for supplying their own translation files. The package
 // does not embed any locale data itself.
 //
-// Translation files should be flat JSON objects with dot-separated keys:
+// Translation files must be nested JSON objects. Dot-separated lookup keys are
+// derived from the nesting hierarchy:
 //
 //	{
-//	    "user.created": "User created successfully",
-//	    "user.not_found": "User not found",
-//	    "error.internal": "An internal error occurred."
+//	    "user": {
+//	        "created": "User created successfully",
+//	        "not_found": "User not found"
+//	    },
+//	    "error": {
+//	        "internal": "An internal error occurred."
+//	    }
+//	}
+//
+// The keys above are accessed as "user.created", "user.not_found",
+// and "error.internal" respectively. Flat JSON (e.g.
+// {"user.created": "..."}) is no longer supported.
+//
+// Example translation file (locales/en.json):
+//
+//	{
+//	    "user": {
+//	        "created": "User created successfully",
+//	        "not_found": "User not found"
+//	    },
+//	    "error": {
+//	        "internal": "An internal error occurred.",
+//	        "details": "Error in %s at line %d."
+//	    }
 //	}
 //
 // Example usage:
@@ -37,7 +59,7 @@
 //	        panic(err)
 //	    }
 //
-//	    // Translate a key
+//	    // Translate a key derived from the JSON nesting hierarchy
 //	    fmt.Println(bundle.T(i18n.German, "user.created"))
 //
 //	    // Translate with format arguments
@@ -126,9 +148,11 @@ func WithEmbedFS(fsys embed.FS, dir string) Option {
 }
 
 // WithJSON registers translations for a language from raw JSON bytes.
-// The JSON must be a flat object mapping string keys to string values.
-// If the JSON data is malformed, an error is returned when the bundle is created,
-// as it indicates a programming error that should be caught during development.
+// The JSON must be a nested object; dot-separated lookup keys are derived from
+// the nesting hierarchy (e.g. {"page": {"title": "Home"}} is accessed as
+// "page.title"). If the JSON data is malformed, an error is returned when the
+// bundle is created, as it indicates a programming error that should be caught
+// during development.
 func WithJSON(lang Language, data []byte) Option {
 	return func(b *Bundle) error {
 		err := b.loadJSON(lang, data)
@@ -223,11 +247,15 @@ func (b *Bundle) Register(lang Language, translations map[string]string) {
 }
 
 // RegisterJSON adds translations for a language from raw JSON bytes at runtime.
+// The JSON must be a nested object; keys are flattened to dot-separated strings
+// internally (e.g. {"page": {"title": "Home"}} becomes "page.title").
 func (b *Bundle) RegisterJSON(lang Language, data []byte) error {
-	m := make(map[string]string)
-	if err := json.Unmarshal(data, &m); err != nil {
+	raw := make(map[string]any)
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("i18n: failed to parse JSON for language %q: %w", lang, err)
 	}
+	m := make(map[string]string)
+	flattenJSON("", raw, m)
 	b.Register(lang, m)
 	return nil
 }
@@ -262,13 +290,16 @@ func (b *Bundle) HasLanguage(lang Language) bool {
 	return ok
 }
 
-// loadJSON parses a flat JSON object and merges it into the bundle for the given language.
+// loadJSON parses a nested JSON object, flattens it to dot-separated keys, and
+// merges the result into the bundle for the given language.
 // Returns an error if the JSON cannot be parsed.
 func (b *Bundle) loadJSON(lang Language, data []byte) error {
-	m := make(map[string]string)
-	if err := json.Unmarshal(data, &m); err != nil {
+	raw := make(map[string]any)
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
+	m := make(map[string]string)
+	flattenJSON("", raw, m)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.translations[lang] == nil {
@@ -278,6 +309,25 @@ func (b *Bundle) loadJSON(lang Language, data []byte) error {
 		b.translations[lang][k] = v
 	}
 	return nil
+}
+
+// flattenJSON recursively walks a nested map[string]any and writes dot-separated
+// key paths to out. Leaf values are converted to strings via fmt.Sprint.
+func flattenJSON(prefix string, raw map[string]any, out map[string]string) {
+	for k, v := range raw {
+		key := k
+		if prefix != "" {
+			key = prefix + "." + k
+		}
+		switch val := v.(type) {
+		case map[string]any:
+			flattenJSON(key, val, out)
+		case string:
+			out[key] = val
+		default:
+			out[key] = fmt.Sprint(val)
+		}
+	}
 }
 
 // loadDir scans a directory in an fs.FS for *.json files and loads each one
