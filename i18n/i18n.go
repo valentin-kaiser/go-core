@@ -25,6 +25,20 @@
 // and "error.internal" respectively. Flat JSON (e.g.
 // {"user.created": "..."}) is no longer supported.
 //
+// # Context-aware translation
+//
+// The [Bundle.TCTX] and [Bundle.TfCTX] methods (and their global counterparts
+// [TCTX] and [TfCTX]) resolve the language automatically from a
+// [context.Context]. The resolution priority is:
+//  1. A [Language] stored directly via [WithLanguage].
+//  2. An *[net/http.Request] stored via [WithRequest]; its Accept-Language
+//     header is parsed and matched against the bundle's loaded languages.
+//  3. [Default] as a last resort.
+//
+// The [Middleware] function provides a standard HTTP middleware that parses the
+// Accept-Language header on every request and injects the resolved language
+// into the context, so downstream handlers can simply call TCTX.
+//
 // Example translation file (locales/en.json):
 //
 //	{
@@ -68,6 +82,7 @@
 package i18n
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -219,6 +234,49 @@ func (b *Bundle) T(lang Language, key string) string {
 // fmt.Sprintf.
 func (b *Bundle) Tf(lang Language, key string, args ...any) string {
 	return fmt.Sprintf(b.T(lang, key), args...)
+}
+
+// TCTX translates a key using the language resolved from the given context.
+//
+// The resolution order is:
+//  1. A [Language] stored directly in the context via [WithLanguage].
+//  2. An [*http.Request] stored in the context via [WithRequest]; the
+//     Accept-Language header is parsed and matched against the bundle's
+//     loaded languages.
+//  3. [Default] if neither of the above yields a result.
+func (b *Bundle) TCTX(ctx context.Context, key string) string {
+	return b.T(b.resolveLanguage(ctx), key)
+}
+
+// TfCTX translates a key with format arguments using the language resolved from
+// the given context. See [Bundle.TCTX] for the resolution order.
+func (b *Bundle) TfCTX(ctx context.Context, key string, args ...any) string {
+	return b.Tf(b.resolveLanguage(ctx), key, args...)
+}
+
+// resolveLanguage determines the Language from a context using the following
+// priority chain:
+//  1. Direct Language from [WithLanguage]
+//  2. Accept-Language header from an *http.Request stored via [WithRequest]
+//  3. [Default]
+func (b *Bundle) resolveLanguage(ctx context.Context) Language {
+	// 1. Direct language from context.
+	if lang, ok := LanguageFromContext(ctx); ok && lang != "" {
+		if b.HasLanguage(lang) {
+			return lang
+		}
+	}
+
+	// 2. Accept-Language from request in context.
+	if r, ok := RequestFromContext(ctx); ok && r != nil {
+		lang := resolveFromRequest(b, r)
+		if lang != Default || b.HasLanguage(Default) {
+			return lang
+		}
+	}
+
+	// 3. Fallback.
+	return Default
 }
 
 // Has reports whether a translation exists for the given key and language.
@@ -405,4 +463,19 @@ func T(lang Language, key string) string {
 // This function is safe for concurrent use.
 func Tf(lang Language, key string, args ...any) string {
 	return globalBundle.Load().Tf(lang, key, args...)
+}
+
+// TCTX translates a key using the language resolved from the given context
+// and the global default bundle. See [Bundle.TCTX] for the resolution order.
+// This function is safe for concurrent use.
+func TCTX(ctx context.Context, key string) string {
+	return globalBundle.Load().TCTX(ctx, key)
+}
+
+// TfCTX translates and formats a key using the language resolved from the
+// given context and the global default bundle. See [Bundle.TCTX] for the
+// resolution order.
+// This function is safe for concurrent use.
+func TfCTX(ctx context.Context, key string, args ...any) string {
+	return globalBundle.Load().TfCTX(ctx, key, args...)
 }
