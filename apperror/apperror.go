@@ -32,11 +32,13 @@
 package apperror
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"strings"
 
 	"github.com/valentin-kaiser/go-core/flag"
+	"github.com/valentin-kaiser/go-core/i18n"
 )
 
 var (
@@ -108,6 +110,11 @@ func NewErrorf(format string, a ...interface{}) Error {
 	}
 	e.Trace = trace(e)
 	return e
+}
+
+// NewErrorT creates a new Error instance with the translated and formated message
+func NewErrorT(ctx context.Context, key string, a ...interface{}) Error {
+	return NewErrorf(i18n.TCTX(ctx, key), a...)
 }
 
 // Wrap wraps an error and adds a stack trace to it

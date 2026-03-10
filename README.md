@@ -31,6 +31,13 @@
 - Abstraction over GORM with automatic connection handling
 - Schema migrations, transaction management, and multi-database support
 
+### Internationalization (i18n)
+- Lightweight translation bundle supporting any BCP 47 language code
+- Nested JSON translation files — dot-separated lookup keys derived from object hierarchy
+- Fallback to default language (English) when a key is missing
+- Load from embedded filesystems, raw JSON bytes, or Go maps
+- Global default bundle with package-level `T` / `Tf` helpers
+
 ### Flags & Interruption
 - Simple API for command-line flag parsing
 - Graceful shutdown and panic recovery utilities
@@ -79,6 +86,7 @@ go get github.com/valentin-kaiser/go-core
 - `config`: Structured configuration management
 - `database`: Database abstraction and migrations
 - `flag`: Command-line flag parsing
+- `i18n`: Internationalization and translation
 - `interruption`: Panic recovery and graceful shutdown
 - `logging`: Flexible logging adapters and registry
 - `machine`: Machine identification and hardware info
