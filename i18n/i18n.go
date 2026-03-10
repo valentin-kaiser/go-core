@@ -91,8 +91,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-
-	"github.com/valentin-kaiser/go-core/apperror"
 )
 
 // Language represents a BCP 47 language code.
@@ -150,7 +148,7 @@ func WithFS(fsys fs.FS, dir string) Option {
 	return func(b *Bundle) error {
 		err := loadDir(b, fsys, dir)
 		if err != nil {
-			return apperror.Wrap(err)
+			return err
 		}
 		return nil
 	}
@@ -172,7 +170,7 @@ func WithJSON(lang Language, data []byte) Option {
 	return func(b *Bundle) error {
 		err := b.loadJSON(lang, data)
 		if err != nil {
-			return apperror.NewErrorf("failed to load JSON for language %q: %v", lang, err)
+			return err
 		}
 		return nil
 	}
@@ -201,7 +199,7 @@ func New(opts ...Option) (*Bundle, error) {
 	for _, opt := range opts {
 		err := opt(b)
 		if err != nil {
-			return nil, apperror.Wrap(err)
+			return nil, err
 		}
 	}
 	return b, nil
@@ -323,7 +321,7 @@ func (b *Bundle) RegisterJSON(lang Language, data []byte) error {
 func (b *Bundle) Load(fsys fs.FS, dir string) error {
 	err := loadDir(b, fsys, dir)
 	if err != nil {
-		return apperror.Wrap(err)
+		return err
 	}
 	return nil
 }
@@ -394,7 +392,7 @@ func flattenJSON(prefix string, raw map[string]any, out map[string]string) {
 func loadDir(b *Bundle, fsys fs.FS, dir string) error {
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
-		return apperror.NewErrorf("failed to read directory %q: %v", dir, err)
+		return err
 	}
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -447,7 +445,7 @@ func GetDefault() *Bundle {
 func Init(opts ...Option) error {
 	bundle, err := New(opts...)
 	if err != nil {
-		return apperror.Wrap(err)
+		return err
 	}
 	globalBundle.Store(bundle)
 	return nil
