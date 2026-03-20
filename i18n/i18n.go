@@ -8,12 +8,48 @@
 // Consumers are responsible for supplying their own translation files. The package
 // does not embed any locale data itself.
 //
-// Translation files should be flat JSON objects with dot-separated keys:
+// Translation files must be nested JSON objects. Dot-separated lookup keys are
+// derived from the nesting hierarchy:
 //
 //	{
-//	    "user.created": "User created successfully",
-//	    "user.not_found": "User not found",
-//	    "error.internal": "An internal error occurred."
+//	    "user": {
+//	        "created": "User created successfully",
+//	        "not_found": "User not found"
+//	    },
+//	    "error": {
+//	        "internal": "An internal error occurred."
+//	    }
+//	}
+//
+// The keys above are accessed as "user.created", "user.not_found",
+// and "error.internal" respectively. Flat JSON (e.g.
+// {"user.created": "..."}) is no longer supported.
+//
+// # Context-aware translation
+//
+// The [Bundle.TCTX] and [Bundle.TfCTX] methods (and their global counterparts
+// [TCTX] and [TfCTX]) resolve the language automatically from a
+// [context.Context]. The resolution priority is:
+//  1. A [Language] stored directly via [WithLanguage].
+//  2. An *[net/http.Request] stored via [WithRequest]; its Accept-Language
+//     header is parsed and matched against the bundle's loaded languages.
+//  3. [Default] as a last resort.
+//
+// The [Middleware] function provides a standard HTTP middleware that parses the
+// Accept-Language header on every request and injects the resolved language
+// into the context, so downstream handlers can simply call TCTX.
+//
+// Example translation file (locales/en.json):
+//
+//	{
+//	    "user": {
+//	        "created": "User created successfully",
+//	        "not_found": "User not found"
+//	    },
+//	    "error": {
+//	        "internal": "An internal error occurred.",
+//	        "details": "Error in %s at line %d."
+//	    }
 //	}
 //
 // Example usage:
@@ -37,7 +73,7 @@
 //	        panic(err)
 //	    }
 //
-//	    // Translate a key
+//	    // Translate a key derived from the JSON nesting hierarchy
 //	    fmt.Println(bundle.T(i18n.German, "user.created"))
 //
 //	    // Translate with format arguments
@@ -46,6 +82,7 @@
 package i18n
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
@@ -54,8 +91,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-
-	"github.com/valentin-kaiser/go-core/apperror"
 )
 
 // Language represents a BCP 47 language code.
@@ -113,7 +148,7 @@ func WithFS(fsys fs.FS, dir string) Option {
 	return func(b *Bundle) error {
 		err := loadDir(b, fsys, dir)
 		if err != nil {
-			return apperror.Wrap(err)
+			return err
 		}
 		return nil
 	}
@@ -126,14 +161,16 @@ func WithEmbedFS(fsys embed.FS, dir string) Option {
 }
 
 // WithJSON registers translations for a language from raw JSON bytes.
-// The JSON must be a flat object mapping string keys to string values.
-// If the JSON data is malformed, an error is returned when the bundle is created,
-// as it indicates a programming error that should be caught during development.
+// The JSON must be a nested object; dot-separated lookup keys are derived from
+// the nesting hierarchy (e.g. {"page": {"title": "Home"}} is accessed as
+// "page.title"). If the JSON data is malformed, an error is returned when the
+// bundle is created, as it indicates a programming error that should be caught
+// during development.
 func WithJSON(lang Language, data []byte) Option {
 	return func(b *Bundle) error {
 		err := b.loadJSON(lang, data)
 		if err != nil {
-			return apperror.NewErrorf("failed to load JSON for language %q: %v", lang, err)
+			return err
 		}
 		return nil
 	}
@@ -162,7 +199,7 @@ func New(opts ...Option) (*Bundle, error) {
 	for _, opt := range opts {
 		err := opt(b)
 		if err != nil {
-			return nil, apperror.Wrap(err)
+			return nil, err
 		}
 	}
 	return b, nil
@@ -197,6 +234,49 @@ func (b *Bundle) Tf(lang Language, key string, args ...any) string {
 	return fmt.Sprintf(b.T(lang, key), args...)
 }
 
+// TCTX translates a key using the language resolved from the given context.
+//
+// The resolution order is:
+//  1. A [Language] stored directly in the context via [WithLanguage].
+//  2. An [*http.Request] stored in the context via [WithRequest]; the
+//     Accept-Language header is parsed and matched against the bundle's
+//     loaded languages.
+//  3. [Default] if neither of the above yields a result.
+func (b *Bundle) TCTX(ctx context.Context, key string) string {
+	return b.T(b.resolveLanguage(ctx), key)
+}
+
+// TfCTX translates a key with format arguments using the language resolved from
+// the given context. See [Bundle.TCTX] for the resolution order.
+func (b *Bundle) TfCTX(ctx context.Context, key string, args ...any) string {
+	return b.Tf(b.resolveLanguage(ctx), key, args...)
+}
+
+// resolveLanguage determines the Language from a context using the following
+// priority chain:
+//  1. Direct Language from [WithLanguage]
+//  2. Accept-Language header from an *http.Request stored via [WithRequest]
+//  3. [Default]
+func (b *Bundle) resolveLanguage(ctx context.Context) Language {
+	// 1. Direct language from context.
+	if lang, ok := LanguageFromContext(ctx); ok && lang != "" {
+		if b.HasLanguage(lang) {
+			return lang
+		}
+	}
+
+	// 2. Accept-Language from request in context.
+	if r, ok := RequestFromContext(ctx); ok && r != nil {
+		lang := resolveFromRequest(b, r)
+		if lang != Default || b.HasLanguage(Default) {
+			return lang
+		}
+	}
+
+	// 3. Fallback.
+	return Default
+}
+
 // Has reports whether a translation exists for the given key and language.
 func (b *Bundle) Has(lang Language, key string) bool {
 	b.mu.RLock()
@@ -223,10 +303,16 @@ func (b *Bundle) Register(lang Language, translations map[string]string) {
 }
 
 // RegisterJSON adds translations for a language from raw JSON bytes at runtime.
+// The JSON must be a nested object; keys are flattened to dot-separated strings
+// internally (e.g. {"page": {"title": "Home"}} becomes "page.title").
 func (b *Bundle) RegisterJSON(lang Language, data []byte) error {
-	m := make(map[string]string)
-	if err := json.Unmarshal(data, &m); err != nil {
+	raw := make(map[string]any)
+	if err := json.Unmarshal(data, &raw); err != nil {
 		return fmt.Errorf("i18n: failed to parse JSON for language %q: %w", lang, err)
+	}
+	m := make(map[string]string)
+	if err := flattenJSON("", raw, m); err != nil {
+		return fmt.Errorf("i18n: failed to flatten JSON for language %q: %w", lang, err)
 	}
 	b.Register(lang, m)
 	return nil
@@ -237,7 +323,7 @@ func (b *Bundle) RegisterJSON(lang Language, data []byte) error {
 func (b *Bundle) Load(fsys fs.FS, dir string) error {
 	err := loadDir(b, fsys, dir)
 	if err != nil {
-		return apperror.Wrap(err)
+		return err
 	}
 	return nil
 }
@@ -262,11 +348,16 @@ func (b *Bundle) HasLanguage(lang Language) bool {
 	return ok
 }
 
-// loadJSON parses a flat JSON object and merges it into the bundle for the given language.
+// loadJSON parses a nested JSON object, flattens it to dot-separated keys, and
+// merges the result into the bundle for the given language.
 // Returns an error if the JSON cannot be parsed.
 func (b *Bundle) loadJSON(lang Language, data []byte) error {
+	raw := make(map[string]any)
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
 	m := make(map[string]string)
-	if err := json.Unmarshal(data, &m); err != nil {
+	if err := flattenJSON("", raw, m); err != nil {
 		return err
 	}
 	b.mu.Lock()
@@ -280,13 +371,44 @@ func (b *Bundle) loadJSON(lang Language, data []byte) error {
 	return nil
 }
 
+// flattenJSON recursively walks a nested map[string]any and writes dot-separated
+// key paths to out. Leaf values are converted to strings via fmt.Sprint.
+// It returns an error if a flattened key would overwrite an existing entry,
+// which can happen when input keys contain dots or when both nested and
+// pre-flattened keys coexist (e.g. {"a":{"b":"1"}, "a.b":"2"}).
+func flattenJSON(prefix string, raw map[string]any, out map[string]string) error {
+	for k, v := range raw {
+		key := k
+		if prefix != "" {
+			key = prefix + "." + k
+		}
+		switch val := v.(type) {
+		case map[string]any:
+			if err := flattenJSON(key, val, out); err != nil {
+				return err
+			}
+		case string:
+			if _, exists := out[key]; exists {
+				return fmt.Errorf("i18n: duplicate flattened key %q", key)
+			}
+			out[key] = val
+		default:
+			if _, exists := out[key]; exists {
+				return fmt.Errorf("i18n: duplicate flattened key %q", key)
+			}
+			out[key] = fmt.Sprint(val)
+		}
+	}
+	return nil
+}
+
 // loadDir scans a directory in an fs.FS for *.json files and loads each one
 // into the bundle. The language code is derived from the filename (e.g.
 // "en.json" → "en", "zh-CN.json" → "zh-cn").
 func loadDir(b *Bundle, fsys fs.FS, dir string) error {
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
-		return apperror.NewErrorf("failed to read directory %q: %v", dir, err)
+		return err
 	}
 	for _, entry := range entries {
 		if entry.IsDir() {
@@ -339,7 +461,7 @@ func GetDefault() *Bundle {
 func Init(opts ...Option) error {
 	bundle, err := New(opts...)
 	if err != nil {
-		return apperror.Wrap(err)
+		return err
 	}
 	globalBundle.Store(bundle)
 	return nil
@@ -355,4 +477,19 @@ func T(lang Language, key string) string {
 // This function is safe for concurrent use.
 func Tf(lang Language, key string, args ...any) string {
 	return globalBundle.Load().Tf(lang, key, args...)
+}
+
+// TCTX translates a key using the language resolved from the given context
+// and the global default bundle. See [Bundle.TCTX] for the resolution order.
+// This function is safe for concurrent use.
+func TCTX(ctx context.Context, key string) string {
+	return globalBundle.Load().TCTX(ctx, key)
+}
+
+// TfCTX translates and formats a key using the language resolved from the
+// given context and the global default bundle. See [Bundle.TCTX] for the
+// resolution order.
+// This function is safe for concurrent use.
+func TfCTX(ctx context.Context, key string, args ...any) string {
+	return globalBundle.Load().TfCTX(ctx, key, args...)
 }

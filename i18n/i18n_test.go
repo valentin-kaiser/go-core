@@ -1,6 +1,7 @@
 package i18n_test
 
 import (
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -184,12 +185,15 @@ func TestBundleRegisterJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	err = b.RegisterJSON(i18n.English, []byte(`{"hello": "Hello", "world": "World"}`))
+	err = b.RegisterJSON(i18n.English, []byte(`{"greetings": {"hello": "Hello", "world": "World"}}`))
 	if err != nil {
 		t.Fatalf("RegisterJSON failed: %v", err)
 	}
-	if got := b.T(i18n.English, "hello"); got != "Hello" {
+	if got := b.T(i18n.English, "greetings.hello"); got != "Hello" {
 		t.Errorf("T = %q, want %q", got, "Hello")
+	}
+	if got := b.T(i18n.English, "greetings.world"); got != "World" {
+		t.Errorf("T = %q, want %q", got, "World")
 	}
 
 	// Invalid JSON
@@ -200,11 +204,11 @@ func TestBundleRegisterJSON(t *testing.T) {
 }
 
 func TestWithJSON(t *testing.T) {
-	b, err := i18n.New(i18n.WithJSON(i18n.German, []byte(`{"test": "Test"}`)))
+	b, err := i18n.New(i18n.WithJSON(i18n.German, []byte(`{"page": {"test": "Test"}}`)))
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	if got := b.T(i18n.German, "test"); got != "Test" {
+	if got := b.T(i18n.German, "page.test"); got != "Test" {
 		t.Errorf("T = %q, want %q", got, "Test")
 	}
 }
@@ -218,27 +222,27 @@ func TestWithJSONReturnsErrorOnMalformedJSON(t *testing.T) {
 
 func TestWithFS(t *testing.T) {
 	fsys := fstest.MapFS{
-		"locales/en.json": &fstest.MapFile{Data: []byte(`{"hello": "Hello"}`)},
-		"locales/de.json": &fstest.MapFile{Data: []byte(`{"hello": "Hallo"}`)},
+		"locales/en.json": &fstest.MapFile{Data: []byte(`{"greeting": {"hello": "Hello"}}`)},
+		"locales/de.json": &fstest.MapFile{Data: []byte(`{"greeting": {"hello": "Hallo"}}`)},
 	}
 
 	b, err := i18n.New(i18n.WithFS(fsys, "locales"))
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	if got := b.T(i18n.English, "hello"); got != "Hello" {
+	if got := b.T(i18n.English, "greeting.hello"); got != "Hello" {
 		t.Errorf("T(English) = %q, want %q", got, "Hello")
 	}
-	if got := b.T(i18n.German, "hello"); got != "Hallo" {
+	if got := b.T(i18n.German, "greeting.hello"); got != "Hallo" {
 		t.Errorf("T(German) = %q, want %q", got, "Hallo")
 	}
 }
 
 func TestWithFSSkipsMalformedJSON(t *testing.T) {
 	fsys := fstest.MapFS{
-		"locales/en.json":      &fstest.MapFile{Data: []byte(`{"valid": "Valid"}`)},
+		"locales/en.json":      &fstest.MapFile{Data: []byte(`{"status": {"valid": "Valid"}}`)},
 		"locales/invalid.json": &fstest.MapFile{Data: []byte(`{malformed json}`)},
-		"locales/de.json":      &fstest.MapFile{Data: []byte(`{"valid": "Gültig"}`)},
+		"locales/de.json":      &fstest.MapFile{Data: []byte(`{"status": {"valid": "Gültig"}}`)},
 	}
 
 	// Should not error; should silently skip invalid.json
@@ -247,10 +251,10 @@ func TestWithFSSkipsMalformedJSON(t *testing.T) {
 		t.Fatalf("New failed: %v", err)
 	}
 
-	if got := b.T(i18n.English, "valid"); got != "Valid" {
+	if got := b.T(i18n.English, "status.valid"); got != "Valid" {
 		t.Errorf("T(English) = %q, want %q", got, "Valid")
 	}
-	if got := b.T(i18n.German, "valid"); got != "Gültig" {
+	if got := b.T(i18n.German, "status.valid"); got != "Gültig" {
 		t.Errorf("T(German) = %q, want %q", got, "Gültig")
 	}
 
@@ -265,7 +269,7 @@ func TestWithFSSkipsMalformedJSON(t *testing.T) {
 
 func TestBundleLoad(t *testing.T) {
 	fsys := fstest.MapFS{
-		"i18n/en.json": &fstest.MapFile{Data: []byte(`{"foo": "bar"}`)},
+		"i18n/en.json": &fstest.MapFile{Data: []byte(`{"item": {"foo": "bar"}}`)},
 	}
 
 	b, err := i18n.New()
@@ -276,7 +280,7 @@ func TestBundleLoad(t *testing.T) {
 		t.Fatalf("Load failed: %v", err)
 	}
 
-	if got := b.T(i18n.English, "foo"); got != "bar" {
+	if got := b.T(i18n.English, "item.foo"); got != "bar" {
 		t.Errorf("T after Load = %q, want %q", got, "bar")
 	}
 }
@@ -375,11 +379,11 @@ func TestParseArbitraryLanguage(t *testing.T) {
 
 func TestWithFSAutoDiscovery(t *testing.T) {
 	fsys := fstest.MapFS{
-		"locales/en.json":    &fstest.MapFile{Data: []byte(`{"hello": "Hello"}`)},
-		"locales/de.json":    &fstest.MapFile{Data: []byte(`{"hello": "Hallo"}`)},
-		"locales/fr.json":    &fstest.MapFile{Data: []byte(`{"hello": "Bonjour"}`)},
-		"locales/ja.json":    &fstest.MapFile{Data: []byte(`{"hello": "こんにちは"}`)},
-		"locales/zh-cn.json": &fstest.MapFile{Data: []byte(`{"hello": "你好"}`)},
+		"locales/en.json":    &fstest.MapFile{Data: []byte(`{"greeting": {"hello": "Hello"}}`)},
+		"locales/de.json":    &fstest.MapFile{Data: []byte(`{"greeting": {"hello": "Hallo"}}`)},
+		"locales/fr.json":    &fstest.MapFile{Data: []byte(`{"greeting": {"hello": "Bonjour"}}`)},
+		"locales/ja.json":    &fstest.MapFile{Data: []byte(`{"greeting": {"hello": "こんにちは"}}`)},
+		"locales/zh-cn.json": &fstest.MapFile{Data: []byte(`{"greeting": {"hello": "你好"}}`)},
 		"locales/readme.txt": &fstest.MapFile{Data: []byte(`not a json locale`)},
 	}
 
@@ -396,7 +400,7 @@ func TestWithFSAutoDiscovery(t *testing.T) {
 		"zh-cn": "你好",
 	}
 	for lang, want := range expected {
-		if got := b.T(lang, "hello"); got != want {
+		if got := b.T(lang, "greeting.hello"); got != want {
 			t.Errorf("T(%s) = %q, want %q", lang, got, want)
 		}
 	}
@@ -404,5 +408,92 @@ func TestWithFSAutoDiscovery(t *testing.T) {
 	// Should have exactly 5 languages (readme.txt ignored)
 	if got := len(b.Languages()); got != 5 {
 		t.Errorf("len(Languages()) = %d, want 5", got)
+	}
+}
+
+func TestNestedJSON(t *testing.T) {
+	// Verify multi-level nesting resolves to dot-separated keys.
+	b, err := i18n.New(i18n.WithJSON(i18n.English, []byte(`{
+		"page": {
+			"login": {
+				"title": "Login",
+				"subtitle": "Welcome back"
+			},
+			"register": {
+				"title": "Register"
+			}
+		},
+		"error": {
+			"internal": "An internal error occurred."
+		}
+	}`)))
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+
+	cases := []struct {
+		key  string
+		want string
+	}{
+		{"page.login.title", "Login"},
+		{"page.login.subtitle", "Welcome back"},
+		{"page.register.title", "Register"},
+		{"error.internal", "An internal error occurred."},
+	}
+	for _, tc := range cases {
+		if got := b.T(i18n.English, tc.key); got != tc.want {
+			t.Errorf("T(%q) = %q, want %q", tc.key, got, tc.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Tests for duplicate flattened key detection
+// ---------------------------------------------------------------------------
+
+func TestWithJSON_DuplicateFlattenedKey(t *testing.T) {
+	// Both nested "a.b" and explicit "a.b" exist – must produce an error.
+	data := []byte(`{"a":{"b":"nested"},"a.b":"flat"}`)
+	_, err := i18n.New(i18n.WithJSON(i18n.English, data))
+	if err == nil {
+		t.Fatal("expected error for duplicate flattened key, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate flattened key") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestRegisterJSON_DuplicateFlattenedKey(t *testing.T) {
+	b, err := i18n.New()
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	data := []byte(`{"x":{"y":"nested"},"x.y":"flat"}`)
+	err = b.RegisterJSON(i18n.English, data)
+	if err == nil {
+		t.Fatal("expected error for duplicate flattened key, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate flattened key") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestWithFS_DuplicateFlattenedKeySkipsFile(t *testing.T) {
+	// A file with colliding keys should be skipped, like malformed JSON.
+	fsys := fstest.MapFS{
+		"locales/en.json": &fstest.MapFile{Data: []byte(`{"a":{"b":"nested"},"a.b":"flat"}`)},
+		"locales/de.json": &fstest.MapFile{Data: []byte(`{"greeting":{"hello":"Hallo"}}`)},
+	}
+	b, err := i18n.New(i18n.WithFS(fsys, "locales"))
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	// en.json should have been skipped
+	if b.HasLanguage(i18n.English) {
+		t.Error("English should not be loaded (duplicate key collision)")
+	}
+	// de.json should still load fine
+	if got := b.T(i18n.German, "greeting.hello"); got != "Hallo" {
+		t.Errorf("T(German) = %q, want %q", got, "Hallo")
 	}
 }
