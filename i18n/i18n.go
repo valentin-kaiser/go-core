@@ -311,7 +311,9 @@ func (b *Bundle) RegisterJSON(lang Language, data []byte) error {
 		return fmt.Errorf("i18n: failed to parse JSON for language %q: %w", lang, err)
 	}
 	m := make(map[string]string)
-	flattenJSON("", raw, m)
+	if err := flattenJSON("", raw, m); err != nil {
+		return fmt.Errorf("i18n: failed to flatten JSON for language %q: %w", lang, err)
+	}
 	b.Register(lang, m)
 	return nil
 }
@@ -355,7 +357,9 @@ func (b *Bundle) loadJSON(lang Language, data []byte) error {
 		return err
 	}
 	m := make(map[string]string)
-	flattenJSON("", raw, m)
+	if err := flattenJSON("", raw, m); err != nil {
+		return err
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if b.translations[lang] == nil {
@@ -369,7 +373,10 @@ func (b *Bundle) loadJSON(lang Language, data []byte) error {
 
 // flattenJSON recursively walks a nested map[string]any and writes dot-separated
 // key paths to out. Leaf values are converted to strings via fmt.Sprint.
-func flattenJSON(prefix string, raw map[string]any, out map[string]string) {
+// It returns an error if a flattened key would overwrite an existing entry,
+// which can happen when input keys contain dots or when both nested and
+// pre-flattened keys coexist (e.g. {"a":{"b":"1"}, "a.b":"2"}).
+func flattenJSON(prefix string, raw map[string]any, out map[string]string) error {
 	for k, v := range raw {
 		key := k
 		if prefix != "" {
@@ -377,13 +384,22 @@ func flattenJSON(prefix string, raw map[string]any, out map[string]string) {
 		}
 		switch val := v.(type) {
 		case map[string]any:
-			flattenJSON(key, val, out)
+			if err := flattenJSON(key, val, out); err != nil {
+				return err
+			}
 		case string:
+			if _, exists := out[key]; exists {
+				return fmt.Errorf("i18n: duplicate flattened key %q", key)
+			}
 			out[key] = val
 		default:
+			if _, exists := out[key]; exists {
+				return fmt.Errorf("i18n: duplicate flattened key %q", key)
+			}
 			out[key] = fmt.Sprint(val)
 		}
 	}
+	return nil
 }
 
 // loadDir scans a directory in an fs.FS for *.json files and loads each one

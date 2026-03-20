@@ -1,6 +1,7 @@
 package i18n_test
 
 import (
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -443,5 +444,56 @@ func TestNestedJSON(t *testing.T) {
 		if got := b.T(i18n.English, tc.key); got != tc.want {
 			t.Errorf("T(%q) = %q, want %q", tc.key, got, tc.want)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Tests for duplicate flattened key detection
+// ---------------------------------------------------------------------------
+
+func TestWithJSON_DuplicateFlattenedKey(t *testing.T) {
+	// Both nested "a.b" and explicit "a.b" exist – must produce an error.
+	data := []byte(`{"a":{"b":"nested"},"a.b":"flat"}`)
+	_, err := i18n.New(i18n.WithJSON(i18n.English, data))
+	if err == nil {
+		t.Fatal("expected error for duplicate flattened key, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate flattened key") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestRegisterJSON_DuplicateFlattenedKey(t *testing.T) {
+	b, err := i18n.New()
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	data := []byte(`{"x":{"y":"nested"},"x.y":"flat"}`)
+	err = b.RegisterJSON(i18n.English, data)
+	if err == nil {
+		t.Fatal("expected error for duplicate flattened key, got nil")
+	}
+	if !strings.Contains(err.Error(), "duplicate flattened key") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
+func TestWithFS_DuplicateFlattenedKeySkipsFile(t *testing.T) {
+	// A file with colliding keys should be skipped, like malformed JSON.
+	fsys := fstest.MapFS{
+		"locales/en.json": &fstest.MapFile{Data: []byte(`{"a":{"b":"nested"},"a.b":"flat"}`)},
+		"locales/de.json": &fstest.MapFile{Data: []byte(`{"greeting":{"hello":"Hallo"}}`)},
+	}
+	b, err := i18n.New(i18n.WithFS(fsys, "locales"))
+	if err != nil {
+		t.Fatalf("New failed: %v", err)
+	}
+	// en.json should have been skipped
+	if b.HasLanguage(i18n.English) {
+		t.Error("English should not be loaded (duplicate key collision)")
+	}
+	// de.json should still load fine
+	if got := b.T(i18n.German, "greeting.hello"); got != "Hallo" {
+		t.Errorf("T(German) = %q, want %q", got, "Hallo")
 	}
 }
