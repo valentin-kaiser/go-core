@@ -34,7 +34,7 @@
 //			WithSelfSignedTLS().
 //			Redirect(8080, 8443, "/", "/").  // Redirect HTTP root to HTTPS
 //			WithSecurityHeaders().
-//			WithCORSHeaders().
+//			WithCORSHeaders(nil).
 //			WithGzip().
 //			WithLog().
 //			WithHandlerFunc("/", handler).
@@ -762,9 +762,10 @@ func (s *Server) WithSecurityHeaders() *Server {
 	return s
 }
 
-// WithCORSHeaders adds CORS headers to the server
-func (s *Server) WithCORSHeaders() *Server {
-	s.router.Use(MiddlewareOrderCors, corsHeaderMiddleware)
+// WithCORSHeaders adds CORS headers to the server.
+// If config is nil, default permissive CORS headers are used.
+func (s *Server) WithCORSHeaders(config *CORSConfig) *Server {
+	s.router.Use(MiddlewareOrderCors, corsHeaderMiddlewareWithConfig(config))
 	return s
 }
 

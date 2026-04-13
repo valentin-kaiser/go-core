@@ -187,7 +187,7 @@ func TestServerHeaders(t *testing.T) {
 	// Test header configuration
 	result := server.
 		WithSecurityHeaders().
-		WithCORSHeaders().
+		WithCORSHeaders(nil).
 		WithHeader("X-Custom", "test").
 		WithCacheControl("max-age=3600")
 

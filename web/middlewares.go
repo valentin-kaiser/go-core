@@ -3,6 +3,8 @@ package web
 import (
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/valentin-kaiser/go-core/flag"
@@ -21,9 +23,10 @@ var (
 		"Referrer-Policy":           "no-referrer-when-downgrade",
 	}
 	corsHeaders = map[string]string{
-		"Access-Control-Allow-Origin":  "*",
-		"Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-		"Access-Control-Allow-Headers": "Content-Type, Authorization, X-Real-IP",
+		"Access-Control-Allow-Origin":      "*",
+		"Access-Control-Allow-Methods":     "GET, POST, PUT, DELETE, OPTIONS",
+		"Access-Control-Allow-Headers":     "Content-Type, Authorization, X-Real-IP",
+		"Access-Control-Allow-Credentials": "true",
 	}
 )
 
@@ -91,6 +94,23 @@ func securityHeaderMiddlewareWithServer(server *Server) func(http.Handler) http.
 	}
 }
 
+// CORSConfig defines custom CORS rules for the server.
+// When passed as nil to WithCORSHeaders, the default permissive CORS headers are used.
+type CORSConfig struct {
+	// AllowOrigin sets the Access-Control-Allow-Origin header.
+	AllowOrigin string
+	// AllowMethods sets the Access-Control-Allow-Methods header.
+	AllowMethods []string
+	// AllowHeaders sets the Access-Control-Allow-Headers header.
+	AllowHeaders []string
+	// AllowCredentials sets the Access-Control-Allow-Credentials header.
+	AllowCredentials bool
+	// MaxAge sets the Access-Control-Max-Age header in seconds. Omitted if 0.
+	MaxAge int
+	// ExposeHeaders sets the Access-Control-Expose-Headers header. Omitted if empty.
+	ExposeHeaders string
+}
+
 // corsHeaderMiddleware is a middleware that adds CORS headers to the response
 // It is used to allow cross-origin requests from the client
 func corsHeaderMiddleware(next http.Handler) http.Handler {
@@ -100,6 +120,41 @@ func corsHeaderMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// corsHeaderMiddlewareWithConfig creates a CORS middleware using the provided configuration.
+// If config is nil, the default CORS headers are applied.
+func corsHeaderMiddlewareWithConfig(config *CORSConfig) Middleware {
+	if config == nil {
+		return corsHeaderMiddleware
+	}
+
+	headers := map[string]string{
+		"Access-Control-Allow-Origin":  config.AllowOrigin,
+		"Access-Control-Allow-Methods": strings.Join(config.AllowMethods, ", "),
+		"Access-Control-Allow-Headers": strings.Join(config.AllowHeaders, ", "),
+	}
+
+	if config.AllowCredentials {
+		headers["Access-Control-Allow-Credentials"] = "true"
+	}
+
+	if config.MaxAge > 0 {
+		headers["Access-Control-Max-Age"] = strconv.Itoa(config.MaxAge)
+	}
+
+	if config.ExposeHeaders != "" {
+		headers["Access-Control-Expose-Headers"] = config.ExposeHeaders
+	}
+
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			for key, value := range headers {
+				w.Header().Set(key, value)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // varyHeaderMiddleware creates a middleware that adds Vary headers to the response
