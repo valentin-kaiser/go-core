@@ -23,10 +23,9 @@ var (
 		"Referrer-Policy":           "no-referrer-when-downgrade",
 	}
 	corsHeaders = map[string]string{
-		"Access-Control-Allow-Origin":      "*",
-		"Access-Control-Allow-Methods":     "GET, POST, PUT, DELETE, OPTIONS",
-		"Access-Control-Allow-Headers":     "Content-Type, Authorization, X-Real-IP",
-		"Access-Control-Allow-Credentials": "true",
+		"Access-Control-Allow-Origin":  "*",
+		"Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
+		"Access-Control-Allow-Headers": "Content-Type, Authorization, X-Real-IP",
 	}
 )
 
@@ -108,7 +107,7 @@ type CORSConfig struct {
 	// MaxAge sets the Access-Control-Max-Age header in seconds. Omitted if 0.
 	MaxAge int
 	// ExposeHeaders sets the Access-Control-Expose-Headers header. Omitted if empty.
-	ExposeHeaders string
+	ExposeHeaders []string
 }
 
 // corsHeaderMiddleware is a middleware that adds CORS headers to the response
@@ -124,29 +123,66 @@ func corsHeaderMiddleware(next http.Handler) http.Handler {
 
 // corsHeaderMiddlewareWithConfig creates a CORS middleware using the provided configuration.
 // If config is nil, the default CORS headers are applied.
+// When AllowCredentials is true, the middleware echoes the request Origin instead of using
+// a wildcard "*" (which is invalid per the CORS spec with credentials) and adds Vary: Origin.
 func corsHeaderMiddlewareWithConfig(config *CORSConfig) Middleware {
 	if config == nil {
 		return corsHeaderMiddleware
 	}
 
-	headers := map[string]string{
-		"Access-Control-Allow-Origin":  config.AllowOrigin,
-		"Access-Control-Allow-Methods": strings.Join(config.AllowMethods, ", "),
-		"Access-Control-Allow-Headers": strings.Join(config.AllowHeaders, ", "),
+	// Apply defaults for empty values
+	allowOrigin := config.AllowOrigin
+	if allowOrigin == "" {
+		allowOrigin = "*"
 	}
 
-	if config.AllowCredentials {
-		headers["Access-Control-Allow-Credentials"] = "true"
+	allowMethods := strings.Join(config.AllowMethods, ", ")
+	if allowMethods == "" {
+		allowMethods = "GET, POST, PUT, DELETE, OPTIONS"
+	}
+
+	allowHeaders := strings.Join(config.AllowHeaders, ", ")
+	if allowHeaders == "" {
+		allowHeaders = "Content-Type, Authorization, X-Real-IP"
+	}
+
+	// Build static headers
+	headers := map[string]string{
+		"Access-Control-Allow-Methods": allowMethods,
+		"Access-Control-Allow-Headers": allowHeaders,
 	}
 
 	if config.MaxAge > 0 {
 		headers["Access-Control-Max-Age"] = strconv.Itoa(config.MaxAge)
 	}
 
-	if config.ExposeHeaders != "" {
-		headers["Access-Control-Expose-Headers"] = config.ExposeHeaders
+	if len(config.ExposeHeaders) > 0 {
+		headers["Access-Control-Expose-Headers"] = strings.Join(config.ExposeHeaders, ", ")
 	}
 
+	// When credentials are enabled, echo the request Origin and add Vary: Origin.
+	// Using "*" with Access-Control-Allow-Credentials: true is invalid per the CORS spec.
+	if config.AllowCredentials {
+		headers["Access-Control-Allow-Credentials"] = "true"
+		return func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				for key, value := range headers {
+					w.Header().Set(key, value)
+				}
+				origin := r.Header.Get("Origin")
+				if origin != "" {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+				} else {
+					w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
+				}
+				w.Header().Add("Vary", "Origin")
+				next.ServeHTTP(w, r)
+			})
+		}
+	}
+
+	// Without credentials, use the static origin value
+	headers["Access-Control-Allow-Origin"] = allowOrigin
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			for key, value := range headers {

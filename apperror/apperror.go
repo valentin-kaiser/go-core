@@ -112,7 +112,7 @@ func NewErrorf(format string, a ...interface{}) Error {
 	return e
 }
 
-// NewErrorT creates a new Error instance with the translated and formated message
+// NewErrorT creates a new Error instance with the translated and formatted message
 func NewErrorT(ctx context.Context, key string, a ...interface{}) Error {
 	e := Error{
 		Message: i18n.TfCTX(ctx, key, a...),
