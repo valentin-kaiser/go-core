@@ -70,8 +70,15 @@ func resolveFromRequest(b *Bundle, r *http.Request) Language {
 	}
 
 	// Build a matcher from the bundle's supported languages.
+	// Place the Default language first so the matcher falls back to it
+	// when no requested language matches (the first entry is the matcher's default).
 	supported := make([]language.Tag, 0, len(langs))
+	defaultTag, _ := language.Parse(string(Default))
+	supported = append(supported, defaultTag)
 	for _, l := range langs {
+		if l == Default {
+			continue
+		}
 		tag, err := language.Parse(string(l))
 		if err != nil {
 			continue

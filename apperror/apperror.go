@@ -112,9 +112,13 @@ func NewErrorf(format string, a ...interface{}) Error {
 	return e
 }
 
-// NewErrorT creates a new Error instance with the translated and formated message
+// NewErrorT creates a new Error instance with the translated and formatted message
 func NewErrorT(ctx context.Context, key string, a ...interface{}) Error {
-	return NewErrorf(i18n.TCTX(ctx, key), a...)
+	e := Error{
+		Message: i18n.TfCTX(ctx, key, a...),
+	}
+	e.Trace = trace(e)
+	return e
 }
 
 // Wrap wraps an error and adds a stack trace to it

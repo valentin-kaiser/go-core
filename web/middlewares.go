@@ -3,6 +3,8 @@ package web
 import (
 	"fmt"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/valentin-kaiser/go-core/flag"
@@ -91,6 +93,23 @@ func securityHeaderMiddlewareWithServer(server *Server) func(http.Handler) http.
 	}
 }
 
+// CORSConfig defines custom CORS rules for the server.
+// When passed as nil to WithCORSHeaders, the default permissive CORS headers are used.
+type CORSConfig struct {
+	// AllowOrigin sets the Access-Control-Allow-Origin header.
+	AllowOrigin string
+	// AllowMethods sets the Access-Control-Allow-Methods header.
+	AllowMethods []string
+	// AllowHeaders sets the Access-Control-Allow-Headers header.
+	AllowHeaders []string
+	// AllowCredentials sets the Access-Control-Allow-Credentials header.
+	AllowCredentials bool
+	// MaxAge sets the Access-Control-Max-Age header in seconds. Omitted if 0.
+	MaxAge int
+	// ExposeHeaders sets the Access-Control-Expose-Headers header. Omitted if empty.
+	ExposeHeaders []string
+}
+
 // corsHeaderMiddleware is a middleware that adds CORS headers to the response
 // It is used to allow cross-origin requests from the client
 func corsHeaderMiddleware(next http.Handler) http.Handler {
@@ -100,6 +119,91 @@ func corsHeaderMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// corsHeaderMiddlewareWithConfig creates a CORS middleware using the provided configuration.
+// If config is nil, the default CORS headers are applied.
+// When AllowCredentials is true, the middleware validates the request Origin against the
+// configured AllowOrigin before reflecting it. Requests with no Origin header or a
+// non-matching Origin will not receive credentialed CORS headers. A wildcard "*" AllowOrigin
+// is not permitted with credentials and will be treated as if no origin is configured.
+func corsHeaderMiddlewareWithConfig(config *CORSConfig) Middleware {
+	if config == nil {
+		return corsHeaderMiddleware
+	}
+
+	// Apply defaults for empty values
+	allowOrigin := config.AllowOrigin
+	if allowOrigin == "" {
+		allowOrigin = "*"
+	}
+
+	allowMethods := strings.Join(config.AllowMethods, ", ")
+	if allowMethods == "" {
+		allowMethods = "GET, POST, PUT, DELETE, OPTIONS"
+	}
+
+	allowHeaders := strings.Join(config.AllowHeaders, ", ")
+	if allowHeaders == "" {
+		allowHeaders = "Content-Type, Authorization, X-Real-IP"
+	}
+
+	// Build static headers
+	headers := map[string]string{
+		"Access-Control-Allow-Methods": allowMethods,
+		"Access-Control-Allow-Headers": allowHeaders,
+	}
+
+	if config.MaxAge > 0 {
+		headers["Access-Control-Max-Age"] = strconv.Itoa(config.MaxAge)
+	}
+
+	if len(config.ExposeHeaders) > 0 {
+		headers["Access-Control-Expose-Headers"] = strings.Join(config.ExposeHeaders, ", ")
+	}
+
+	// When credentials are enabled, validate the request Origin against the configured
+	// AllowOrigin before reflecting it. Using "*" with credentials is invalid per the
+	// CORS spec, so a wildcard origin is never reflected for credentialed requests.
+	if config.AllowCredentials {
+		return func(next http.Handler) http.Handler {
+			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				for key, value := range headers {
+					w.Header().Set(key, value)
+				}
+
+				origin := r.Header.Get("Origin")
+				if origin != "" && allowOrigin != "*" && origin == allowOrigin {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
+				}
+				addVaryHeader(w, "Origin")
+
+				next.ServeHTTP(w, r)
+			})
+		}
+	}
+
+	// Without credentials, use the static origin value
+	headers["Access-Control-Allow-Origin"] = allowOrigin
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			for key, value := range headers {
+				w.Header().Set(key, value)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// addVaryHeader appends a value to the Vary response header, avoiding duplicates.
+func addVaryHeader(w http.ResponseWriter, value string) {
+	for _, existing := range w.Header().Values("Vary") {
+		if strings.EqualFold(existing, value) {
+			return
+		}
+	}
+	w.Header().Add("Vary", value)
 }
 
 // varyHeaderMiddleware creates a middleware that adds Vary headers to the response
