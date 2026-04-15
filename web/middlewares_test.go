@@ -90,41 +90,62 @@ func TestCORSConfigCustomValues(t *testing.T) {
 
 func TestCORSConfigCredentialsEchoesOrigin(t *testing.T) {
 	config := &CORSConfig{
-		AllowOrigin:      "https://fallback.example.com",
+		AllowOrigin:      "https://app.example.com",
 		AllowMethods:     []string{"GET"},
 		AllowCredentials: true,
 	}
 	handler := corsHeaderMiddlewareWithConfig(config)(noopHandler)
 
-	t.Run("with Origin header", func(t *testing.T) {
+	t.Run("matching Origin is reflected", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		req.Header.Set("Origin", "https://app.example.com")
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
 
-		// Should echo the request Origin, not the configured AllowOrigin
 		assertHeader(t, rec, "Access-Control-Allow-Origin", "https://app.example.com")
 		assertHeader(t, rec, "Access-Control-Allow-Credentials", "true")
 		assertHeader(t, rec, "Vary", "Origin")
 	})
 
-	t.Run("without Origin header", func(t *testing.T) {
+	t.Run("non-matching Origin does not get credentials", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Origin", "https://evil.example.com")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		// Origin should NOT be reflected for a non-matching origin
+		if v := rec.Header().Get("Access-Control-Allow-Origin"); v != "" {
+			t.Errorf("non-matching Origin should not set Allow-Origin, got %q", v)
+		}
+		if v := rec.Header().Get("Access-Control-Allow-Credentials"); v != "" {
+			t.Errorf("non-matching Origin should not set Allow-Credentials, got %q", v)
+		}
+		// Vary: Origin must still be present (caching correctness)
+		assertHeader(t, rec, "Vary", "Origin")
+	})
+
+	t.Run("missing Origin does not get credentials", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
 
-		// Should fall back to configured AllowOrigin
-		assertHeader(t, rec, "Access-Control-Allow-Origin", "https://fallback.example.com")
-		assertHeader(t, rec, "Access-Control-Allow-Credentials", "true")
+		// No Origin header means no credentialed CORS headers
+		if v := rec.Header().Get("Access-Control-Allow-Origin"); v != "" {
+			t.Errorf("missing Origin should not set Allow-Origin, got %q", v)
+		}
+		if v := rec.Header().Get("Access-Control-Allow-Credentials"); v != "" {
+			t.Errorf("missing Origin should not set Allow-Credentials, got %q", v)
+		}
 		assertHeader(t, rec, "Vary", "Origin")
 	})
 }
 
-func TestCORSConfigCredentialsDefaultOrigin(t *testing.T) {
-	// When AllowCredentials=true and AllowOrigin is empty, the fallback should
-	// still be "*" but the request Origin is preferred when present.
+func TestCORSConfigCredentialsWildcardOriginRejected(t *testing.T) {
+	// When AllowCredentials=true and AllowOrigin is empty (defaults to "*"),
+	// no origin should be reflected because * + credentials is invalid.
 	config := &CORSConfig{
 		AllowCredentials: true,
 	}
@@ -136,8 +157,44 @@ func TestCORSConfigCredentialsDefaultOrigin(t *testing.T) {
 
 	handler.ServeHTTP(rec, req)
 
-	assertHeader(t, rec, "Access-Control-Allow-Origin", "https://test.example.com")
-	assertHeader(t, rec, "Access-Control-Allow-Credentials", "true")
+	if v := rec.Header().Get("Access-Control-Allow-Origin"); v != "" {
+		t.Errorf("wildcard origin with credentials should not set Allow-Origin, got %q", v)
+	}
+	if v := rec.Header().Get("Access-Control-Allow-Credentials"); v != "" {
+		t.Errorf("wildcard origin with credentials should not set Allow-Credentials, got %q", v)
+	}
+	// Vary: Origin should still be set
+	assertHeader(t, rec, "Vary", "Origin")
+}
+
+func TestCORSVaryHeaderDedup(t *testing.T) {
+	config := &CORSConfig{
+		AllowOrigin:      "https://example.com",
+		AllowCredentials: true,
+	}
+	handler := corsHeaderMiddlewareWithConfig(config)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Simulate another middleware/handler setting Vary: Origin
+		w.Header().Set("Vary", "Origin")
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set("Origin", "https://example.com")
+	rec := httptest.NewRecorder()
+
+	handler.ServeHTTP(rec, req)
+
+	// Vary should contain Origin exactly once, not duplicated
+	varyValues := rec.Header().Values("Vary")
+	count := 0
+	for _, v := range varyValues {
+		if v == "Origin" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Errorf("Vary should contain 'Origin' exactly once, got %d occurrences in %v", count, varyValues)
+	}
 }
 
 func TestCORSConfigExposeHeadersOmittedWhenEmpty(t *testing.T) {

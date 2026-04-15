@@ -123,8 +123,10 @@ func corsHeaderMiddleware(next http.Handler) http.Handler {
 
 // corsHeaderMiddlewareWithConfig creates a CORS middleware using the provided configuration.
 // If config is nil, the default CORS headers are applied.
-// When AllowCredentials is true, the middleware echoes the request Origin instead of using
-// a wildcard "*" (which is invalid per the CORS spec with credentials) and adds Vary: Origin.
+// When AllowCredentials is true, the middleware validates the request Origin against the
+// configured AllowOrigin before reflecting it. Requests with no Origin header or a
+// non-matching Origin will not receive credentialed CORS headers. A wildcard "*" AllowOrigin
+// is not permitted with credentials and will be treated as if no origin is configured.
 func corsHeaderMiddlewareWithConfig(config *CORSConfig) Middleware {
 	if config == nil {
 		return corsHeaderMiddleware
@@ -160,22 +162,23 @@ func corsHeaderMiddlewareWithConfig(config *CORSConfig) Middleware {
 		headers["Access-Control-Expose-Headers"] = strings.Join(config.ExposeHeaders, ", ")
 	}
 
-	// When credentials are enabled, echo the request Origin and add Vary: Origin.
-	// Using "*" with Access-Control-Allow-Credentials: true is invalid per the CORS spec.
+	// When credentials are enabled, validate the request Origin against the configured
+	// AllowOrigin before reflecting it. Using "*" with credentials is invalid per the
+	// CORS spec, so a wildcard origin is never reflected for credentialed requests.
 	if config.AllowCredentials {
-		headers["Access-Control-Allow-Credentials"] = "true"
 		return func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				for key, value := range headers {
 					w.Header().Set(key, value)
 				}
+
 				origin := r.Header.Get("Origin")
-				if origin != "" {
+				if origin != "" && allowOrigin != "*" && origin == allowOrigin {
 					w.Header().Set("Access-Control-Allow-Origin", origin)
-				} else {
-					w.Header().Set("Access-Control-Allow-Origin", allowOrigin)
+					w.Header().Set("Access-Control-Allow-Credentials", "true")
 				}
-				w.Header().Add("Vary", "Origin")
+				addVaryHeader(w, "Origin")
+
 				next.ServeHTTP(w, r)
 			})
 		}
@@ -191,6 +194,16 @@ func corsHeaderMiddlewareWithConfig(config *CORSConfig) Middleware {
 			next.ServeHTTP(w, r)
 		})
 	}
+}
+
+// addVaryHeader appends a value to the Vary response header, avoiding duplicates.
+func addVaryHeader(w http.ResponseWriter, value string) {
+	for _, existing := range w.Header().Values("Vary") {
+		if strings.EqualFold(existing, value) {
+			return
+		}
+	}
+	w.Header().Add("Vary", value)
 }
 
 // varyHeaderMiddleware creates a middleware that adds Vary headers to the response
