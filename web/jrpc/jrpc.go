@@ -664,7 +664,8 @@ func (s *Service) marshal(m any) ([]byte, error) {
 func (s *Service) handleBidirectionalStream(ctx context.Context, conn *websocket.Conn, m reflect.Value, mt reflect.Type) {
 	inType, outType := mt.In(1), mt.In(2)
 	inPtr, outPtr := inType.Elem(), outType.Elem()
-	in, out := reflect.MakeChan(inType, 0), reflect.MakeChan(outType, 0)
+	in := reflect.MakeChan(reflect.ChanOf(reflect.BothDir, inPtr), 0)
+	out := reflect.MakeChan(reflect.ChanOf(reflect.BothDir, outPtr), 0)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -706,7 +707,7 @@ func (s *Service) handleBidirectionalStream(ctx context.Context, conn *websocket
 func (s *Service) handleServerStream(ctx context.Context, conn *websocket.Conn, m reflect.Value, mt reflect.Type, md *methodInfo) {
 	outType := mt.In(2)
 	outPtr := outType.Elem()
-	out := reflect.MakeChan(outType, 0)
+	out := reflect.MakeChan(reflect.ChanOf(reflect.BothDir, outPtr), 0)
 
 	msg, err := s.message(md)
 	if err != nil {
@@ -782,7 +783,7 @@ func (s *Service) handleServerStream(ctx context.Context, conn *websocket.Conn, 
 func (s *Service) handleClientStream(ctx context.Context, conn *websocket.Conn, m reflect.Value, mt reflect.Type) {
 	inType := mt.In(1)
 	inPtr := inType.Elem()
-	in := reflect.MakeChan(inType, 0)
+	in := reflect.MakeChan(reflect.ChanOf(reflect.BothDir, inPtr), 0)
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
