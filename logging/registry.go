@@ -36,6 +36,13 @@ func GetGlobalAdapter[T Adapter]() (T, bool) {
 	return a, ok
 }
 
+// GetGlobalAdapterInterface returns the current global adapter as an interface
+func GetGlobalAdapterInterface() Adapter {
+	mu.RLock()
+	defer mu.RUnlock()
+	return global
+}
+
 // SetPackageAdapter sets a specific adapter for a package
 // This overrides the global adapter for the specified package
 func SetPackageAdapter(pkg string, adapter Adapter) {
