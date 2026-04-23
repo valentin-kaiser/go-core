@@ -155,10 +155,31 @@ func (tm *TemplateManager) RenderTemplate(name string, data interface{}, funcs .
 	content, err := func() ([]byte, error) {
 		// Try reading from TemplatesPath first (OS paths, use filepath)
 		if tm.config.TemplatesPath != "" {
-			customPath := filepath.Join(tm.config.TemplatesPath, filepath.FromSlash(name))
-			_, err := os.Stat(customPath)
+			// Normalize the name to a clean relative OS path and reject traversal attempts.
+			cleanName := filepath.Clean(filepath.FromSlash(name))
+			if filepath.IsAbs(cleanName) || strings.HasPrefix(cleanName, ".."+string(filepath.Separator)) || cleanName == ".." {
+				return nil, apperror.NewError("invalid template name: path traversal detected").AddDetail("name", name)
+			}
+
+			// Build and clean a single path used for both Stat and ReadFile.
+			customPath := filepath.Join(tm.config.TemplatesPath, cleanName)
+
+			// Verify the resolved path is within TemplatesPath.
+			root, err := filepath.Abs(tm.config.TemplatesPath)
+			if err != nil {
+				return nil, apperror.NewError("failed to resolve templates root path").AddError(err)
+			}
+			absCustom, err := filepath.Abs(customPath)
+			if err != nil {
+				return nil, apperror.NewError("failed to resolve template path").AddError(err)
+			}
+			if !strings.HasPrefix(absCustom, root+string(filepath.Separator)) && absCustom != root {
+				return nil, apperror.NewError("invalid template name: path escapes templates root").AddDetail("name", name)
+			}
+
+			_, err = os.Stat(absCustom)
 			if err == nil {
-				content, err := os.ReadFile(filepath.Clean(customPath))
+				content, err := os.ReadFile(absCustom)
 				if err != nil {
 					return nil, apperror.NewError("failed to read template file from TemplatesPath").AddError(err)
 				}
@@ -166,9 +187,12 @@ func (tm *TemplateManager) RenderTemplate(name string, data interface{}, funcs .
 			}
 		}
 
-		// Fallback to FileSystem if configured (fs.FS requires forward slashes)
+		// Fallback to FileSystem if configured (fs.FS requires valid, relative, forward-slash paths)
 		if tm.config.FileSystem != nil {
 			fsPath := path.Clean(filepath.ToSlash(name))
+			if !fs.ValidPath(fsPath) {
+				return nil, apperror.NewError("invalid template name: not a valid fs.FS path").AddDetail("name", name)
+			}
 			content, err := fs.ReadFile(tm.config.FileSystem, fsPath)
 			if err != nil {
 				return nil, apperror.NewError("failed to read template file from FileSystem").AddError(err)
