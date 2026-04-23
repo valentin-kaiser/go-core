@@ -8,6 +8,7 @@ import (
 	"html/template"
 	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -152,10 +153,9 @@ func (tm *TemplateManager) RenderTemplate(name string, data interface{}, funcs .
 
 	// Load template content from source
 	content, err := func() ([]byte, error) {
-		path := filepath.Clean(name)
-		// Try reading from TemplatesPath first
+		// Try reading from TemplatesPath first (OS paths, use filepath)
 		if tm.config.TemplatesPath != "" {
-			customPath := filepath.Join(tm.config.TemplatesPath, path)
+			customPath := filepath.Join(tm.config.TemplatesPath, filepath.FromSlash(name))
 			_, err := os.Stat(customPath)
 			if err == nil {
 				content, err := os.ReadFile(filepath.Clean(customPath))
@@ -166,9 +166,10 @@ func (tm *TemplateManager) RenderTemplate(name string, data interface{}, funcs .
 			}
 		}
 
-		// Fallback to FileSystem if configured
+		// Fallback to FileSystem if configured (fs.FS requires forward slashes)
 		if tm.config.FileSystem != nil {
-			content, err := fs.ReadFile(tm.config.FileSystem, path)
+			fsPath := path.Clean(filepath.ToSlash(name))
+			content, err := fs.ReadFile(tm.config.FileSystem, fsPath)
 			if err != nil {
 				return nil, apperror.NewError("failed to read template file from FileSystem").AddError(err)
 			}
