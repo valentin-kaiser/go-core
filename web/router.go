@@ -84,9 +84,10 @@ func (router *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rw := newResponseWriter(w, r)
 	blocked := router.block(rw, r)
 	if !blocked {
-		router.canonicalRedirect(rw, r)
-		router.rateLimit(rw, r, limitedPatterns)
-		router.wrap(mux).ServeHTTP(rw, r)
+		if redirected := router.canonicalRedirect(rw, r); !redirected {
+			router.rateLimit(rw, r, limitedPatterns)
+			router.wrap(mux).ServeHTTP(rw, r)
+		}
 	}
 	router.handleStatusHooks(rw, r, onStatusPatterns)
 	rw.flush()
@@ -275,9 +276,9 @@ func (router *Router) rateLimit(w http.ResponseWriter, r *http.Request, patterns
 	}
 }
 
-func (router *Router) canonicalRedirect(w http.ResponseWriter, r *http.Request) {
+func (router *Router) canonicalRedirect(w http.ResponseWriter, r *http.Request) bool {
 	if router.canonicalDomain == "" {
-		return
+		return false
 	}
 
 	addr := strings.Split(r.Host, ":")
@@ -296,8 +297,9 @@ func (router *Router) canonicalRedirect(w http.ResponseWriter, r *http.Request) 
 
 		logger.Trace().Fields(logging.F("host", r.Host), logging.F("domain", router.canonicalDomain), logging.F("port", port), logging.F("protocol", protocol)).Msg("redirecting to canonical domain")
 		http.Redirect(w, r, protocol+"://"+router.canonicalDomain+port+r.RequestURI, http.StatusMovedPermanently)
-		return
+		return true
 	}
+	return false
 }
 
 func (router *Router) honeypot(w http.ResponseWriter, r *http.Request) {
