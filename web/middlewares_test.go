@@ -65,10 +65,10 @@ func TestCORSConfigDefaults(t *testing.T) {
 
 func TestCORSConfigCustomValues(t *testing.T) {
 	config := &CORSConfig{
-		AllowOrigin:  "https://example.com",
-		AllowMethods: []string{"GET", "POST"},
-		AllowHeaders: []string{"X-Custom"},
-		MaxAge:       3600,
+		AllowOrigin:   "https://example.com",
+		AllowMethods:  []string{"GET", "POST"},
+		AllowHeaders:  []string{"X-Custom"},
+		MaxAge:        3600,
 		ExposeHeaders: []string{"X-Request-Id", "X-Trace-Id"},
 	}
 	handler := corsHeaderMiddlewareWithConfig(config)(noopHandler)
