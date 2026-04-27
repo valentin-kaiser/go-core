@@ -4,27 +4,33 @@ name: Github Super-Linter
 
 on:
   push:
-    branches: [main, master]
+    branches: [ main, master ]
   pull_request:
-    branches: [main, master]
-permissions:
-  contents: read
-  packages: read
-  statuses: write
-    
+    branches: [ main, master ]
+
+permissions: {}
+
 jobs:
   build:
     name: Lint Code Base
     runs-on: ubuntu-latest
 
+    permissions:
+      contents: read
+      packages: read
+      issues: write
+      pull-requests: write
+      statuses: write
+
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Lint Code Base
-        uses: super-linter/super-linter/slim@v7.4.0
+        uses: super-linter/super-linter/slim@v8.6.0
         env:
           DEFAULT_BRANCH: main
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
