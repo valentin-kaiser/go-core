@@ -37,7 +37,7 @@ jobs:
         run: |
           # Exclude machine package on Linux as it requires hardware access not available in CI
           packages=$(go list ./... | grep -v '/machine$')
-          go test -race -coverprofile=coverage.out -covermode=atomic $packages
+          go test -v $packages
 
       - name: Run go vet
         run: go vet ./...
