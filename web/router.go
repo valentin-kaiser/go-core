@@ -281,7 +281,13 @@ func (router *Router) canonicalRedirect(w http.ResponseWriter, r *http.Request) 
 		return false
 	}
 
-	addr := strings.Split(r.Host, ":")
+	host := r.Host
+	if xfh := r.Header.Get("X-Forwarded-Host"); xfh != "" {
+		host = strings.SplitN(xfh, ",", 2)[0]
+		host = strings.TrimSpace(host)
+	}
+
+	addr := strings.Split(host, ":")
 
 	port := ""
 	domain := addr[0]
@@ -293,9 +299,11 @@ func (router *Router) canonicalRedirect(w http.ResponseWriter, r *http.Request) 
 		protocol := "http"
 		if r.TLS != nil {
 			protocol = "https"
+		} else if xfp := r.Header.Get("X-Forwarded-Proto"); xfp != "" {
+			protocol = strings.TrimSpace(strings.SplitN(xfp, ",", 2)[0])
 		}
 
-		logger.Trace().Fields(logging.F("host", r.Host), logging.F("domain", router.canonicalDomain), logging.F("port", port), logging.F("protocol", protocol)).Msg("redirecting to canonical domain")
+		logger.Trace().Fields(logging.F("host", host), logging.F("domain", router.canonicalDomain), logging.F("port", port), logging.F("protocol", protocol)).Msg("redirecting to canonical domain")
 		http.Redirect(w, r, protocol+"://"+router.canonicalDomain+port+r.RequestURI, http.StatusMovedPermanently)
 		return true
 	}
