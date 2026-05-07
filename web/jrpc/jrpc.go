@@ -602,6 +602,13 @@ func (s *Service) call(ctx context.Context, service, method string, req proto.Me
 		reqVal = reqPtr
 	}
 
+	// Ensure the request value is never a nil pointer. If it is, initialize
+	// a zero-value instance of the expected type so handlers always receive
+	// a non-nil argument.
+	if reqVal.Kind() == reflect.Ptr && reqVal.IsNil() {
+		reqVal = reflect.New(reqVal.Type().Elem())
+	}
+
 	outs := m.Call([]reflect.Value{reflect.ValueOf(ctx), reqVal})
 	res := outs[0].Interface()
 	if e := outs[1].Interface(); e != nil {
@@ -751,6 +758,10 @@ func (s *Service) handleServerStream(ctx context.Context, conn *websocket.Conn, 
 	if !reqVal.Type().AssignableTo(wanted) {
 		s.closeWS(conn, websocket.CloseInternalServerErr, apperror.NewError("request message is of wrong type"))
 		return
+	}
+
+	if reqVal.Kind() == reflect.Ptr && reqVal.IsNil() {
+		reqVal = reflect.New(reqVal.Type().Elem())
 	}
 
 	done := make(chan error, 1)
