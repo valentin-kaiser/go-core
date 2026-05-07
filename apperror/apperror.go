@@ -74,7 +74,7 @@ var (
 	// ErrorHandler is a function that handles deferred error checks
 	ErrorHandler = func(err error, msg string) {
 		if flag.Debug {
-			panic(fmt.Sprintf(FullFormat, strings.Join(trace(Error{Message: msg}), TraceDelimiter), msg, err.Error()))
+			panic(fmt.Sprintf(FullFormat, strings.Join(TraceError(Error{Message: msg}), TraceDelimiter), msg, err.Error()))
 		}
 		panic(fmt.Sprintf(ErrorFormat, msg, err.Error()))
 	}
@@ -98,7 +98,7 @@ func NewError(msg string) Error {
 	e := Error{
 		Message: msg,
 	}
-	e.Trace = trace(e)
+	e.Trace = TraceError(e)
 	return e
 }
 
@@ -108,7 +108,7 @@ func NewErrorf(format string, a ...interface{}) Error {
 	e := Error{
 		Message: fmt.Sprintf(format, a...),
 	}
-	e.Trace = trace(e)
+	e.Trace = TraceError(e)
 	return e
 }
 
@@ -117,7 +117,7 @@ func NewErrorT(ctx context.Context, key string, a ...interface{}) Error {
 	e := Error{
 		Message: i18n.TfCTX(ctx, key, a...),
 	}
-	e.Trace = trace(e)
+	e.Trace = TraceError(e)
 	return e
 }
 
@@ -128,13 +128,13 @@ func Wrap(err error) error {
 		return nil
 	}
 	if e, ok := err.(Error); ok {
-		e.Trace = trace(e)
+		e.Trace = TraceError(e)
 		return e
 	}
 	e := Error{
 		Message: err.Error(),
 	}
-	e.Trace = trace(e)
+	e.Trace = TraceError(e)
 	return e
 }
 
@@ -324,7 +324,7 @@ func Parse(str string) Error {
 		}
 	}
 
-	e.Trace = trace(e)
+	e.Trace = TraceError(e)
 	return e
 }
 
@@ -418,21 +418,26 @@ func Anonymous(enable bool) {
 	anonymous = enable
 }
 
-// trace generates a stack trace for the error
+// TraceError generates a stack TraceError for the error
 // It uses runtime.Caller to get the file name and line number
-func trace(e Error) []string {
-	pc, file, line, ok := runtime.Caller(2)
+func TraceError(e Error) []string {
+	e.Trace = append(e.Trace, Trace(3))
+	return e.Trace
+}
+
+// Trace returns the caller location as a string in the format "file:line"
+func Trace(skip int) string {
+	pc, file, line, ok := runtime.Caller(skip)
 	if !ok {
-		return e.Trace
+		return "unknown"
 	}
 
 	if anonymous {
 		if f := runtime.FuncForPC(pc); f != nil {
-			e.Trace = append(e.Trace, fmt.Sprintf("%v:%v", f.Name(), line))
+			return fmt.Sprintf("%v:%v", f.Name(), line)
 		}
-		return e.Trace
+		return "unknown"
 	}
 
-	e.Trace = append(e.Trace, fmt.Sprintf("%s:%d", file, line))
-	return e.Trace
+	return fmt.Sprintf("%s:%d", file, line)
 }
