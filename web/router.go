@@ -300,7 +300,10 @@ func (router *Router) canonicalRedirect(w http.ResponseWriter, r *http.Request) 
 		if r.TLS != nil {
 			protocol = "https"
 		} else if xfp := r.Header.Get("X-Forwarded-Proto"); xfp != "" {
-			protocol = strings.TrimSpace(strings.SplitN(xfp, ",", 2)[0])
+			candidate := strings.ToLower(strings.TrimSpace(strings.SplitN(xfp, ",", 2)[0]))
+			if candidate == "https" || candidate == "http" {
+				protocol = candidate
+			}
 		}
 
 		logger.Trace().Fields(logging.F("host", host), logging.F("domain", router.canonicalDomain), logging.F("port", port), logging.F("protocol", protocol)).Msg("redirecting to canonical domain")
