@@ -4,10 +4,12 @@ package machine
 
 import (
 	"fmt"
+	"net"
 	"os/exec"
 	"strings"
 
 	"github.com/valentin-kaiser/go-core/apperror"
+	"golang.org/x/sys/windows/registry"
 )
 
 // collectHardwareIdentifiersWithOptions gathers Windows-specific hardware identifiers based on generator config
@@ -114,62 +116,106 @@ func parseWmicMultipleValues(output, prefix string) []string {
 	return values
 }
 
-// getWindowsCPUID retrieves CPU processor ID using wmic
+// runPowerShellSingle executes a PowerShell command and returns the trimmed single-line result.
+func runPowerShellSingle(query string) (string, error) {
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", query)
+	output, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	value := strings.TrimSpace(string(output))
+	switch value {
+	case "", "To be filled by O.E.M.":
+		return "", fmt.Errorf("powershell returned empty or placeholder value for query: %s", query)
+	default:
+		return value, nil
+	}
+}
+
+// runPowerShellMultiple executes a PowerShell command that returns multiple values joined by comma,
+// then splits and filters the result.
+func runPowerShellMultiple(query string) ([]string, error) {
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", query)
+	output, err := cmd.Output()
+	if err != nil {
+		return nil, err
+	}
+	raw := strings.TrimSpace(string(output))
+	if raw == "" {
+		return nil, fmt.Errorf("powershell returned no values for query: %s", query)
+	}
+	var values []string
+	for _, v := range strings.Split(raw, ",") {
+		v = strings.TrimSpace(v)
+		if v != "" && v != "To be filled by O.E.M." {
+			values = append(values, v)
+		}
+	}
+	return values, nil
+}
+
+// getWindowsCPUID retrieves CPU processor ID using wmic, falling back to PowerShell Get-CimInstance.
 func getWindowsCPUID() (string, error) {
 	cmd := exec.Command("wmic", "cpu", "get", "ProcessorId", "/value")
-	output, err := cmd.Output()
-	switch err {
-	case nil:
-		return parseWmicValue(string(output), "ProcessorId=")
-	default:
-		return "", err
+	if output, err := cmd.Output(); err == nil {
+		if val, err := parseWmicValue(string(output), "ProcessorId="); err == nil {
+			return val, nil
+		}
 	}
+	return runPowerShellSingle("(Get-CimInstance -ClassName Win32_Processor).ProcessorId")
 }
 
-// getWindowsMotherboardSerial retrieves motherboard serial number using wmic
+// getWindowsMotherboardSerial retrieves motherboard serial number using wmic, falling back to PowerShell Get-CimInstance.
 func getWindowsMotherboardSerial() (string, error) {
 	cmd := exec.Command("wmic", "baseboard", "get", "SerialNumber", "/value")
-	output, err := cmd.Output()
-	switch err {
-	case nil:
-		return parseWmicValue(string(output), "SerialNumber=")
-	default:
-		return "", err
+	if output, err := cmd.Output(); err == nil {
+		if val, err := parseWmicValue(string(output), "SerialNumber="); err == nil {
+			return val, nil
+		}
 	}
+	return runPowerShellSingle("(Get-CimInstance -ClassName Win32_BaseBoard).SerialNumber")
 }
 
-// getWindowsSystemUUID retrieves system UUID using wmic
+// getWindowsSystemUUID retrieves system UUID from the registry, falling back to PowerShell Get-CimInstance.
 func getWindowsSystemUUID() (string, error) {
-	cmd := exec.Command("wmic", "csproduct", "get", "UUID", "/value")
-	output, err := cmd.Output()
-	switch err {
-	case nil:
-		return parseWmicValue(string(output), "UUID=")
-	default:
-		return "", err
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Cryptography`, registry.QUERY_VALUE)
+	if err == nil {
+		defer k.Close()
+		if val, _, err := k.GetStringValue("MachineGuid"); err == nil && val != "" {
+			return val, nil
+		}
 	}
+	return runPowerShellSingle("(Get-CimInstance -ClassName Win32_ComputerSystemProduct).UUID")
 }
 
-// getWindowsMACAddresses retrieves MAC addresses using wmic
+// getWindowsMACAddresses retrieves MAC addresses using net.Interfaces (stdlib).
 func getWindowsMACAddresses() ([]string, error) {
-	cmd := exec.Command("wmic", "path", "win32_networkadapter", "where", "physicaladapter=true", "get", "MacAddress", "/value")
-	output, err := cmd.Output()
-	switch err {
-	case nil:
-		return parseWmicMultipleValues(string(output), "MacAddress="), nil
-	default:
+	ifaces, err := net.Interfaces()
+	if err != nil {
 		return nil, err
 	}
+	var macs []string
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		if iface.Flags&net.FlagUp == 0 {
+			continue
+		}
+		if mac := iface.HardwareAddr.String(); mac != "" {
+			macs = append(macs, mac)
+		}
+	}
+	return macs, nil
 }
 
-// getWindowsDiskSerials retrieves disk serial numbers using wmic
+// getWindowsDiskSerials retrieves disk serial numbers using wmic, falling back to PowerShell Get-CimInstance.
 func getWindowsDiskSerials() ([]string, error) {
 	cmd := exec.Command("wmic", "diskdrive", "get", "SerialNumber", "/value")
-	output, err := cmd.Output()
-	switch err {
-	case nil:
-		return parseWmicMultipleValues(string(output), "SerialNumber="), nil
-	default:
-		return nil, err
+	if output, err := cmd.Output(); err == nil {
+		if vals := parseWmicMultipleValues(string(output), "SerialNumber="); len(vals) > 0 {
+			return vals, nil
+		}
 	}
+	return runPowerShellMultiple("(Get-CimInstance -ClassName Win32_DiskDrive).SerialNumber -join ','")
 }
