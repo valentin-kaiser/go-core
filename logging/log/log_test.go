@@ -1,7 +1,9 @@
 package log_test
 
 import (
+	"bytes"
 	"errors"
+	stdlog "log"
 	"testing"
 
 	"github.com/valentin-kaiser/go-core/logging"
@@ -45,5 +47,16 @@ func TestLoggerSingleton(t *testing.T) {
 
 	t.Run("printf logging", func(t *testing.T) {
 		log.Printf("formatted message: %s, number: %d", "test", 42)
+	})
+
+	t.Run("slog helper", func(t *testing.T) {
+		var out bytes.Buffer
+		logging.SetGlobalAdapter(logging.NewStandardAdapterWithLogger(stdlog.New(&out, "", 0)))
+
+		log.SLogger().Info("slog message", "k", "v")
+
+		if out.Len() == 0 {
+			t.Fatal("expected slog helper to log output")
+		}
 	})
 }

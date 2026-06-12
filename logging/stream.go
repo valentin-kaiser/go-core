@@ -109,7 +109,7 @@ func (sw *StreamWriter) removeListener(index int) {
 
 // sendBufferedEntries sends all buffered entries to a channel, stopping if channel is full
 func (sw *StreamWriter) sendBufferedEntries(ch chan string) {
-	for i := len(sw.buffer) - 1; i >= 0; i-- {
+	for i := 0; i < len(sw.buffer); i++ {
 		entry := sw.buffer[i]
 		select {
 		case ch <- entry:
