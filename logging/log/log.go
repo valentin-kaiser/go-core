@@ -4,6 +4,8 @@
 package log
 
 import (
+	"log/slog"
+
 	"github.com/valentin-kaiser/go-core/logging"
 )
 
@@ -65,6 +67,11 @@ func Printf(format string, v ...interface{}) {
 // F is a helper function to create fields
 func F(key string, value interface{}) logging.Field {
 	return logging.F(key, value)
+}
+
+// SLogger returns a slog logger backed by the current global adapter.
+func SLogger() *slog.Logger {
+	return logging.SLogger()
 }
 
 func global() logging.Adapter {
