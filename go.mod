@@ -11,8 +11,8 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/kardianos/service v1.2.4
-	github.com/mattn/go-sqlite3 v1.14.45
-	github.com/rabbitmq/amqp091-go v1.11.0
+	github.com/mattn/go-sqlite3 v1.14.46
+	github.com/rabbitmq/amqp091-go v1.12.0
 	github.com/redis/go-redis/v9 v9.20.1
 	github.com/rs/zerolog v1.35.1
 	github.com/spf13/pflag v1.0.10
