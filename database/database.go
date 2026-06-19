@@ -159,6 +159,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -674,7 +675,7 @@ func (d *Database[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
 	d.middlewareMutex.RUnlock()
 
 	driverName := wrap(string(driver), middlewares)
-	conn, err := sql.Open(driverName, dsn)
+	conn, err := sql.Open(driverName, escapeDSNParams(dsn))
 	if err != nil {
 		return nil, apperror.Wrap(err)
 	}
@@ -1308,4 +1309,28 @@ func parseSQLiteFilePath(dsn string) (string, error) {
 
 	// Clean and normalize the file path
 	return filepath.Clean(strings.TrimSpace(filePath)), nil
+}
+
+// escapeDSNParams takes a DSN string and URL-encodes the values of any query parameters.
+// For example, "user:password@tcp(localhost:3306)/dbname?time_zone='+00:00'" becomes "user:password@tcp(localhost:3306)/dbname?time_zone=%27%2B00%3A00%27"
+func escapeDSNParams(dsn string) string {
+	s := strings.Split(dsn, "?")
+	if len(s) != 2 {
+		return dsn
+	}
+
+	base := s[0]
+	params := strings.Split(s[1], "&")
+	for i, param := range params {
+		kv := strings.SplitN(param, "=", 2)
+		if len(kv) != 2 {
+			continue
+		}
+		key := kv[0]
+		value := kv[1]
+		params[i] = fmt.Sprintf("%s=%s", key, url.QueryEscape(value))
+	}
+
+	return base + "?" + strings.Join(params, "&")
+
 }
