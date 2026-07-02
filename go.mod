@@ -11,14 +11,14 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/kardianos/service v1.2.4
-	github.com/mattn/go-sqlite3 v1.14.46
+	github.com/mattn/go-sqlite3 v1.14.47
 	github.com/rabbitmq/amqp091-go v1.12.0
-	github.com/redis/go-redis/v9 v9.20.1
+	github.com/redis/go-redis/v9 v9.21.0
 	github.com/rs/zerolog v1.35.1
 	github.com/spf13/pflag v1.0.10
-	go.etcd.io/etcd/api/v3 v3.6.12
-	go.etcd.io/etcd/client/v3 v3.6.12
-	go.etcd.io/etcd/server/v3 v3.6.12
+	go.etcd.io/etcd/api/v3 v3.6.13
+	go.etcd.io/etcd/client/v3 v3.6.13
+	go.etcd.io/etcd/server/v3 v3.6.13
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.53.0
 	golang.org/x/sync v0.21.0
@@ -66,8 +66,8 @@ require (
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20201229170055-e5319fda7802 // indirect
 	github.com/xiang90/probing v0.0.0-20190116061207-43a291ad63a2 // indirect
 	go.etcd.io/bbolt v1.4.3 // indirect
-	go.etcd.io/etcd/client/pkg/v3 v3.6.12 // indirect
-	go.etcd.io/etcd/pkg/v3 v3.6.12 // indirect
+	go.etcd.io/etcd/client/pkg/v3 v3.6.13 // indirect
+	go.etcd.io/etcd/pkg/v3 v3.6.13 // indirect
 	go.etcd.io/raft/v3 v3.6.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.59.0 // indirect
