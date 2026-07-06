@@ -337,7 +337,7 @@ func (m *Manager) Stop() error {
 		return apperror.NewError("manager is not running")
 	}
 
-	logger.Info().Msg("stopping queue manager")
+	logger.Debug().Msg("stopping queue manager")
 	if m.scheduleTicker != nil {
 		m.scheduleTicker.Stop()
 	}
@@ -352,7 +352,7 @@ func (m *Manager) Stop() error {
 
 	select {
 	case <-done:
-		logger.Info().Msg("queue manager stopped")
+		logger.Debug().Msg("queue manager stopped")
 	case <-time.After(time.Second * 5):
 		logger.Warn().Msg("timeout waiting for workers to stop")
 	}

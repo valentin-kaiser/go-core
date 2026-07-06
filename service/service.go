@@ -7,8 +7,8 @@
 //
 // The package automatically detects whether the application is running in interactive
 // mode (console/terminal) or as a system service, and adjusts behavior accordingly.
-// When running as a service, it automatically configures the data directory relative
-// to the executable location.
+// When running as a service, it automatically configures the data directory in the
+// platform's machine-wide application data location.
 //
 // Features:
 //   - Cross-platform service management (Windows, Linux, macOS)
@@ -124,7 +124,6 @@
 package service
 
 import (
-	"os"
 	"path/filepath"
 
 	"github.com/kardianos/service"
@@ -146,12 +145,7 @@ func init() {
 	var err error
 	interactive = service.AvailableSystems()[len(service.AvailableSystems())-1].Interactive()
 	if !interactive {
-		flag.Path, err = os.Executable()
-		if err != nil {
-			logger.Error().Fields(logging.F("error", err)).Msg("creating service failed")
-			return
-		}
-		flag.Path = filepath.Join(filepath.Dir(flag.Path), "data")
+		flag.Path = flag.ServiceDataPath()
 	}
 
 	flag.Path, err = filepath.Abs(flag.Path)

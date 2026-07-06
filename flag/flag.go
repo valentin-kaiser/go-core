@@ -5,7 +5,7 @@
 // for a set of common default flags.
 //
 // Default flags:
-//   - `--path`    (string): Sets the application’s default path (default: "./data")
+//   - `--path`    (string): Sets the application data path (default: OS-specific)
 //   - `--help`    (bool): Displays the help message
 //   - `--version` (bool): Prints the application version
 //   - `--debug`   (bool): Enables debug mode
@@ -70,10 +70,21 @@ var (
 )
 
 func init() {
-	pflag.StringVar(&Path, "path", "./data", "Sets the application working directory")
+	Path = DefaultDataPath()
+	pflag.StringVar(&Path, "path", Path, "Sets the application working directory")
 	pflag.BoolVar(&Help, "help", false, "Prints the help page")
 	pflag.BoolVar(&Version, "version", false, "Prints the software version")
 	pflag.BoolVar(&Debug, "debug", false, "Enables debug mode")
+}
+
+// DefaultDataPath returns the OS-specific application data path for the current executable.
+func DefaultDataPath() string {
+	return dataPath(false)
+}
+
+// ServiceDataPath returns the OS-specific machine-wide data path for the current executable.
+func ServiceDataPath() string {
+	return dataPath(true)
 }
 
 // Init initializes the flags and parses them
