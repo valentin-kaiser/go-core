@@ -10,8 +10,8 @@ import (
 
 func TestDefaultFlags(t *testing.T) {
 	// Test that default flags are properly initialized
-	if flag.Path != "./data" {
-		t.Errorf("Expected default Path to be './data', got '%s'", flag.Path)
+	if flag.Path != flag.DefaultDataPath() {
+		t.Errorf("Expected default Path to be '%s', got '%s'", flag.DefaultDataPath(), flag.Path)
 	}
 
 	if flag.Help != false {
