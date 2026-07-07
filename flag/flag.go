@@ -79,12 +79,12 @@ func init() {
 
 // DefaultDataPath returns the OS-specific application data path for the current executable.
 func DefaultDataPath() string {
-	return dataPath(false)
+	return DataPath(false, "")
 }
 
 // ServiceDataPath returns the OS-specific machine-wide data path for the current executable.
 func ServiceDataPath() string {
-	return dataPath(true)
+	return DataPath(true, "")
 }
 
 // Init initializes the flags and parses them

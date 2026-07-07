@@ -7,10 +7,13 @@ import (
 	"strings"
 )
 
-func dataPath(service bool) string {
-	appName := executableName()
+func DataPath(service bool, appName string) string {
 	if appName == "" {
-		appName = "app"
+		execName := executableName()
+		if execName == "" {
+			execName = "app"
+		}
+		appName = execName
 	}
 
 	return dataPathFor(appName, service)
