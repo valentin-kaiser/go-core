@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/pflag"
 	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/flag"
 )
 
 func (m *manager) setDefault(key string, value interface{}) {
@@ -129,6 +130,7 @@ func (m *manager) declareFlag(label string, usage string, defaultValue interface
 	m.setDefault(label, defaultValue)
 	pflagLabel := kebabCase(label)
 	label = strings.ToLower(label)
+	flag.RegisterEnvVar(pflagLabel, label)
 
 	// Check if flag already exists to avoid redefinition errors
 	if pflag.Lookup(pflagLabel) != nil {

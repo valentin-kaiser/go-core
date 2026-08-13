@@ -14,6 +14,9 @@
 // typically in the `main` function of the application. If the `--help` flag is
 // set, it prints usage information and exits.
 //
+// `PrintHelp` prints the usage information for all registered flags, while
+// `PrintEnvVars` prints the corresponding environment variable names.
+//
 // Additional flags can be registered using `Register`, which accepts the flag
 // name, a pointer to the variable to populate, and a usage description.
 // Existing flags can be overridden using `Override`, which allows changing the
@@ -54,6 +57,9 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"sort"
+	"strings"
+	"sync"
 
 	"github.com/spf13/pflag"
 )
@@ -67,7 +73,22 @@ var (
 	Version bool
 	// Debug indicates whether debug mode is enabled
 	Debug bool
+	// Prefix is prepended to the environment variable names derived from flags.
+	// It is set by the config package to the configuration name.
+	Prefix string
+
+	envNames  = make(map[string]string)
+	envNamesM sync.RWMutex
 )
+
+// RegisterEnvVar maps a flag name to the environment variable name it is read
+// from, without the prefix. It is used by the config package, whose
+// configuration keys do not always match the derived flag names.
+func RegisterEnvVar(name, env string) {
+	envNamesM.Lock()
+	defer envNamesM.Unlock()
+	envNames[name] = env
+}
 
 func init() {
 	Path = DefaultDataPath()
@@ -97,6 +118,64 @@ func Init() {
 func PrintHelp() {
 	fmt.Fprintln(os.Stderr, "Usage:")
 	pflag.PrintDefaults()
+	PrintEnvVars()
+}
+
+// EnvVarName returns the environment variable name derived from a flag name
+func EnvVarName(name string) string {
+	envNamesM.RLock()
+	env, ok := envNames[name]
+	envNamesM.RUnlock()
+
+	if !ok {
+		env = name
+	}
+
+	env = strings.ReplaceAll(env, ".", "_")
+	env = strings.ReplaceAll(env, "-", "_")
+	env = strings.ToUpper(env)
+
+	if Prefix == "" {
+		return env
+	}
+	return Prefix + "_" + env
+}
+
+// PrintEnvVars prints the environment variables derived from the registered
+// flags to standard error output
+func PrintEnvVars() {
+	type entry struct {
+		name     string
+		value    string
+		usage    string
+		defaults string
+	}
+
+	var entries []entry
+	width := 0
+	pflag.CommandLine.VisitAll(func(f *pflag.Flag) {
+		if f.Hidden {
+			return
+		}
+
+		e := entry{
+			name:     EnvVarName(f.Name),
+			value:    f.Value.Type(),
+			usage:    f.Usage,
+			defaults: f.DefValue,
+		}
+		if len(e.name) > width {
+			width = len(e.name)
+		}
+		entries = append(entries, e)
+	})
+
+	sort.Slice(entries, func(i, j int) bool { return entries[i].name < entries[j].name })
+
+	fmt.Fprintln(os.Stderr, "Environment variables:")
+	for _, e := range entries {
+		fmt.Fprintf(os.Stderr, "  %-*s %s\t%s (default %q)\n", width, e.name, e.value, e.usage, e.defaults)
+	}
 }
 
 // Arguments returns the non-flag command-line arguments
