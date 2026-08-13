@@ -153,6 +153,7 @@ func (m *manager) WithName(name string) *manager {
 	defer mutex.Unlock()
 	m.name = name
 	m.prefix = strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+	flag.Prefix = m.prefix
 	return m
 }
 
