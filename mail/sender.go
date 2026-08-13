@@ -94,10 +94,6 @@ func (s *smtpSender) SendAsync(_ context.Context, _ *Message) error {
 
 // validateMessage validates the email message
 func (s *smtpSender) validateMessage(message *Message) error {
-	if message.From == "" && s.config.From == "" {
-		return apperror.NewError("from address is required")
-	}
-
 	if len(message.To) == 0 {
 		return apperror.NewError("at least one recipient is required")
 	}

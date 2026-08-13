@@ -237,12 +237,6 @@ func (c *ClientConfig) Validate() error {
 			return apperror.NewError("SMTP password is required")
 		}
 	}
-	if c.From == "" {
-		return apperror.NewError("SMTP from address is required")
-	}
-	if c.FQDN == "" {
-		return apperror.NewError("SMTP FQDN is required")
-	}
 	return nil
 }
 
