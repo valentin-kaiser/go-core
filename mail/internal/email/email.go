@@ -352,8 +352,8 @@ func (e *Email) Send(address string, auth smtp.Auth, helo string) error {
 		}
 		to[i] = addr.Address
 	}
-	if e.From == "" || len(to) == 0 {
-		return apperror.NewError("at least one From address and one To address must be specified")
+	if len(to) == 0 {
+		return apperror.NewError("at least one To address must be specified")
 	}
 	sender, err := e.parseSender()
 	if err != nil {
@@ -437,8 +437,8 @@ func (e *Email) SendWithTLS(address string, auth smtp.Auth, config *tls.Config, 
 		}
 		to[i] = addr.Address
 	}
-	if e.From == "" || len(to) == 0 {
-		return apperror.NewError("at least one From address and one To address must be specified")
+	if len(to) == 0 {
+		return apperror.NewError("at least one To address must be specified")
 	}
 	sender, err := e.parseSender()
 	if err != nil {
@@ -514,8 +514,8 @@ func (e *Email) SendWithStartTLS(address string, auth smtp.Auth, config *tls.Con
 		}
 		to[i] = addr.Address
 	}
-	if e.From == "" || len(to) == 0 {
-		return apperror.NewError("at least one From address and one To address must be specified")
+	if len(to) == 0 {
+		return apperror.NewError("at least one To address must be specified")
 	}
 	sender, err := e.parseSender()
 	if err != nil {
@@ -649,6 +649,10 @@ func (e *Email) parseSender() (string, error) {
 			return "", apperror.NewError("could not parse sender address").AddError(err)
 		}
 		return sender.Address, nil
+	}
+
+	if e.From == "" {
+		return "", nil
 	}
 
 	from, err := mail.ParseAddress(e.From)
