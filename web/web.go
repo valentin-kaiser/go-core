@@ -541,15 +541,26 @@ func (s *Server) WithWebsocket(path string, handler func(http.ResponseWriter, *h
 	return s
 }
 
-// WithJRPC adds a JSON-RPC service handler to the server
-// It will return an error in the Error field if the path is already registered as a handler or a websocket
-// The service will be accessible at path/{service}/{method}
-func (s *Server) WithJRPC(path string, service *jrpc.Service) *Server {
+// WithJRPC adds one or more JSON-RPC service handlers to the server.
+// It will return an error in the Error field if the path is already registered as a handler or a websocket.
+// Services will be accessible at path/{service}/{method}.
+func (s *Server) WithJRPC(path string, services ...*jrpc.Service) *Server {
 	if s.Error != nil {
 		return s
 	}
 
 	path = strings.TrimSuffix(path, "/") + "/{service}/{method}"
+	if len(services) == 0 {
+		s.Error = apperror.NewError("no jRPC services provided")
+		return s
+	}
+	for _, service := range services {
+		if service == nil {
+			s.Error = apperror.NewError("jRPC service cannot be nil")
+			return s
+		}
+	}
+
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	if _, ok := s.handler[path]; ok {
@@ -560,8 +571,20 @@ func (s *Server) WithJRPC(path string, service *jrpc.Service) *Server {
 		s.Error = apperror.NewErrorf("path %s is already registered as a websocket", path)
 		return s
 	}
-	s.handler[path] = http.HandlerFunc(service.HandlerFunc)
-	s.router.HandleFunc(path, service.HandlerFunc)
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serviceName := r.PathValue("service")
+		methodName := r.PathValue("method")
+		for _, service := range services {
+			if service.Handles(serviceName, methodName) {
+				service.HandlerFunc(w, r)
+				return
+			}
+		}
+
+		http.Error(w, "method not found", http.StatusNotFound)
+	})
+	s.handler[path] = handler
+	s.router.HandleFunc(path, handler)
 	return s
 }
 

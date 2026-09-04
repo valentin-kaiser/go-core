@@ -313,6 +313,12 @@ func (s *Service) HandlerFunc(w http.ResponseWriter, r *http.Request) {
 	s.unary(w, r)
 }
 
+// Handles reports whether this service has a handler for the given service and method.
+func (s *Service) Handles(service, method string) bool {
+	_, err := s.find(service, method)
+	return err == nil
+}
+
 // isWebSocketRequest checks if the HTTP request is requesting a WebSocket upgrade
 // Optimized version with reduced string allocations
 func (s *Service) isWebSocketRequest(r *http.Request) bool {
