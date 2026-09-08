@@ -1,12 +1,12 @@
 module github.com/valentin-kaiser/go-core
 
-go 1.26
+go 1.26.0
 
 require (
 	github.com/NYTimes/gziphandler v1.1.1
 	github.com/ProtonMail/gopenpgp/v3 v3.4.1
 	github.com/cespare/xxhash/v2 v2.3.0
-	github.com/go-sql-driver/mysql v1.10.0
+	github.com/go-sql-driver/mysql v1.10.1
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.10.0
@@ -20,11 +20,12 @@ require (
 	go.etcd.io/etcd/client/v3 v3.7.1
 	go.etcd.io/etcd/server/v3 v3.7.1
 	go.uber.org/zap v1.28.0
-	golang.org/x/crypto v0.55.0
+	golang.org/x/crypto v0.56.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
 	golang.org/x/text v0.41.0
 	golang.org/x/time v0.15.0
+	google.golang.org/grpc v1.83.1
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v2 v2.4.0
@@ -81,7 +82,6 @@ require (
 	golang.org/x/net v0.57.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
-	google.golang.org/grpc v1.83.1 // indirect
 	k8s.io/utils v0.0.0-20260108192941-914a6e750570 // indirect
 	sigs.k8s.io/yaml v1.6.0 // indirect
 )
