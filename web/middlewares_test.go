@@ -213,6 +213,60 @@ func TestCORSConfigExposeHeadersOmittedWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestRouteCacheControlOverridesServerWide(t *testing.T) {
+	server := New()
+	server.WithCacheControl("public, max-age=3600")
+	server.WithRouteCacheControl("/api/", "no-store")
+	if server.Error != nil {
+		t.Fatalf("unexpected error: %v", server.Error)
+	}
+
+	handler := securityHeaderMiddlewareWithServer(server)(noopHandler)
+
+	// Route-specific pattern should win over the server-wide default
+	req := httptest.NewRequest(http.MethodGet, "/api/users", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertHeader(t, rec, "Cache-Control", "no-store")
+
+	// Requests outside the pattern fall back to the server-wide value
+	req = httptest.NewRequest(http.MethodGet, "/other", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertHeader(t, rec, "Cache-Control", "public, max-age=3600")
+}
+
+func TestRouteCacheControlWithoutServerWideDefault(t *testing.T) {
+	server := New()
+	server.WithRouteCacheControl("/static/", "public, max-age=31536000, immutable")
+	if server.Error != nil {
+		t.Fatalf("unexpected error: %v", server.Error)
+	}
+
+	handler := securityHeaderMiddlewareWithServer(server)(noopHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/static/app.js", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertHeader(t, rec, "Cache-Control", "public, max-age=31536000, immutable")
+
+	// Unmatched routes fall back to the default security header value
+	req = httptest.NewRequest(http.MethodGet, "/other", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertHeader(t, rec, "Cache-Control", securityHeaders["Cache-Control"])
+}
+
+func TestRouteCacheControlDuplicatePatternErrors(t *testing.T) {
+	server := New()
+	server.WithRouteCacheControl("/api/", "no-store")
+	server.WithRouteCacheControl("/api/", "public")
+
+	if server.Error == nil {
+		t.Fatal("expected error when registering a cache control value for an already-registered pattern")
+	}
+}
+
 func assertHeader(t *testing.T, rec *httptest.ResponseRecorder, key, want string) {
 	t.Helper()
 	got := rec.Header().Get(key)

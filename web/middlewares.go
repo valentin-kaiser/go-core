@@ -72,17 +72,22 @@ func securityHeaderMiddlewareWithServer(server *Server) func(http.Handler) http.
 				}
 			}
 
+			cacheControl := server.cacheControl
+			if routeCacheControl, ok := server.router.cacheControlFor(r.URL.Path); ok {
+				cacheControl = routeCacheControl
+			}
+
 			for key, value := range securityHeaders {
 				// Skip Cache-Control if a custom one is set
-				if key == "Cache-Control" && server.cacheControl != "" {
+				if key == "Cache-Control" && cacheControl != "" {
 					continue
 				}
 				w.Header().Set(key, value)
 			}
 
 			// Set custom cache control if specified
-			if server.cacheControl != "" {
-				w.Header().Set("Cache-Control", server.cacheControl)
+			if cacheControl != "" {
+				w.Header().Set("Cache-Control", cacheControl)
 			}
 
 			if flag.Debug {

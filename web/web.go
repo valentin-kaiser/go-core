@@ -829,6 +829,26 @@ func (s *Server) WithCacheControl(cacheControl string) *Server {
 	return s
 }
 
+// WithRouteCacheControl sets a custom Cache-Control header value for a specific route pattern.
+// This overrides both the default security header cache control and any value set via
+// WithCacheControl for requests matching the given pattern. The pattern is matched the same
+// way as other route-scoped features (WithRateLimit, WithOnHTTPCode): an exact path match,
+// or a prefix match if the pattern ends with "/".
+// It will return an error in the Error field if the pattern already has a cache control value registered.
+func (s *Server) WithRouteCacheControl(pattern, cacheControl string) *Server {
+	if s.Error != nil {
+		return s
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	err := s.router.registerCacheControl(pattern, cacheControl)
+	if err != nil {
+		s.Error = apperror.Wrap(err)
+	}
+	return s
+}
+
 // WithGzip enables gzip compression for the server
 func (s *Server) WithGzip() *Server {
 	s.mutex.Lock()
