@@ -133,8 +133,29 @@ func corsHeaderMiddleware(next http.Handler) http.Handler {
 // non-matching Origin will not receive credentialed CORS headers. A wildcard "*" AllowOrigin
 // is not permitted with credentials and will be treated as if no origin is configured.
 func corsHeaderMiddlewareWithConfig(config *CORSConfig) Middleware {
+	apply := buildCORSApplier(config)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			apply(w, r)
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// buildCORSApplier resolves a CORSConfig into a function that sets the appropriate CORS
+// headers on a response for a given request, without invoking the next handler. A nil
+// config resolves to the default permissive CORS headers.
+// When AllowCredentials is true, the applier validates the request Origin against the
+// configured AllowOrigin before reflecting it. Requests with no Origin header or a
+// non-matching Origin will not receive credentialed CORS headers. A wildcard "*" AllowOrigin
+// is not permitted with credentials and will be treated as if no origin is configured.
+func buildCORSApplier(config *CORSConfig) func(http.ResponseWriter, *http.Request) {
 	if config == nil {
-		return corsHeaderMiddleware
+		return func(w http.ResponseWriter, _ *http.Request) {
+			for key, value := range corsHeaders {
+				w.Header().Set(key, value)
+			}
+		}
 	}
 
 	// Apply defaults for empty values
@@ -171,30 +192,56 @@ func corsHeaderMiddlewareWithConfig(config *CORSConfig) Middleware {
 	// AllowOrigin before reflecting it. Using "*" with credentials is invalid per the
 	// CORS spec, so a wildcard origin is never reflected for credentialed requests.
 	if config.AllowCredentials {
-		return func(next http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				for key, value := range headers {
-					w.Header().Set(key, value)
-				}
+		return func(w http.ResponseWriter, r *http.Request) {
+			for key, value := range headers {
+				w.Header().Set(key, value)
+			}
 
-				origin := r.Header.Get("Origin")
-				if origin != "" && allowOrigin != "*" && origin == allowOrigin {
-					w.Header().Set("Access-Control-Allow-Origin", origin)
-					w.Header().Set("Access-Control-Allow-Credentials", "true")
-				}
-				addVaryHeader(w, "Origin")
-
-				next.ServeHTTP(w, r)
-			})
+			origin := r.Header.Get("Origin")
+			if origin != "" && allowOrigin != "*" && origin == allowOrigin {
+				w.Header().Set("Access-Control-Allow-Origin", origin)
+				w.Header().Set("Access-Control-Allow-Credentials", "true")
+			}
+			addVaryHeader(w, "Origin")
 		}
 	}
 
 	// Without credentials, use the static origin value
 	headers["Access-Control-Allow-Origin"] = allowOrigin
+	return func(w http.ResponseWriter, _ *http.Request) {
+		for key, value := range headers {
+			w.Header().Set(key, value)
+		}
+	}
+}
+
+// corsHeaderMiddlewareWithServer creates a CORS middleware with access to the server's
+// configured CORS policy. A route-specific policy registered via WithRouteCORS overrides
+// the server-wide policy set via WithCORSHeaders for requests matching its pattern.
+func corsHeaderMiddlewareWithServer(server *Server) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			for key, value := range headers {
-				w.Header().Set(key, value)
+			apply := server.corsApplier
+			if routeApply, ok := server.router.corsFor(r.URL.Path); ok {
+				apply = routeApply
+			}
+			if apply != nil {
+				apply(w, r)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+// routeHeaderMiddlewareWithServer creates a middleware that sets the custom headers
+// registered via WithRouteHeader/WithRouteHeaders for requests matching their pattern.
+func routeHeaderMiddlewareWithServer(server *Server) Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if headers, ok := server.router.headersFor(r.URL.Path); ok {
+				for key, value := range headers {
+					w.Header().Set(key, value)
+				}
 			}
 			next.ServeHTTP(w, r)
 		})
