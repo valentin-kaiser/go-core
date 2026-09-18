@@ -12,7 +12,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/kardianos/service v1.3.0
 	github.com/mattn/go-sqlite3 v1.14.52
-	github.com/rabbitmq/amqp091-go v1.14.0
+	github.com/rabbitmq/amqp091-go v1.15.0
 	github.com/redis/go-redis/v9 v9.22.0
 	github.com/rs/zerolog v1.35.1
 	github.com/spf13/pflag v1.0.10
