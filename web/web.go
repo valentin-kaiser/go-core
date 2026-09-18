@@ -121,25 +121,28 @@ type RedirectRule struct {
 type Server struct {
 	// Error is the error that occurred during the server's operation
 	// It will be nil if no error occurred
-	Error             error
-	servers           map[string]*http.Server // Map of "protocol:port" -> server
-	router            *Router
-	mutex             sync.RWMutex
-	host              string
-	ports             []ServerPort   // Multiple ports with protocols
-	redirectRules     []RedirectRule // Configured redirect rules
-	https             bool
-	upgrader          websocket.Upgrader
-	tlsConfig         *tls.Config
-	readTimeout       time.Duration
-	readHeaderTimeout time.Duration
-	writeTimeout      time.Duration
-	idleTimeout       time.Duration
-	errorLog          *l.Logger
-	handler           map[string]http.Handler
-	websockets        map[string]func(http.ResponseWriter, *http.Request, *websocket.Conn)
-	onHTTPCode        map[string]map[int]func(http.ResponseWriter, *http.Request)
-	cacheControl      string // Custom cache control header value
+	Error                 error
+	servers               map[string]*http.Server // Map of "protocol:port" -> server
+	router                *Router
+	mutex                 sync.RWMutex
+	host                  string
+	ports                 []ServerPort   // Multiple ports with protocols
+	redirectRules         []RedirectRule // Configured redirect rules
+	https                 bool
+	upgrader              websocket.Upgrader
+	tlsConfig             *tls.Config
+	readTimeout           time.Duration
+	readHeaderTimeout     time.Duration
+	writeTimeout          time.Duration
+	idleTimeout           time.Duration
+	errorLog              *l.Logger
+	handler               map[string]http.Handler
+	websockets            map[string]func(http.ResponseWriter, *http.Request, *websocket.Conn)
+	onHTTPCode            map[string]map[int]func(http.ResponseWriter, *http.Request)
+	cacheControl          string                                   // Custom cache control header value
+	corsApplier           func(http.ResponseWriter, *http.Request) // Server-wide CORS header applier
+	corsRegistered        bool                                     // Whether the CORS middleware has been registered
+	routeHeaderRegistered bool                                     // Whether the route header middleware has been registered
 }
 
 func init() {
@@ -787,8 +790,42 @@ func (s *Server) WithSecurityHeaders() *Server {
 
 // WithCORSHeaders adds CORS headers to the server.
 // If config is nil, default permissive CORS headers are used.
+// This sets the server-wide default; use WithRouteCORS to override it for specific routes.
 func (s *Server) WithCORSHeaders(config *CORSConfig) *Server {
-	s.router.Use(MiddlewareOrderCors, corsHeaderMiddlewareWithConfig(config))
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.corsApplier = buildCORSApplier(config)
+	if !s.corsRegistered {
+		s.router.Use(MiddlewareOrderCors, corsHeaderMiddlewareWithServer(s))
+		s.corsRegistered = true
+	}
+	return s
+}
+
+// WithRouteCORS sets a custom CORS configuration for a specific route pattern.
+// This overrides the server-wide CORS configuration set via WithCORSHeaders for requests
+// matching the given pattern. If config is nil, default permissive CORS headers are used
+// for that route. The pattern is matched the same way as other route-scoped features
+// (WithRateLimit, WithOnHTTPCode): an exact path match, or a prefix match if the pattern
+// ends with "/".
+// It will return an error in the Error field if the pattern already has a CORS configuration registered.
+func (s *Server) WithRouteCORS(pattern string, config *CORSConfig) *Server {
+	if s.Error != nil {
+		return s
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	err := s.router.registerCORS(pattern, config)
+	if err != nil {
+		s.Error = apperror.Wrap(err)
+		return s
+	}
+
+	if !s.corsRegistered {
+		s.router.Use(MiddlewareOrderCors, corsHeaderMiddlewareWithServer(s))
+		s.corsRegistered = true
+	}
 	return s
 }
 
@@ -820,12 +857,74 @@ func (s *Server) WithHeaders(headers map[string]string) *Server {
 	return s
 }
 
+// WithRouteHeader adds a custom header to responses for a specific route pattern.
+// Multiple calls for the same pattern accumulate into the same header set, with later
+// calls overriding earlier ones for the same key. The pattern is matched the same way as
+// other route-scoped features (WithRateLimit, WithOnHTTPCode): an exact path match, or a
+// prefix match if the pattern ends with "/".
+func (s *Server) WithRouteHeader(pattern, key, value string) *Server {
+	if s.Error != nil {
+		return s
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	s.router.registerHeader(pattern, key, value)
+	if !s.routeHeaderRegistered {
+		s.router.Use(MiddlewareOrderDefault, routeHeaderMiddlewareWithServer(s))
+		s.routeHeaderRegistered = true
+	}
+	return s
+}
+
+// WithRouteHeaders adds multiple custom headers to responses for a specific route pattern.
+// Multiple calls for the same pattern accumulate into the same header set, with later
+// calls overriding earlier ones for the same key. The pattern is matched the same way as
+// other route-scoped features (WithRateLimit, WithOnHTTPCode): an exact path match, or a
+// prefix match if the pattern ends with "/".
+func (s *Server) WithRouteHeaders(pattern string, headers map[string]string) *Server {
+	if s.Error != nil {
+		return s
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	for key, value := range headers {
+		s.router.registerHeader(pattern, key, value)
+	}
+	if !s.routeHeaderRegistered {
+		s.router.Use(MiddlewareOrderDefault, routeHeaderMiddlewareWithServer(s))
+		s.routeHeaderRegistered = true
+	}
+	return s
+}
+
 // WithCacheControl sets a custom Cache-Control header value that will override the default
 // cache control setting in security headers
 func (s *Server) WithCacheControl(cacheControl string) *Server {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	s.cacheControl = cacheControl
+	return s
+}
+
+// WithRouteCacheControl sets a custom Cache-Control header value for a specific route pattern.
+// This overrides both the default security header cache control and any value set via
+// WithCacheControl for requests matching the given pattern. The pattern is matched the same
+// way as other route-scoped features (WithRateLimit, WithOnHTTPCode): an exact path match,
+// or a prefix match if the pattern ends with "/".
+// It will return an error in the Error field if the pattern already has a cache control value registered.
+func (s *Server) WithRouteCacheControl(pattern, cacheControl string) *Server {
+	if s.Error != nil {
+		return s
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	err := s.router.registerCacheControl(pattern, cacheControl)
+	if err != nil {
+		s.Error = apperror.Wrap(err)
+	}
 	return s
 }
 

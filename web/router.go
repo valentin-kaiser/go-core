@@ -15,19 +15,25 @@ import (
 // Router is a custom HTTP router that supports middlewares and status callbacks
 // It implements the http.Handler interface and allows for flexible request handling
 type Router struct {
-	mux              *http.ServeMux
-	canonicalDomain  string
-	sorted           [][]Middleware
-	middlewares      map[MiddlewareOrder][]Middleware
-	onStatus         map[string]map[int]func(http.ResponseWriter, *http.Request)
-	onStatusPatterns map[string]struct{}
-	limits           map[string]*limitStore
-	limitedPatterns  map[string]struct{}
-	whitelist        map[string]*net.IPNet
-	blacklist        map[string]*net.IPNet
-	honeypotCallback func(map[string]*net.IPNet)
-	routes           map[string]http.Handler // Track registered routes for unregistration
-	mutex            sync.RWMutex            // Protect concurrent access to routes
+	mux                  *http.ServeMux
+	canonicalDomain      string
+	sorted               [][]Middleware
+	middlewares          map[MiddlewareOrder][]Middleware
+	onStatus             map[string]map[int]func(http.ResponseWriter, *http.Request)
+	onStatusPatterns     map[string]struct{}
+	limits               map[string]*limitStore
+	limitedPatterns      map[string]struct{}
+	cacheControl         map[string]string
+	cacheControlPatterns map[string]struct{}
+	headers              map[string]map[string]string
+	headerPatterns       map[string]struct{}
+	cors                 map[string]func(http.ResponseWriter, *http.Request)
+	corsPatterns         map[string]struct{}
+	whitelist            map[string]*net.IPNet
+	blacklist            map[string]*net.IPNet
+	honeypotCallback     func(map[string]*net.IPNet)
+	routes               map[string]http.Handler // Track registered routes for unregistration
+	mutex                sync.RWMutex            // Protect concurrent access to routes
 }
 
 type limitStore struct {
@@ -52,15 +58,21 @@ func (ls *limitStore) limiter(ip string) *rate.Limiter {
 // It initializes the ServeMux and the middlewares map
 func NewRouter() *Router {
 	r := &Router{
-		mux:              http.NewServeMux(),
-		middlewares:      make(map[MiddlewareOrder][]Middleware),
-		onStatus:         make(map[string]map[int]func(http.ResponseWriter, *http.Request)),
-		onStatusPatterns: make(map[string]struct{}),
-		limits:           make(map[string]*limitStore),
-		limitedPatterns:  make(map[string]struct{}),
-		whitelist:        make(map[string]*net.IPNet),
-		blacklist:        make(map[string]*net.IPNet),
-		routes:           make(map[string]http.Handler),
+		mux:                  http.NewServeMux(),
+		middlewares:          make(map[MiddlewareOrder][]Middleware),
+		onStatus:             make(map[string]map[int]func(http.ResponseWriter, *http.Request)),
+		onStatusPatterns:     make(map[string]struct{}),
+		limits:               make(map[string]*limitStore),
+		limitedPatterns:      make(map[string]struct{}),
+		whitelist:            make(map[string]*net.IPNet),
+		blacklist:            make(map[string]*net.IPNet),
+		routes:               make(map[string]http.Handler),
+		cacheControl:         make(map[string]string),
+		cacheControlPatterns: make(map[string]struct{}),
+		headers:              make(map[string]map[string]string),
+		headerPatterns:       make(map[string]struct{}),
+		cors:                 make(map[string]func(http.ResponseWriter, *http.Request)),
+		corsPatterns:         make(map[string]struct{}),
 	}
 
 	return r
@@ -153,6 +165,12 @@ func (router *Router) UnregisterHandler(patterns []string) {
 		delete(router.routes, pattern)
 		delete(router.limits, pattern)
 		delete(router.limitedPatterns, pattern)
+		delete(router.cacheControl, pattern)
+		delete(router.cacheControlPatterns, pattern)
+		delete(router.headers, pattern)
+		delete(router.headerPatterns, pattern)
+		delete(router.cors, pattern)
+		delete(router.corsPatterns, pattern)
 	}
 
 	router.rebuildMux()
@@ -167,6 +185,12 @@ func (router *Router) UnregisterAllHandler() {
 	router.routes = make(map[string]http.Handler)
 	router.limits = make(map[string]*limitStore)
 	router.limitedPatterns = make(map[string]struct{})
+	router.cacheControl = make(map[string]string)
+	router.cacheControlPatterns = make(map[string]struct{})
+	router.headers = make(map[string]map[string]string)
+	router.headerPatterns = make(map[string]struct{})
+	router.cors = make(map[string]func(http.ResponseWriter, *http.Request))
+	router.corsPatterns = make(map[string]struct{})
 	router.mux = http.NewServeMux()
 }
 
@@ -213,6 +237,88 @@ func (router *Router) registerRateLimit(pattern string, limit rate.Limit, burst 
 	}
 	router.limitedPatterns[pattern] = struct{}{}
 	return nil
+}
+
+// registerCacheControl applies a custom Cache-Control header value to the given pattern
+// It overrides both the default security header cache control and any server-wide value
+// for requests matching the pattern
+func (router *Router) registerCacheControl(pattern, value string) error {
+	router.mutex.Lock()
+	defer router.mutex.Unlock()
+
+	if _, exists := router.cacheControl[pattern]; exists {
+		return apperror.NewErrorf("pattern %s already has a cache control value registered", pattern)
+	}
+
+	router.cacheControl[pattern] = value
+	router.cacheControlPatterns[pattern] = struct{}{}
+	return nil
+}
+
+// cacheControlFor returns the custom Cache-Control header value registered for the
+// pattern matching the given path, if any
+func (router *Router) cacheControlFor(path string) (string, bool) {
+	router.mutex.RLock()
+	defer router.mutex.RUnlock()
+
+	matched := router.matchPattern(path, router.cacheControlPatterns)
+	if matched == "" {
+		return "", false
+	}
+	return router.cacheControl[matched], true
+}
+
+// registerHeader adds or overrides a single custom header value for the given pattern
+// Multiple calls for the same pattern accumulate into the same header set, with later
+// calls overriding earlier ones for the same key
+func (router *Router) registerHeader(pattern, key, value string) {
+	router.mutex.Lock()
+	defer router.mutex.Unlock()
+
+	if _, ok := router.headers[pattern]; !ok {
+		router.headers[pattern] = make(map[string]string)
+	}
+	router.headers[pattern][key] = value
+	router.headerPatterns[pattern] = struct{}{}
+}
+
+// headersFor returns the custom headers registered for the pattern matching the given path, if any
+func (router *Router) headersFor(path string) (map[string]string, bool) {
+	router.mutex.RLock()
+	defer router.mutex.RUnlock()
+
+	matched := router.matchPattern(path, router.headerPatterns)
+	if matched == "" {
+		return nil, false
+	}
+	return router.headers[matched], true
+}
+
+// registerCORS applies a custom CORS configuration to the given pattern
+// It overrides the server-wide CORS configuration for requests matching the pattern
+func (router *Router) registerCORS(pattern string, config *CORSConfig) error {
+	router.mutex.Lock()
+	defer router.mutex.Unlock()
+
+	if _, exists := router.cors[pattern]; exists {
+		return apperror.NewErrorf("pattern %s already has a CORS configuration registered", pattern)
+	}
+
+	router.cors[pattern] = buildCORSApplier(config)
+	router.corsPatterns[pattern] = struct{}{}
+	return nil
+}
+
+// corsFor returns the CORS header applier registered for the pattern matching the given path, if any
+func (router *Router) corsFor(path string) (func(http.ResponseWriter, *http.Request), bool) {
+	router.mutex.RLock()
+	defer router.mutex.RUnlock()
+
+	matched := router.matchPattern(path, router.corsPatterns)
+	if matched == "" {
+		return nil, false
+	}
+	return router.cors[matched], true
 }
 
 // wrap applies all registered middlewares to the given handler

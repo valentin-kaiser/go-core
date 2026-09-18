@@ -213,6 +213,162 @@ func TestCORSConfigExposeHeadersOmittedWhenEmpty(t *testing.T) {
 	}
 }
 
+func TestRouteCacheControlOverridesServerWide(t *testing.T) {
+	server := New()
+	server.WithCacheControl("public, max-age=3600")
+	server.WithRouteCacheControl("/api/", "no-store")
+	if server.Error != nil {
+		t.Fatalf("unexpected error: %v", server.Error)
+	}
+
+	handler := securityHeaderMiddlewareWithServer(server)(noopHandler)
+
+	// Route-specific pattern should win over the server-wide default
+	req := httptest.NewRequest(http.MethodGet, "/api/users", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertHeader(t, rec, "Cache-Control", "no-store")
+
+	// Requests outside the pattern fall back to the server-wide value
+	req = httptest.NewRequest(http.MethodGet, "/other", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertHeader(t, rec, "Cache-Control", "public, max-age=3600")
+}
+
+func TestRouteCacheControlWithoutServerWideDefault(t *testing.T) {
+	server := New()
+	server.WithRouteCacheControl("/static/", "public, max-age=31536000, immutable")
+	if server.Error != nil {
+		t.Fatalf("unexpected error: %v", server.Error)
+	}
+
+	handler := securityHeaderMiddlewareWithServer(server)(noopHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/static/app.js", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertHeader(t, rec, "Cache-Control", "public, max-age=31536000, immutable")
+
+	// Unmatched routes fall back to the default security header value
+	req = httptest.NewRequest(http.MethodGet, "/other", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertHeader(t, rec, "Cache-Control", securityHeaders["Cache-Control"])
+}
+
+func TestRouteCacheControlDuplicatePatternErrors(t *testing.T) {
+	server := New()
+	server.WithRouteCacheControl("/api/", "no-store")
+	server.WithRouteCacheControl("/api/", "public")
+
+	if server.Error == nil {
+		t.Fatal("expected error when registering a cache control value for an already-registered pattern")
+	}
+}
+
+func TestRouteHeaderOverridesAndAccumulates(t *testing.T) {
+	server := New()
+	server.WithRouteHeader("/api/", "X-Api-Version", "v1")
+	server.WithRouteHeader("/api/", "X-Extra", "yes")
+	// A second call for the same key on the same pattern should override the first
+	server.WithRouteHeader("/api/", "X-Api-Version", "v2")
+	if server.Error != nil {
+		t.Fatalf("unexpected error: %v", server.Error)
+	}
+
+	handler := routeHeaderMiddlewareWithServer(server)(noopHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/users", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertHeader(t, rec, "X-Api-Version", "v2")
+	assertHeader(t, rec, "X-Extra", "yes")
+
+	// Requests outside the pattern are untouched
+	req = httptest.NewRequest(http.MethodGet, "/other", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if v := rec.Header().Get("X-Api-Version"); v != "" {
+		t.Errorf("unmatched route should not get X-Api-Version, got %q", v)
+	}
+}
+
+func TestRouteHeadersBulk(t *testing.T) {
+	server := New()
+	server.WithRouteHeaders("/static/", map[string]string{
+		"X-One": "1",
+		"X-Two": "2",
+	})
+	if server.Error != nil {
+		t.Fatalf("unexpected error: %v", server.Error)
+	}
+
+	handler := routeHeaderMiddlewareWithServer(server)(noopHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/static/app.js", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertHeader(t, rec, "X-One", "1")
+	assertHeader(t, rec, "X-Two", "2")
+}
+
+func TestRouteCORSOverridesServerWide(t *testing.T) {
+	server := New()
+	server.WithCORSHeaders(&CORSConfig{AllowOrigin: "https://example.com"})
+	server.WithRouteCORS("/public-api/", &CORSConfig{AllowOrigin: "*"})
+	if server.Error != nil {
+		t.Fatalf("unexpected error: %v", server.Error)
+	}
+
+	handler := corsHeaderMiddlewareWithServer(server)(noopHandler)
+
+	// Route-specific pattern should win over the server-wide config
+	req := httptest.NewRequest(http.MethodGet, "/public-api/things", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertHeader(t, rec, "Access-Control-Allow-Origin", "*")
+
+	// Requests outside the pattern fall back to the server-wide config
+	req = httptest.NewRequest(http.MethodGet, "/other", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertHeader(t, rec, "Access-Control-Allow-Origin", "https://example.com")
+}
+
+func TestRouteCORSWithoutServerWideDefault(t *testing.T) {
+	server := New()
+	server.WithRouteCORS("/api/", &CORSConfig{AllowOrigin: "https://api.example.com"})
+	if server.Error != nil {
+		t.Fatalf("unexpected error: %v", server.Error)
+	}
+
+	handler := corsHeaderMiddlewareWithServer(server)(noopHandler)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/things", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	assertHeader(t, rec, "Access-Control-Allow-Origin", "https://api.example.com")
+
+	// Unmatched routes get no CORS headers at all since no server-wide default was set
+	req = httptest.NewRequest(http.MethodGet, "/other", nil)
+	rec = httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if v := rec.Header().Get("Access-Control-Allow-Origin"); v != "" {
+		t.Errorf("unmatched route without server-wide CORS should not set Allow-Origin, got %q", v)
+	}
+}
+
+func TestRouteCORSDuplicatePatternErrors(t *testing.T) {
+	server := New()
+	server.WithRouteCORS("/api/", &CORSConfig{AllowOrigin: "https://a.example.com"})
+	server.WithRouteCORS("/api/", &CORSConfig{AllowOrigin: "https://b.example.com"})
+
+	if server.Error == nil {
+		t.Fatal("expected error when registering a CORS configuration for an already-registered pattern")
+	}
+}
+
 func assertHeader(t *testing.T, rec *httptest.ResponseRecorder, key, want string) {
 	t.Helper()
 	got := rec.Header().Get(key)
