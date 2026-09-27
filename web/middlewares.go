@@ -101,8 +101,13 @@ func securityHeaderMiddlewareWithServer(server *Server) func(http.Handler) http.
 // CORSConfig defines custom CORS rules for the server.
 // When passed as nil to WithCORSHeaders, the default permissive CORS headers are used.
 type CORSConfig struct {
-	// AllowOrigin sets the Access-Control-Allow-Origin header.
+	// AllowOrigin sets the Access-Control-Allow-Origin header. Ignored if AllowOrigins is set.
 	AllowOrigin string
+	// AllowOrigins lists multiple exact origins that are allowed. When set, it takes
+	// precedence over AllowOrigin. Unlike AllowOrigin, this is never treated as a
+	// static header value: the request Origin is validated against the list and
+	// reflected back on a match, same as the single-origin credentialed path.
+	AllowOrigins []string
 	// AllowMethods sets the Access-Control-Allow-Methods header.
 	AllowMethods []string
 	// AllowHeaders sets the Access-Control-Allow-Headers header.
@@ -145,10 +150,13 @@ func corsHeaderMiddlewareWithConfig(config *CORSConfig) Middleware {
 // buildCORSApplier resolves a CORSConfig into a function that sets the appropriate CORS
 // headers on a response for a given request, without invoking the next handler. A nil
 // config resolves to the default permissive CORS headers.
-// When AllowCredentials is true, the applier validates the request Origin against the
-// configured AllowOrigin before reflecting it. Requests with no Origin header or a
-// non-matching Origin will not receive credentialed CORS headers. A wildcard "*" AllowOrigin
-// is not permitted with credentials and will be treated as if no origin is configured.
+//
+// When multiple origins are configured (via AllowOrigins, or implicitly whenever an exact
+// origin is combined with AllowCredentials), the applier validates the request Origin
+// against the allowed set before reflecting it. Requests with no Origin header or a
+// non-matching Origin will not receive a reflected Access-Control-Allow-Origin header.
+// A wildcard "*" origin is not permitted together with AllowCredentials and will be
+// treated as if no origin is configured.
 func buildCORSApplier(config *CORSConfig) func(http.ResponseWriter, *http.Request) {
 	if config == nil {
 		return func(w http.ResponseWriter, _ *http.Request) {
@@ -158,11 +166,8 @@ func buildCORSApplier(config *CORSConfig) func(http.ResponseWriter, *http.Reques
 		}
 	}
 
-	// Apply defaults for empty values
-	allowOrigin := config.AllowOrigin
-	if allowOrigin == "" {
-		allowOrigin = "*"
-	}
+	allowedOrigins := resolveAllowedOrigins(config)
+	wildcard := len(allowedOrigins) == 1 && allowedOrigins[0] == "*"
 
 	allowMethods := strings.Join(config.AllowMethods, ", ")
 	if allowMethods == "" {
@@ -188,9 +193,9 @@ func buildCORSApplier(config *CORSConfig) func(http.ResponseWriter, *http.Reques
 		headers["Access-Control-Expose-Headers"] = strings.Join(config.ExposeHeaders, ", ")
 	}
 
-	// When credentials are enabled, validate the request Origin against the configured
-	// AllowOrigin before reflecting it. Using "*" with credentials is invalid per the
-	// CORS spec, so a wildcard origin is never reflected for credentialed requests.
+	// Credentialed requests always go through Origin validation, even with a wildcard
+	// configured: a wildcard is invalid alongside credentials, so it is never reflected,
+	// but the Vary header is still added since the response still varies by Origin.
 	if config.AllowCredentials {
 		return func(w http.ResponseWriter, r *http.Request) {
 			for key, value := range headers {
@@ -198,7 +203,7 @@ func buildCORSApplier(config *CORSConfig) func(http.ResponseWriter, *http.Reques
 			}
 
 			origin := r.Header.Get("Origin")
-			if origin != "" && allowOrigin != "*" && origin == allowOrigin {
+			if origin != "" && originAllowed(origin, allowedOrigins) {
 				w.Header().Set("Access-Control-Allow-Origin", origin)
 				w.Header().Set("Access-Control-Allow-Credentials", "true")
 			}
@@ -206,13 +211,62 @@ func buildCORSApplier(config *CORSConfig) func(http.ResponseWriter, *http.Reques
 		}
 	}
 
-	// Without credentials, use the static origin value
-	headers["Access-Control-Allow-Origin"] = allowOrigin
-	return func(w http.ResponseWriter, _ *http.Request) {
+	// Without credentials, a wildcard or a single explicit origin can be set as a
+	// static header. Multiple explicit origins still need the request's Origin to
+	// pick which value to reflect.
+	if wildcard {
+		headers["Access-Control-Allow-Origin"] = "*"
+		return func(w http.ResponseWriter, _ *http.Request) {
+			for key, value := range headers {
+				w.Header().Set(key, value)
+			}
+		}
+	}
+
+	if len(allowedOrigins) == 1 {
+		headers["Access-Control-Allow-Origin"] = allowedOrigins[0]
+		return func(w http.ResponseWriter, _ *http.Request) {
+			for key, value := range headers {
+				w.Header().Set(key, value)
+			}
+		}
+	}
+
+	return func(w http.ResponseWriter, r *http.Request) {
 		for key, value := range headers {
 			w.Header().Set(key, value)
 		}
+
+		origin := r.Header.Get("Origin")
+		if origin != "" && originAllowed(origin, allowedOrigins) {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+		}
+		addVaryHeader(w, "Origin")
 	}
+}
+
+// resolveAllowedOrigins normalizes a CORSConfig's origin settings into a single list.
+// AllowOrigins takes precedence when set; otherwise AllowOrigin is used, defaulting to "*".
+func resolveAllowedOrigins(config *CORSConfig) []string {
+	if len(config.AllowOrigins) > 0 {
+		return config.AllowOrigins
+	}
+	if config.AllowOrigin == "" {
+		return []string{"*"}
+	}
+	return []string{config.AllowOrigin}
+}
+
+// originAllowed reports whether origin exactly matches one of the allowed origins.
+// A wildcard entry never matches here, since credentialed/multi-origin requests must
+// always be validated against an explicit origin per the CORS spec.
+func originAllowed(origin string, allowed []string) bool {
+	for _, candidate := range allowed {
+		if candidate != "*" && candidate == origin {
+			return true
+		}
+	}
+	return false
 }
 
 // corsHeaderMiddlewareWithServer creates a CORS middleware with access to the server's

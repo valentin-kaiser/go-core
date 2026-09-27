@@ -143,6 +143,50 @@ func TestCORSConfigCredentialsEchoesOrigin(t *testing.T) {
 	})
 }
 
+func TestCORSConfigCredentialsMultipleOrigins(t *testing.T) {
+	config := &CORSConfig{
+		AllowOrigins:     []string{"https://app.example.com", "https://localhost:4200"},
+		AllowMethods:     []string{"GET"},
+		AllowCredentials: true,
+	}
+	handler := corsHeaderMiddlewareWithConfig(config)(noopHandler)
+
+	t.Run("first configured origin is reflected", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Origin", "https://app.example.com")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		assertHeader(t, rec, "Access-Control-Allow-Origin", "https://app.example.com")
+		assertHeader(t, rec, "Access-Control-Allow-Credentials", "true")
+		assertHeader(t, rec, "Vary", "Origin")
+	})
+
+	t.Run("second configured origin is reflected", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Origin", "https://localhost:4200")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		assertHeader(t, rec, "Access-Control-Allow-Origin", "https://localhost:4200")
+		assertHeader(t, rec, "Access-Control-Allow-Credentials", "true")
+	})
+
+	t.Run("non-matching Origin does not get credentials", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.Header.Set("Origin", "https://evil.example.com")
+		rec := httptest.NewRecorder()
+
+		handler.ServeHTTP(rec, req)
+
+		if v := rec.Header().Get("Access-Control-Allow-Origin"); v != "" {
+			t.Errorf("non-matching Origin should not set Allow-Origin, got %q", v)
+		}
+	})
+}
+
 func TestCORSConfigCredentialsWildcardOriginRejected(t *testing.T) {
 	// When AllowCredentials=true and AllowOrigin is empty (defaults to "*"),
 	// no origin should be reflected because * + credentials is invalid.
