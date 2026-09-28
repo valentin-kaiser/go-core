@@ -5,7 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"github.com/valentin-kaiser/go-core/apperror"
 
 	"gopkg.in/yaml.v2"
@@ -94,10 +96,73 @@ func (s *fileSource) Save(_ context.Context, c Config) error {
 	return nil
 }
 
-// Watch implements Source. The file source does not currently watch the YAML
-// file for changes; users that need live reload can do so via a custom Source.
-func (s *fileSource) Watch(_ context.Context, _ func(map[string]interface{})) (func(), error) {
-	return nil, ErrWatchUnsupported
+// Watch implements Source. It watches the configuration file's directory for
+// filesystem events using fsnotify and reloads whenever the target file is
+// written or (re)created. The directory, rather than the file itself, is
+// watched so the subscription survives editors that save by renaming a
+// temporary file over the original, which would otherwise drop a watch held
+// on the old file handle/inode.
+func (s *fileSource) Watch(ctx context.Context, onChange func(map[string]interface{})) (func(), error) {
+	if s.name == "" || s.path == "" {
+		return nil, apperror.NewError("config name and path must be set")
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		return nil, apperror.NewError("creating configuration file watcher failed").AddError(err)
+	}
+
+	dir := filepath.Dir(s.configFile())
+	if err := watcher.Add(dir); err != nil {
+		_ = watcher.Close()
+		return nil, apperror.NewErrorf("watching configuration directory %q failed", dir).AddError(err)
+	}
+
+	watchCtx, cancel := context.WithCancel(ctx)
+	target := filepath.Clean(s.configFile())
+
+	go func() {
+		defer func() { _ = watcher.Close() }()
+
+		// Debounce bursts of events from a single save (e.g. a truncate
+		// followed by a write, or a rename-based atomic save that fires a
+		// remove and a create back to back) into a single reload.
+		debounce := time.NewTimer(0)
+		if !debounce.Stop() {
+			<-debounce.C
+		}
+		defer debounce.Stop()
+
+		for {
+			select {
+			case <-watchCtx.Done():
+				return
+			case _, ok := <-watcher.Errors:
+				if !ok {
+					return
+				}
+			case event, ok := <-watcher.Events:
+				if !ok {
+					return
+				}
+				if filepath.Clean(event.Name) != target {
+					continue
+				}
+				if event.Op&(fsnotify.Write|fsnotify.Create) == 0 {
+					continue
+				}
+				debounce.Reset(100 * time.Millisecond)
+			case <-debounce.C:
+				values, err := s.Load(watchCtx)
+				if err != nil {
+					continue
+				}
+				onChange(values)
+			}
+		}
+	}()
+
+	return cancel, nil
 }
 
 // flattenYAML walks a YAML-decoded map and flattens nested maps into dotted
