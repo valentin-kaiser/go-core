@@ -453,12 +453,16 @@ func (e *Email) SendWithTLS(address string, auth smtp.Auth, config *tls.Config, 
 	if err != nil {
 		return apperror.NewError("could not dial TLS connection").AddError(err)
 	}
-	defer apperror.Catch(conn.Close, "could not close TLS connection")
 	c, err := smtp.NewClient(conn, strings.Split(address, ":")[0])
 	if err != nil {
+		// smtp.NewClient did not take ownership of conn on failure.
+		_ = conn.Close()
 		return apperror.NewError("could not create SMTP client").AddError(err)
 	}
-	defer apperror.Catch(c.Quit, "could not quit SMTP session")
+	// Quit closes the underlying connection. Close is retained only as a
+	// best-effort fallback for early returns; its error must not hide the
+	// operation error or panic when Quit has already closed the connection.
+	defer func() { _ = c.Close() }()
 
 	// Send custom HELO if provided (after connection but before auth)
 	if helo != "" {

@@ -348,6 +348,13 @@ func (s *Service) unary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if md.descriptor != nil && (md.descriptor.IsStreamingClient() || md.descriptor.IsStreamingServer()) {
+		w.Header().Set("Connection", "Upgrade")
+		w.Header().Set("Upgrade", "websocket")
+		http.Error(w, "this endpoint is a streaming method and only supports WebSocket connections; retry with a WebSocket upgrade request", http.StatusUpgradeRequired)
+		return
+	}
+
 	msg, err := s.message(md)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
