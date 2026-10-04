@@ -617,7 +617,16 @@ func (s *Server) WithXRPC(path string, service *xrpc.Service) *Server {
 	if path == "" {
 		path = "/"
 	}
-	paths := append([]string{path}, service.Paths()...)
+	servicePaths := service.Paths()
+	paths := make([]string, 0, len(servicePaths)+1)
+	seen := make(map[string]struct{}, len(servicePaths)+1)
+	for _, p := range append([]string{path}, servicePaths...) {
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		paths = append(paths, p)
+	}
 
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
@@ -636,7 +645,7 @@ func (s *Server) WithXRPC(path string, service *xrpc.Service) *Server {
 		s.handler[p] = service
 		s.router.Handle(p, service)
 	}
-	s.grpc = s.grpc || len(paths) > 1
+	s.grpc = s.grpc || len(servicePaths) > 0
 	return s
 }
 
