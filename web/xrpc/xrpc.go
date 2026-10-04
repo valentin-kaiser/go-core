@@ -330,13 +330,15 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request, wr wire) {
 
 	ctx := withProtocol(WithHTTPContext(r.Context(), w, r), wr.protocol())
 	status := &statusBox{}
-	ctx = context.WithValue(ctx, keyStatus, status)
 	envs, batch, perr := wr.parse(body)
 
 	var replies []*reply
 	if perr != nil {
 		replies, batch = []*reply{{id: rpcID{set: true, null: true}, err: perr}}, false
 	} else {
+		if !batch {
+			ctx = context.WithValue(ctx, keyStatus, status)
+		}
 		replies = s.process(ctx, envs)
 	}
 	if len(replies) == 0 {
