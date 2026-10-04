@@ -98,6 +98,7 @@ go get github.com/valentin-kaiser/go-core
 - `version`: Build/version info management
 - `web`: HTTP server and middleware
 - `web/jrpc`: JSON-RPC over HTTP/WebSocket
+- `web/xrpc`: JSON-RPC 2.0, XML and gRPC for protobuf services; JSON/XML use field numbers as keys
 - `zlog`: Zero-allocation logger
 
 ## Documentation

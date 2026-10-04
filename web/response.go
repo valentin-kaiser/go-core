@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -25,6 +26,8 @@ type ResponseWriter struct {
 	hijacked bool
 	// start is the time when the response writer was created
 	start time.Time
+	// sent indicates that headers have been written to the underlying writer
+	sent bool
 }
 
 func newResponseWriter(w http.ResponseWriter, r *http.Request) *ResponseWriter {
@@ -89,17 +92,58 @@ func (rw *ResponseWriter) flush() {
 		// If the connection has been hijacked, we do not send the response
 		return
 	}
-	for k, vv := range rw.header {
-		for _, v := range vv {
-			rw.w.Header().Add(k, v)
+	if rw.sent {
+		rw.copyTrailers()
+	} else {
+		for k, vv := range rw.header {
+			for _, v := range vv {
+				rw.w.Header().Add(k, v)
+			}
 		}
+		rw.w.WriteHeader(rw.status)
+		rw.sent = true
 	}
-	rw.w.WriteHeader(rw.status)
 	_, err := rw.w.Write(rw.buf.Bytes())
 	if err != nil {
 		http.Error(rw.w, "Internal Server Error", http.StatusInternalServerError)
 		return
 	}
+}
+
+// copyTrailers forwards trailers set after the headers were sent, either announced via the Trailer header or prefixed with http.TrailerPrefix.
+func (rw *ResponseWriter) copyTrailers() {
+	declared := make(map[string]struct{})
+	for _, v := range rw.w.Header().Values("Trailer") {
+		for _, name := range strings.Split(v, ",") {
+			declared[http.CanonicalHeaderKey(strings.TrimSpace(name))] = struct{}{}
+		}
+	}
+	for k, vv := range rw.header {
+		_, ok := declared[k]
+		if ok || strings.HasPrefix(k, http.TrailerPrefix) {
+			rw.w.Header()[k] = append([]string(nil), vv...)
+		}
+	}
+}
+
+// Flush sends the buffered response so far to the client, enabling streaming responses such as gRPC.
+func (rw *ResponseWriter) Flush() {
+	if rw.hijacked {
+		return
+	}
+	rw.flush()
+	if rw.buf.Len() > 0 {
+		rw.history = append(rw.history, append([]byte(nil), rw.buf.Bytes()...))
+		rw.buf.Reset()
+	}
+	if f, ok := rw.w.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap returns the underlying http.ResponseWriter for http.ResponseController.
+func (rw *ResponseWriter) Unwrap() http.ResponseWriter {
+	return rw.w
 }
 
 func (rw *ResponseWriter) clear() {
