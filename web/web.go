@@ -80,6 +80,7 @@ import (
 	"github.com/valentin-kaiser/go-core/logging"
 	"github.com/valentin-kaiser/go-core/security"
 	"github.com/valentin-kaiser/go-core/web/jrpc"
+	"github.com/valentin-kaiser/go-core/web/xrpc"
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
 )
@@ -143,6 +144,7 @@ type Server struct {
 	corsApplier           func(http.ResponseWriter, *http.Request) // Server-wide CORS header applier
 	corsRegistered        bool                                     // Whether the CORS middleware has been registered
 	routeHeaderRegistered bool                                     // Whether the route header middleware has been registered
+	grpc                  bool                                     // Whether an xrpc service with gRPC routes is mounted
 }
 
 func init() {
@@ -214,6 +216,15 @@ func (s *Server) Start() *Server {
 			ReadHeaderTimeout: s.readHeaderTimeout,
 			WriteTimeout:      s.writeTimeout,
 			IdleTimeout:       s.idleTimeout,
+		}
+
+		if s.grpc {
+			// gRPC requires HTTP/2, also without TLS
+			protocols := new(http.Protocols)
+			protocols.SetHTTP1(true)
+			protocols.SetHTTP2(true)
+			protocols.SetUnencryptedHTTP2(true)
+			server.Protocols = protocols
 		}
 
 		if config.Protocol == ProtocolHTTP {
@@ -588,6 +599,53 @@ func (s *Server) WithJRPC(path string, services ...*jrpc.Service) *Server {
 	})
 	s.handler[path] = handler
 	s.router.HandleFunc(path, handler)
+	return s
+}
+
+// WithXRPC mounts an xrpc service. JSON-RPC 2.0, XML and WebSocket requests are served at path,
+// gRPC requests at /{package.Service}/{Method}.
+// It will return an error in the Error field if any of these paths is already registered.
+func (s *Server) WithXRPC(path string, service *xrpc.Service) *Server {
+	if s.Error != nil {
+		return s
+	}
+	if service == nil {
+		s.Error = apperror.NewError("xRPC service cannot be nil")
+		return s
+	}
+
+	if path == "" {
+		path = "/"
+	}
+	servicePaths := service.Paths()
+	paths := make([]string, 0, len(servicePaths)+1)
+	seen := make(map[string]struct{}, len(servicePaths)+1)
+	for _, p := range append([]string{path}, servicePaths...) {
+		if _, ok := seen[p]; ok {
+			continue
+		}
+		seen[p] = struct{}{}
+		paths = append(paths, p)
+	}
+
+	s.mutex.Lock()
+	defer s.mutex.Unlock()
+	for _, p := range paths {
+		if _, ok := s.handler[p]; ok {
+			s.Error = apperror.NewErrorf("path %s is already registered as a handler", p)
+			return s
+		}
+		if _, ok := s.websockets[p]; ok {
+			s.Error = apperror.NewErrorf("path %s is already registered as a websocket", p)
+			return s
+		}
+	}
+
+	for _, p := range paths {
+		s.handler[p] = service
+		s.router.Handle(p, service)
+	}
+	s.grpc = s.grpc || len(servicePaths) > 0
 	return s
 }
 
