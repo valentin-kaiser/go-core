@@ -203,6 +203,10 @@ func (c *wsConn) control(e *envelope) {
 		select {
 		case st.in <- msg:
 		case <-st.ctx.Done():
+		default:
+			// the handler is not consuming input; never block the shared read loop
+			logger.Warn().Field("method", st.m.full+"/"+st.m.name).Msg("xrpc stream input buffer full, cancelling stream")
+			st.cancel()
 		}
 	}
 }
