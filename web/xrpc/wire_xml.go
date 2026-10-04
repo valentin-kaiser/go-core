@@ -26,6 +26,9 @@ func (w xmlWire) parse(data []byte) ([]*envelope, bool, *Error) {
 	if err != nil {
 		return nil, false, NewError(CodeParseError, "parse error")
 	}
+	if root == nil {
+		return nil, false, NewError(CodeParseError, "parse error")
+	}
 	if root.name == "batch" {
 		if len(root.kids) == 0 {
 			return nil, true, NewError(CodeInvalidRequest, "invalid request")
