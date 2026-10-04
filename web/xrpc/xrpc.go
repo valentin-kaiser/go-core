@@ -81,6 +81,7 @@ func Register(servers ...Server) *Service {
 		maxBody: defaultMaxBody,
 	}
 
+	ambiguous := make(map[string]bool)
 	for _, srv := range servers {
 		sv := reflect.ValueOf(srv)
 		services := srv.Descriptor().Services()
@@ -101,11 +102,22 @@ func Register(servers ...Server) *Service {
 				m.service = string(sd.Name())
 				m.full = string(sd.FullName())
 
-				if _, dup := s.methods[m.service+"."+m.name]; dup {
+				if _, dup := s.methods[m.full+"/"+m.name]; dup {
 					continue
 				}
-				for _, key := range []string{m.service + "." + m.name, m.full + "." + m.name, m.full + "/" + m.name} {
+				for _, key := range []string{m.full + "." + m.name, m.full + "/" + m.name} {
 					s.methods[key] = m
+				}
+
+				// The short alias is only exposed while it is unambiguous.
+				short := m.service + "." + m.name
+				if ambiguous[short] {
+					// already shared by several services
+				} else if _, taken := s.methods[short]; taken {
+					delete(s.methods, short)
+					ambiguous[short] = true
+				} else {
+					s.methods[short] = m
 				}
 				s.list = append(s.list, m)
 			}

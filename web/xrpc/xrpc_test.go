@@ -652,3 +652,45 @@ func TestPaths(t *testing.T) {
 		t.Errorf("unexpected paths %v", paths)
 	}
 }
+
+var otherFile = func() protoreflect.FileDescriptor {
+	fd, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{
+		Name:       proto.String("other/v1/other.proto"),
+		Package:    proto.String("other.v1"),
+		Syntax:     proto.String("proto3"),
+		Dependency: []string{"google/protobuf/descriptor.proto"},
+		Service: []*descriptorpb.ServiceDescriptorProto{{
+			Name: proto.String("Test"),
+			Method: []*descriptorpb.MethodDescriptorProto{{
+				Name:       proto.String("Echo"),
+				InputType:  proto.String(fdpName),
+				OutputType: proto.String(fdpName),
+			}},
+		}},
+	}, protoregistry.GlobalFiles)
+	if err != nil {
+		panic(err)
+	}
+	return fd
+}()
+
+type otherServer struct{}
+
+func (otherServer) Descriptor() protoreflect.FileDescriptor { return otherFile }
+
+func (otherServer) Echo(_ context.Context, in *fdp) (*fdp, error) {
+	return &fdp{Name: proto.String("other:" + in.GetName())}, nil
+}
+
+func TestSameShortServiceName(t *testing.T) {
+	svc := xrpc.Register(testServer{}, otherServer{})
+	if !svc.Handles("test.v1.Test", "Echo") || !svc.Handles("other.v1.Test", "Echo") {
+		t.Fatal("fully-qualified names must address both services")
+	}
+	if svc.Handles("Test", "Echo") {
+		t.Fatal("ambiguous short name must not be exposed")
+	}
+	if got := len(svc.Paths()); got != 6 {
+		t.Fatalf("expected 6 paths, got %d", got)
+	}
+}
