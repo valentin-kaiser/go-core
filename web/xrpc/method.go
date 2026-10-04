@@ -9,6 +9,7 @@ import (
 	"runtime/debug"
 	"sync"
 
+	"github.com/valentin-kaiser/go-core/apperror"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
@@ -52,17 +53,17 @@ func newMessage(t reflect.Type) proto.Message {
 // messageOf returns the pointer-to-message type matching desc, or an error.
 func messageOf(t reflect.Type, desc protoreflect.MessageDescriptor) (reflect.Type, error) {
 	if t.Kind() != reflect.Ptr || !t.Implements(messageType) {
-		return nil, fmt.Errorf("%s is not a protobuf message pointer", t)
+		return nil, apperror.NewErrorf("%s is not a protobuf message pointer", t)
 	}
 	if got := newMessage(t).ProtoReflect().Descriptor().FullName(); got != desc.FullName() {
-		return nil, fmt.Errorf("message type mismatch: expected %s, got %s", desc.FullName(), got)
+		return nil, apperror.NewErrorf("message type mismatch: expected %s, got %s", desc.FullName(), got)
 	}
 	return t, nil
 }
 
 func chanOf(t reflect.Type, dir reflect.ChanDir, desc protoreflect.MessageDescriptor) (reflect.Type, error) {
 	if t.Kind() != reflect.Chan || t.ChanDir()&dir == 0 {
-		return nil, fmt.Errorf("%s is not a channel with the required direction", t)
+		return nil, apperror.NewErrorf("%s is not a channel with the required direction", t)
 	}
 	return messageOf(t.Elem(), desc)
 }
@@ -72,7 +73,7 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 	t := fn.Type()
 	m := &method{fn: fn, desc: md, name: string(md.Name())}
 	if t.NumIn() < 1 || t.In(0) != contextType {
-		return nil, errors.New("first parameter must be context.Context")
+		return nil, apperror.NewError("first parameter must be context.Context")
 	}
 
 	var err error
@@ -80,7 +81,7 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 	case !cs && !ss:
 		m.kind = kindUnary
 		if t.NumIn() != 2 || t.NumOut() != 2 || t.Out(1) != errorType {
-			return nil, errors.New("unary method must be func(context.Context, *In) (*Out, error)")
+			return nil, apperror.NewError("unary method must be func(context.Context, *In) (*Out, error)")
 		}
 		if m.in, err = messageOf(t.In(1), md.Input()); err != nil {
 			return nil, err
@@ -89,7 +90,7 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 	case !cs && ss:
 		m.kind = kindServerStream
 		if t.NumIn() != 3 || t.NumOut() != 1 || t.Out(0) != errorType {
-			return nil, errors.New("server streaming method must be func(context.Context, *In, chan<- *Out) error")
+			return nil, apperror.NewError("server streaming method must be func(context.Context, *In, chan<- *Out) error")
 		}
 		if m.in, err = messageOf(t.In(1), md.Input()); err != nil {
 			return nil, err
@@ -98,7 +99,7 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 	case cs && !ss:
 		m.kind = kindClientStream
 		if t.NumIn() != 2 || t.NumOut() != 2 || t.Out(1) != errorType {
-			return nil, errors.New("client streaming method must be func(context.Context, <-chan *In) (*Out, error)")
+			return nil, apperror.NewError("client streaming method must be func(context.Context, <-chan *In) (*Out, error)")
 		}
 		if m.in, err = chanOf(t.In(1), reflect.RecvDir, md.Input()); err != nil {
 			return nil, err
@@ -107,7 +108,7 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 	default:
 		m.kind = kindBidi
 		if t.NumIn() != 3 || t.NumOut() != 1 || t.Out(0) != errorType {
-			return nil, errors.New("bidirectional streaming method must be func(context.Context, <-chan *In, chan<- *Out) error")
+			return nil, apperror.NewError("bidirectional streaming method must be func(context.Context, <-chan *In, chan<- *Out) error")
 		}
 		if m.in, err = chanOf(t.In(1), reflect.RecvDir, md.Input()); err != nil {
 			return nil, err

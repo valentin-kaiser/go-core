@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
-	"fmt"
 	"io"
 	"math"
 	"sort"
@@ -14,6 +13,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/valentin-kaiser/go-core/apperror"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -22,7 +22,7 @@ import (
 // maxDepth limits message nesting on decode and encode.
 const maxDepth = 100
 
-var errDepth = errors.New("message nesting too deep")
+var errDepth = apperror.NewError("message nesting too deep")
 
 // wkt lists well-known types whose canonical JSON form differs from the generic object form.
 var wkt = map[protoreflect.FullName]bool{
@@ -150,7 +150,7 @@ func parseScalar(fd protoreflect.FieldDescriptor, s string) (protoreflect.Value,
 		case "false":
 			return protoreflect.ValueOfBool(false), nil
 		}
-		return protoreflect.Value{}, fmt.Errorf("invalid bool %q", s)
+		return protoreflect.Value{}, apperror.NewErrorf("invalid bool %q", s)
 	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
 		n, err := strconv.ParseInt(s, 10, 32)
 		return protoreflect.ValueOfInt32(int32(n)), err
@@ -171,7 +171,7 @@ func parseScalar(fd protoreflect.FieldDescriptor, s string) (protoreflect.Value,
 		return protoreflect.ValueOfFloat64(f), err
 	case protoreflect.StringKind:
 		if !utf8.ValidString(s) {
-			return protoreflect.Value{}, errors.New("invalid UTF-8 string")
+			return protoreflect.Value{}, apperror.NewError("invalid UTF-8 string")
 		}
 		return protoreflect.ValueOfString(s), nil
 	case protoreflect.BytesKind:
@@ -183,11 +183,11 @@ func parseScalar(fd protoreflect.FieldDescriptor, s string) (protoreflect.Value,
 		}
 		ev := fd.Enum().Values().ByName(protoreflect.Name(s))
 		if ev == nil {
-			return protoreflect.Value{}, fmt.Errorf("unknown enum value %q", s)
+			return protoreflect.Value{}, apperror.NewErrorf("unknown enum value %q", s)
 		}
 		return protoreflect.ValueOfEnum(ev.Number()), nil
 	}
-	return protoreflect.Value{}, fmt.Errorf("unsupported field kind %s", fd.Kind())
+	return protoreflect.Value{}, apperror.NewErrorf("unsupported field kind %s", fd.Kind())
 }
 
 func decodeBase64(s string) ([]byte, error) {
@@ -196,7 +196,7 @@ func decodeBase64(s string) ([]byte, error) {
 			return b, nil
 		}
 	}
-	return nil, errors.New("invalid base64 value")
+	return nil, apperror.NewError("invalid base64 value")
 }
 
 func marshalWKT(m protoreflect.Message) ([]byte, error) {
@@ -350,7 +350,7 @@ func (c codec) readJSON(data []byte, m protoreflect.Message, depth int) error {
 			continue
 		}
 		if err := c.readJSONField(m, fd, raw, depth); err != nil {
-			return fmt.Errorf("field %q: %w", key, err)
+			return apperror.NewErrorf("field %q", key).AddError(err)
 		}
 	}
 	return nil
@@ -410,7 +410,7 @@ func (c codec) readJSONValue(fd protoreflect.FieldDescriptor, raw []byte, cur pr
 	}
 	raw = bytes.TrimSpace(raw)
 	if len(raw) == 0 {
-		return protoreflect.Value{}, errors.New("empty value")
+		return protoreflect.Value{}, apperror.NewError("empty value")
 	}
 	var text string
 	switch raw[0] {
@@ -419,7 +419,7 @@ func (c codec) readJSONValue(fd protoreflect.FieldDescriptor, raw []byte, cur pr
 			return protoreflect.Value{}, err
 		}
 	case '{', '[':
-		return protoreflect.Value{}, errors.New("unexpected object or array")
+		return protoreflect.Value{}, apperror.NewError("unexpected object or array")
 	default:
 		text = string(raw)
 	}
@@ -483,7 +483,7 @@ func parseXML(data []byte) (*xmlNode, error) {
 				p := stack[len(stack)-1]
 				p.kids = append(p.kids, n)
 			} else if root != nil {
-				return nil, errors.New("multiple root elements")
+				return nil, apperror.NewError("multiple root elements")
 			} else {
 				root = n
 			}
@@ -546,7 +546,7 @@ func (c codec) writeXMLElem(b *bytes.Buffer, name string, key *string, fd protor
 	b.WriteString(name)
 	if key != nil {
 		if !validXMLString(*key) {
-			return errors.New("map key contains characters not representable in XML")
+			return apperror.NewError("map key contains characters not representable in XML")
 		}
 		b.WriteString(` k="`)
 		if err := xml.EscapeText(b, []byte(*key)); err != nil {
@@ -607,7 +607,7 @@ func (c codec) readXMLFields(n *xmlNode, m protoreflect.Message, depth int) erro
 			continue
 		}
 		if err := c.readXMLField(m, fd, k, depth); err != nil {
-			return fmt.Errorf("field %q: %w", k.name, err)
+			return apperror.NewErrorf("field %q", k.name).AddError(err)
 		}
 	}
 	return nil
@@ -626,7 +626,7 @@ func (c codec) readXMLField(m protoreflect.Message, fd protoreflect.FieldDescrip
 	case fd.IsMap():
 		ks, ok := n.attr("k")
 		if !ok {
-			return errors.New("map entry without key attribute")
+			return apperror.NewError("map entry without key attribute")
 		}
 		key, err := parseScalar(fd.MapKey(), ks)
 		if err != nil {

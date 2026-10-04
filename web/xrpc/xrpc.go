@@ -38,6 +38,7 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
+	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/interruption"
 	"github.com/valentin-kaiser/go-core/logging"
 	"google.golang.org/grpc"
@@ -46,7 +47,7 @@ import (
 
 var (
 	logger             = logging.GetPackageLogger("xrpc")
-	errMissingStreamID = errors.New("missing stream id")
+	errMissingStreamID = apperror.NewError("missing stream id")
 )
 
 const defaultMaxBody = 4 << 20

@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/valentin-kaiser/go-core/apperror"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
@@ -79,19 +79,19 @@ func NewClient(endpoint string, opts ...ClientOption) (*Client, error) {
 	switch c.protocol {
 	case ProtocolGRPC:
 		if c.conn == nil {
-			return nil, errors.New("gRPC protocol requires WithGRPCConn")
+			return nil, apperror.NewError("gRPC protocol requires WithGRPCConn")
 		}
 	case ProtocolJSON, ProtocolXML:
 		u, err := url.Parse(endpoint)
 		if err != nil {
-			return nil, fmt.Errorf("invalid endpoint: %w", err)
+			return nil, apperror.NewError("invalid endpoint").AddError(err)
 		}
 		if u.Host == "" {
-			return nil, errors.New("invalid endpoint: missing host")
+			return nil, apperror.NewError("invalid endpoint: missing host")
 		}
 		c.endpoint = u
 	default:
-		return nil, fmt.Errorf("unsupported protocol %q", c.protocol)
+		return nil, apperror.NewErrorf("unsupported protocol %q", c.protocol)
 	}
 	return c, nil
 }
@@ -118,7 +118,7 @@ func (c *Client) grpcContext(ctx context.Context) context.Context {
 // Call performs a unary call.
 func (c *Client) Call(ctx context.Context, method string, in, out proto.Message) error {
 	if in == nil || out == nil {
-		return errors.New("request and response must not be nil")
+		return apperror.NewError("request and response must not be nil")
 	}
 	if c.protocol == ProtocolGRPC {
 		return c.conn.Invoke(c.grpcContext(ctx), grpcPath(method), in, out)
@@ -127,7 +127,7 @@ func (c *Client) Call(ctx context.Context, method string, in, out proto.Message)
 	w := newWire(c.protocol, c.codec)
 	body, err := w.encodeRequest(numericID(c.nextID.Add(1)), method, in)
 	if err != nil {
-		return fmt.Errorf("failed to encode request: %w", err)
+		return apperror.NewError("failed to encode request").AddError(err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint.String(), bytes.NewReader(body))
@@ -147,18 +147,18 @@ func (c *Client) Call(ctx context.Context, method string, in, out proto.Message)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
+		return apperror.NewError("request failed").AddError(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, defaultMaxBody))
 	if err != nil {
-		return fmt.Errorf("failed to read response: %w", err)
+		return apperror.NewError("failed to read response").AddError(err)
 	}
 
 	envs, _, perr := w.parse(data)
 	if perr != nil || len(envs) != 1 || !envs[0].isResp {
-		return fmt.Errorf("unexpected response (HTTP %d): %s", resp.StatusCode, truncate(data, 200))
+		return apperror.NewErrorf("unexpected response (HTTP %d): %s", resp.StatusCode, truncate(data, 200))
 	}
 	if envs[0].err != nil {
 		return envs[0].err
@@ -274,7 +274,7 @@ func (c *Client) dial(ctx context.Context) (*websocket.Conn, wire, error) {
 
 	conn, _, err := d.DialContext(ctx, u.String(), header)
 	if err != nil {
-		return nil, nil, fmt.Errorf("websocket dial failed: %w", err)
+		return nil, nil, apperror.NewError("websocket dial failed").AddError(err)
 	}
 	return conn, newWire(c.protocol, c.codec), nil
 }
@@ -300,7 +300,7 @@ func (c *Client) streamWS(ctx context.Context, method string, first proto.Messag
 	id := numericID(c.nextID.Add(1))
 	req, err := w.encodeRequest(id, method, first)
 	if err != nil {
-		return fmt.Errorf("failed to encode request: %w", err)
+		return apperror.NewError("failed to encode request").AddError(err)
 	}
 	if err := write(req); err != nil {
 		return err
@@ -321,7 +321,7 @@ func (c *Client) streamWS(ctx context.Context, method string, first proto.Messag
 				}
 				data, err := w.encodeEvent(methodMessage, id, msg)
 				if err != nil {
-					sendErr <- fmt.Errorf("failed to encode message: %w", err)
+					sendErr <- apperror.NewError("failed to encode message").AddError(err)
 					cancel()
 					return
 				}
@@ -348,7 +348,7 @@ func (c *Client) streamWS(ctx context.Context, method string, first proto.Messag
 
 		envs, _, perr := w.parse(data)
 		if perr != nil || len(envs) != 1 {
-			return errors.New("unexpected message from server")
+			return apperror.NewError("unexpected message from server")
 		}
 		e := envs[0]
 		switch {
@@ -391,7 +391,7 @@ func chanDeliver[T proto.Message](ctx context.Context, out chan<- T) func(proto.
 	return func(m proto.Message) error {
 		v, ok := m.(T)
 		if !ok {
-			return errors.New("unexpected message type")
+			return apperror.NewError("unexpected message type")
 		}
 		select {
 		case out <- v:
@@ -405,7 +405,7 @@ func chanDeliver[T proto.Message](ctx context.Context, out chan<- T) func(proto.
 // ServerStream sends one request and delivers the server messages to out, which is closed when the stream ends.
 func ServerStream[Out proto.Message](ctx context.Context, c *Client, method string, in proto.Message, out chan<- Out, newOut func() Out) error {
 	if in == nil || out == nil || newOut == nil {
-		return errors.New("request, output channel and factory must not be nil")
+		return apperror.NewError("request, output channel and factory must not be nil")
 	}
 	defer close(out)
 	return c.stream(ctx, method, kindServerStream, in, nil, func() proto.Message { return newOut() }, chanDeliver(ctx, out), nil)
@@ -414,7 +414,7 @@ func ServerStream[Out proto.Message](ctx context.Context, c *Client, method stri
 // ClientStream sends the messages of in and returns the server response in out once in is closed.
 func ClientStream[In proto.Message](ctx context.Context, c *Client, method string, in <-chan In, out proto.Message) error {
 	if in == nil || out == nil {
-		return errors.New("input channel and response must not be nil")
+		return apperror.NewError("input channel and response must not be nil")
 	}
 	return c.stream(ctx, method, kindClientStream, nil, chanNext(in), nil, nil, out)
 }
@@ -422,7 +422,7 @@ func ClientStream[In proto.Message](ctx context.Context, c *Client, method strin
 // BidiStream exchanges messages in both directions; out is closed when the stream ends.
 func BidiStream[In, Out proto.Message](ctx context.Context, c *Client, method string, in <-chan In, out chan<- Out, newOut func() Out) error {
 	if in == nil || out == nil || newOut == nil {
-		return errors.New("channels and factory must not be nil")
+		return apperror.NewError("channels and factory must not be nil")
 	}
 	defer close(out)
 	return c.stream(ctx, method, kindBidi, nil, chanNext(in), func() proto.Message { return newOut() }, chanDeliver(ctx, out), nil)

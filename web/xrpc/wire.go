@@ -3,9 +3,9 @@ package xrpc
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"strconv"
 
+	"github.com/valentin-kaiser/go-core/apperror"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -224,7 +224,7 @@ func (w jsonWire) bindParams(params []byte, m proto.Message) error {
 			return w.c.unmarshalJSON(items[0], m)
 		}
 	}
-	return errors.New("params must be an object or an array with at most one element")
+	return apperror.NewError("params must be an object or an array with at most one element")
 }
 
 func (w jsonWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
