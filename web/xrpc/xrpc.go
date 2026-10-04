@@ -69,6 +69,7 @@ type Service struct {
 	maxBody  int64
 	upgrader websocket.Upgrader
 	grpcOpts []grpc.ServerOption
+	reflect  bool
 	grpcOnce sync.Once
 	grpcSrv  *grpc.Server
 }
@@ -182,6 +183,14 @@ func (s *Service) WithGRPCOptions(opts ...grpc.ServerOption) *Service {
 	return s
 }
 
+// WithGRPCReflection enables the gRPC server reflection service (v1 and v1alpha), so tools such as
+// grpcurl, grpcui and Postman can discover the services. It exposes the full API surface, so enable it
+// deliberately.
+func (s *Service) WithGRPCReflection() *Service {
+	s.reflect = true
+	return s
+}
+
 // WithCaseInsensitiveMethods makes method names match regardless of case.
 func (s *Service) WithCaseInsensitiveMethods() *Service {
 	s.fold = true
@@ -210,6 +219,9 @@ func (s *Service) Paths() []string {
 	paths := make([]string, 0, len(s.list))
 	for _, m := range s.list {
 		paths = append(paths, "/"+m.full+"/"+m.name)
+	}
+	if s.reflect {
+		paths = append(paths, reflectionPaths...)
 	}
 	return paths
 }

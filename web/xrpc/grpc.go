@@ -7,6 +7,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/reflection"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
@@ -36,6 +37,9 @@ func (s *Service) grpcServer() *grpc.Server {
 		}
 		for _, name := range order {
 			srv.RegisterService(descs[name], nil)
+		}
+		if s.reflect {
+			reflection.Register(srv)
 		}
 		s.grpcSrv = srv
 	})
@@ -99,4 +103,10 @@ func streamHandler(m *method) grpc.StreamHandler {
 		}
 		return nil
 	}
+}
+
+// reflectionPaths are the request paths of the gRPC reflection services registered by WithGRPCReflection.
+var reflectionPaths = []string{
+	"/grpc.reflection.v1.ServerReflection/ServerReflectionInfo",
+	"/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo",
 }

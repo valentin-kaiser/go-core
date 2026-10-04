@@ -15,6 +15,7 @@ import (
 	"github.com/valentin-kaiser/go-core/web/xrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	rpb "google.golang.org/grpc/reflection/grpc_reflection_v1"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
@@ -692,5 +693,36 @@ func TestSameShortServiceName(t *testing.T) {
 	}
 	if got := len(svc.Paths()); got != 6 {
 		t.Fatalf("expected 6 paths, got %d", got)
+	}
+}
+
+func TestGRPCReflection(t *testing.T) {
+	svc := xrpc.Register(testServer{}).WithGRPCReflection()
+	if len(svc.Paths()) != 7 {
+		t.Fatalf("expected reflection paths to be mounted, got %v", svc.Paths())
+	}
+	ts := newServer(t, svc)
+	conn, err := grpc.NewClient(strings.TrimPrefix(ts.URL, "http://"), grpc.WithTransportCredentials(insecure.NewCredentials()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	stream, err := rpb.NewServerReflectionClient(conn).ServerReflectionInfo(timeout(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := stream.Send(&rpb.ServerReflectionRequest{MessageRequest: &rpb.ServerReflectionRequest_ListServices{}}); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := stream.Recv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, s := range resp.GetListServicesResponse().GetService() {
+		found = found || s.GetName() == "test.v1.Test"
+	}
+	if !found {
+		t.Errorf("test.v1.Test not listed: %v", resp)
 	}
 }
