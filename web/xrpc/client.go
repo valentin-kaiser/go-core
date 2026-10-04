@@ -125,7 +125,8 @@ func (c *Client) Call(ctx context.Context, method string, in, out proto.Message)
 	}
 
 	w := newWire(c.protocol, c.codec)
-	body, err := w.encodeRequest(numericID(c.nextID.Add(1)), method, in)
+	id := numericID(c.nextID.Add(1))
+	body, err := w.encodeRequest(id, method, in)
 	if err != nil {
 		return apperror.NewError("failed to encode request").AddError(err)
 	}
@@ -160,10 +161,23 @@ func (c *Client) Call(ctx context.Context, method string, in, out proto.Message)
 	if perr != nil || len(envs) != 1 || !envs[0].isResp {
 		return apperror.NewErrorf("unexpected response (HTTP %d): %s", resp.StatusCode, truncate(data, 200))
 	}
+	// An error response may carry a null id when the server could not determine the request id.
+	nullErr := envs[0].err != nil && (!envs[0].id.set || envs[0].id.null)
+	if !nullErr && !sameID(envs[0].id, id, c.protocol == ProtocolXML) {
+		return apperror.NewErrorf("response id mismatch (HTTP %d): %s", resp.StatusCode, truncate(data, 200))
+	}
 	if envs[0].err != nil {
 		return envs[0].err
 	}
 	return envs[0].bind(out)
+}
+
+// sameID reports whether got matches want. XML ids are attributes and carry no numeric type.
+func sameID(got, want rpcID, textOnly bool) bool {
+	if textOnly {
+		return got.set && got.text == want.text
+	}
+	return got.key() == want.key()
 }
 
 func truncate(b []byte, n int) string {
