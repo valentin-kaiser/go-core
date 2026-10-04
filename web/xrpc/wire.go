@@ -158,6 +158,11 @@ func (w jsonWire) parseOne(raw []byte) *envelope {
 		return invalid(id)
 	}
 
+	// request and response members are mutually exclusive
+	if msg.Method != nil && (len(msg.Result) > 0 || len(msg.Error) > 0) {
+		return invalid(id)
+	}
+
 	e := &envelope{id: id}
 	switch {
 	case msg.Method != nil:
