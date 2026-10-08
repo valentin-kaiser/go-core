@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	github.com/NYTimes/gziphandler v1.1.1
-	github.com/ProtonMail/gopenpgp/v3 v3.5.1
+	github.com/ProtonMail/gopenpgp/v3 v3.5.2
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-sql-driver/mysql v1.10.1
