@@ -14,7 +14,7 @@ import (
 )
 
 // These tests need a MySQL and a PostgreSQL server and skip without them. The defaults match
-// test/docker-compose.yaml; MYSQL_DSN and POSTGRES_DSN override them.
+// test/compose.yaml; MYSQL_DSN and POSTGRES_DSN override them.
 
 func serverDSN(env, fallback string) string {
 	if v := os.Getenv(env); v != "" {

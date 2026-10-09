@@ -1,6 +1,6 @@
 # Services for the Redis, RabbitMQ, MySQL and PostgreSQL tests and benchmarks.
 #
-#   docker compose -f test/docker-compose.yaml up -d
+#   docker compose -f test/compose.yaml up -d
 #   go test ./cache ./queue ./database
 #
 # The credentials and ports match the defaults of the tests: queue/rabbitmq_test.go,

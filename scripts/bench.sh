@@ -11,7 +11,7 @@
 #   SKIP       benchmarks to skip (default: the ones that are slow by design)
 #
 # Benchmarks that need Redis, RabbitMQ or etcd skip themselves when the service is missing.
-# `docker compose -f test/docker-compose.yaml up -d` starts Redis and RabbitMQ.
+# `docker compose -f test/compose.yaml up -d` starts Redis and RabbitMQ.
 #
 # Compare two runs with: benchstat before.txt after.txt
 set -euo pipefail
