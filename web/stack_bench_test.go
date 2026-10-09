@@ -37,6 +37,7 @@ func runStack(b *testing.B, s *Server, acceptEncoding string) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		clear(w.h)
 		s.router.ServeHTTP(w, req)
 	}
 }

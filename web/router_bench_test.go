@@ -30,6 +30,7 @@ func BenchmarkRouterServeHTTP(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		clear(w.h)
 		r.ServeHTTP(w, req)
 	}
 }
@@ -41,6 +42,7 @@ func BenchmarkRouterServeHTTPParallel(b *testing.B) {
 		req := httptest.NewRequest(http.MethodGet, "/api/users/42", nil)
 		w := &discardWriter{h: http.Header{}}
 		for pb.Next() {
+			clear(w.h)
 			r.ServeHTTP(w, req)
 		}
 	})
@@ -67,6 +69,7 @@ func BenchmarkRouterConfiguredServeHTTP(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		clear(w.h)
 		r.ServeHTTP(w, req)
 	}
 }
@@ -78,6 +81,7 @@ func BenchmarkRouterConfiguredServeHTTPParallel(b *testing.B) {
 		req := httptest.NewRequest(http.MethodGet, "/api/users/42", nil)
 		w := &discardWriter{h: http.Header{}}
 		for pb.Next() {
+			clear(w.h)
 			r.ServeHTTP(w, req)
 		}
 	})

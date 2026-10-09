@@ -42,6 +42,7 @@ func BenchmarkLogMiddlewareDisabled(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		clear(w.h)
 		h.ServeHTTP(w, req)
 	}
 }
@@ -54,6 +55,7 @@ func BenchmarkLogMiddlewareEnabled(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		clear(w.h)
 		h.ServeHTTP(w, req)
 	}
 }
@@ -66,6 +68,7 @@ func BenchmarkLogMiddlewareDisabledParallel(b *testing.B) {
 		req := httptest.NewRequest(http.MethodGet, "/api/users/42?x=1", nil)
 		w := &benchWriter{h: http.Header{}}
 		for pb.Next() {
+			clear(w.h)
 			h.ServeHTTP(w, req)
 		}
 	})
@@ -79,6 +82,7 @@ func BenchmarkCORSMiddleware(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		clear(w.h)
 		h.ServeHTTP(w, req)
 	}
 }
@@ -91,6 +95,7 @@ func BenchmarkCORSMiddlewareParallel(b *testing.B) {
 		req.Header.Set("Origin", "https://b.example")
 		w := &benchWriter{h: http.Header{}}
 		for pb.Next() {
+			clear(w.h)
 			h.ServeHTTP(w, req)
 		}
 	})
@@ -103,6 +108,7 @@ func BenchmarkVaryHeaderMiddleware(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
+		clear(w.h)
 		h.ServeHTTP(w, req)
 	}
 }

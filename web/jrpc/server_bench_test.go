@@ -61,6 +61,7 @@ func BenchmarkServerUnary(b *testing.B) {
 	req := newBenchRequest()
 	for i := 0; i < b.N; i++ {
 		resetBody(req)
+		clear(w.h)
 		mux.ServeHTTP(w, req)
 	}
 }
@@ -73,6 +74,7 @@ func BenchmarkServerUnaryParallel(b *testing.B) {
 		req := newBenchRequest()
 		for pb.Next() {
 			resetBody(req)
+			clear(w.h)
 			mux.ServeHTTP(w, req)
 		}
 	})

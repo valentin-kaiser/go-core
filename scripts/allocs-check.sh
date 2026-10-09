@@ -23,10 +23,14 @@ function median(s, n,   arr, i, j, tmp) {
   }
   return (n % 2) ? arr[(n + 1) / 2] : (arr[n / 2] + arr[n / 2 + 1]) / 2
 }
-FNR == 1 { file++ }
+FNR == 1 { file++; pkg = "" }
+# go test ./... prints a "pkg:" line before the benchmarks of each package, and names such as
+# BenchmarkGet repeat across packages, so the package is part of the key
+/^pkg: / { pkg = $2 }
 /^Benchmark/ {
+  key = (pkg == "") ? $1 : pkg "." $1
   for (i = 2; i < NF; i++) if ($(i + 1) == "allocs/op") {
-    if (file == 1) base[$1] = base[$1] " " $i; else head[$1] = head[$1] " " $i
+    if (file == 1) base[key] = base[key] " " $i; else head[key] = head[key] " " $i
   }
 }
 END {
