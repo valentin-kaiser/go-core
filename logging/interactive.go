@@ -23,7 +23,8 @@ func Interactive() bool {
 		return false
 	}
 
-	return stat.Mode()&(os.ModeCharDevice|os.ModeNamedPipe|os.ModeSocket) != 0
+	mode := stat.Mode()
+	return mode.IsRegular() || mode&(os.ModeCharDevice|os.ModeNamedPipe|os.ModeSocket) != 0
 }
 
 // terminal reports whether stdout is an actual terminal (supports colors)
