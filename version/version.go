@@ -443,6 +443,10 @@ func ExtractSemanticVersion(tag string) string {
 // ParseVersion parses a version string and returns a ParsedVersion struct
 func ParseVersion(tag string) (*ParsedVersion, error) {
 	format := DetectFormat(tag)
+	// DetectFormat has just matched the tag against the semver pattern; do not match it again
+	if format == FormatSemVer {
+		return (&SemVerParser{}).parseValid(tag), nil
+	}
 	parser := GetParser(format)
 	if parser == nil {
 		return nil, apperror.NewError("unsupported version format")
@@ -646,15 +650,18 @@ func (p *SemVerParser) Parse(tag string) (*ParsedVersion, error) {
 		return nil, apperror.NewError("invalid semantic version format")
 	}
 
-	pv := &ParsedVersion{
+	return p.parseValid(tag), nil
+}
+
+// parseValid builds the result for a tag that IsSemver already accepted
+func (p *SemVerParser) parseValid(tag string) *ParsedVersion {
+	return &ParsedVersion{
 		Original: tag,
 		Format:   FormatSemVer,
 		Major:    semverSegment(tag, 0),
 		Minor:    semverSegment(tag, 1),
 		Patch:    semverSegment(tag, 2),
 	}
-
-	return pv, nil
 }
 
 // IsValid checks if the given tag is a valid semantic version format.
