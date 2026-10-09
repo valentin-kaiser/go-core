@@ -1,6 +1,7 @@
 package database
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -30,10 +31,28 @@ func oldStatements(sqlContent string) []string {
 func newStatements(t *testing.T, sqlContent string) []string {
 	t.Helper()
 	got := []string{}
-	if err := forEachStatement(strings.NewReader(sqlContent), func(s string) { got = append(got, s) }); err != nil {
+	if err := forEachStatement(strings.NewReader(sqlContent), func(s string) error { got = append(got, s); return nil }); err != nil {
 		t.Fatal(err)
 	}
 	return got
+}
+
+func TestForEachStatementStopsOnCallbackError(t *testing.T) {
+	boom := errors.New("boom")
+	calls := 0
+	err := forEachStatement(strings.NewReader("SELECT 1;\nSELECT 2;\nSELECT 3;\n"), func(string) error {
+		calls++
+		if calls == 2 {
+			return boom
+		}
+		return nil
+	})
+	if !errors.Is(err, boom) {
+		t.Fatalf("expected callback error, got %v", err)
+	}
+	if calls != 2 {
+		t.Fatalf("expected reading to stop after the failing statement, got %d calls", calls)
+	}
 }
 
 func TestForEachStatementMatchesOldSplitting(t *testing.T) {
@@ -112,7 +131,7 @@ func BenchmarkForEachStatement(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		n := 0
-		_ = forEachStatement(strings.NewReader(dump), func(string) { n++ })
+		_ = forEachStatement(strings.NewReader(dump), func(string) error { n++; return nil })
 	}
 }
 

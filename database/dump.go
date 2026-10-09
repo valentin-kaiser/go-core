@@ -17,7 +17,9 @@ import (
 // Reading line by line keeps the memory use at one statement, where splitting the whole dump
 // up front needs the dump several times over, and appending to a string per line is quadratic for
 // a long statement.
-func forEachStatement(r io.Reader, fn func(stmt string)) error {
+//
+// The first error returned by fn stops the reading and is returned.
+func forEachStatement(r io.Reader, fn func(stmt string) error) error {
 	reader := bufio.NewReaderSize(r, 64*1024)
 	var stmt []byte
 	var long []byte // a line longer than the reader's buffer, collected in pieces
@@ -41,7 +43,9 @@ func forEachStatement(r io.Reader, fn func(stmt string)) error {
 			stmt = append(stmt, bytes.TrimSuffix(line, []byte("\n"))...)
 			stmt = append(stmt, '\n')
 			if trimmed[len(trimmed)-1] == ';' {
-				fn(string(stmt))
+				if ferr := fn(string(stmt)); ferr != nil {
+					return ferr
+				}
 				stmt = stmt[:0]
 			}
 		}

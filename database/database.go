@@ -853,13 +853,17 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		}()
 
 		// Statements run as they are read, so the dump is never held in memory as a whole
-		err = forEachStatement(backupFile, func(stmt string) {
+		err = forEachStatement(backupFile, func(stmt string) error {
 			if _, err := conn.ExecContext(context.Background(), stmt); err != nil {
-				d.logger.Warn().Err(err).Msgf("failed to execute statement: %s", stmt[:min(50, len(stmt))])
+				return apperror.NewErrorf("failed to execute statement: %s", stmt[:min(50, len(stmt))]).AddError(err)
 			}
+			return nil
 		})
 		if err != nil {
-			return apperror.NewErrorf("failed to read backup file").AddError(err)
+			// Roll back what is still open. Earlier CREATE and DROP statements have committed
+			// implicitly and cannot be undone.
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+			return apperror.NewErrorf("failed to restore the backup").AddError(err)
 		}
 
 		if _, err := conn.ExecContext(context.Background(), "COMMIT"); err != nil {
@@ -890,14 +894,15 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		}
 
 		// Statements run as they are read, so the dump is never held in memory as a whole
-		err = forEachStatement(backupFile, func(stmt string) {
+		err = forEachStatement(backupFile, func(stmt string) error {
 			if _, err := tx.Exec(stmt); err != nil {
-				d.logger.Warn().Err(err).Msgf("failed to execute statement: %s", stmt[:min(50, len(stmt))])
+				return apperror.NewErrorf("failed to execute statement: %s", stmt[:min(50, len(stmt))]).AddError(err)
 			}
+			return nil
 		})
 		if err != nil {
 			_ = tx.Rollback()
-			return apperror.NewErrorf("failed to read backup file").AddError(err)
+			return apperror.NewErrorf("failed to restore the backup").AddError(err)
 		}
 
 		if err := tx.Commit(); err != nil {
