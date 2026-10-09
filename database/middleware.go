@@ -281,13 +281,16 @@ func (m *LoggingMiddleware) IsEnabled() bool {
 	return m.enabled.Load()
 }
 
-type contextKey string
+// startTimeKey is the context key of the time a statement started
+type startTimeKey struct{}
 
-const startTimeKey contextKey = "startTime"
-
-// BeforeExec does nothing before executing a statement
+// BeforeExec remembers when the statement started, if logging is enabled
 func (m *LoggingMiddleware) BeforeExec(ctx context.Context, query string, args []d.NamedValue) context.Context {
-	return context.WithValue(ctx, startTimeKey, time.Now())
+	// The start time is only used for log fields; skip it when no event would be written
+	if !m.enabled.Load() || !logging.IsEnabled(m.logger, logging.ErrorLevel) {
+		return ctx
+	}
+	return context.WithValue(ctx, startTimeKey{}, time.Now())
 }
 
 // AfterExec logs after executing a statement
@@ -296,11 +299,20 @@ func (m *LoggingMiddleware) AfterExec(ctx context.Context, query string, args []
 		return
 	}
 	duration := time.Duration(0)
-	if startTime, ok := ctx.Value(startTimeKey).(time.Time); ok {
+	if startTime, ok := ctx.Value(startTimeKey{}).(time.Time); ok {
 		duration = time.Since(startTime)
 	}
 
 	if err != nil && errors.Is(err, d.ErrSkip) {
+		return
+	}
+
+	// Building the fields (argument conversion, duration text) is the expensive part
+	level := logging.TraceLevel
+	if err != nil {
+		level = logging.ErrorLevel
+	}
+	if !logging.IsEnabled(m.logger, level) {
 		return
 	}
 
@@ -333,9 +345,13 @@ func (m *LoggingMiddleware) AfterExec(ctx context.Context, query string, args []
 	l.Msgf("\n%s", query)
 }
 
-// BeforeQuery does nothing before executing a query
+// BeforeQuery remembers when the query started, if logging is enabled
 func (m *LoggingMiddleware) BeforeQuery(ctx context.Context, query string, args []d.NamedValue) context.Context {
-	return context.WithValue(ctx, startTimeKey, time.Now())
+	// The start time is only used for log fields; skip it when no event would be written
+	if !m.enabled.Load() || !logging.IsEnabled(m.logger, logging.ErrorLevel) {
+		return ctx
+	}
+	return context.WithValue(ctx, startTimeKey{}, time.Now())
 }
 
 // AfterQuery logs after executing a query
@@ -344,11 +360,20 @@ func (m *LoggingMiddleware) AfterQuery(ctx context.Context, query string, args [
 		return
 	}
 	duration := time.Duration(0)
-	if startTime, ok := ctx.Value(startTimeKey).(time.Time); ok {
+	if startTime, ok := ctx.Value(startTimeKey{}).(time.Time); ok {
 		duration = time.Since(startTime)
 	}
 
 	if err != nil && errors.Is(err, d.ErrSkip) {
+		return
+	}
+
+	// Building the fields (argument conversion, duration text) is the expensive part
+	level := logging.TraceLevel
+	if err != nil {
+		level = logging.ErrorLevel
+	}
+	if !logging.IsEnabled(m.logger, level) {
 		return
 	}
 
