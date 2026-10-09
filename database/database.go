@@ -731,14 +731,8 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 		}
 
 		// Copy the database file
-		sourceData, err := os.ReadFile(sourceFilePath)
-		if err != nil {
-			return apperror.NewErrorf("failed to read database file").AddError(err)
-		}
-
-		err = os.WriteFile(path, sourceData, 0640)
-		if err != nil {
-			return apperror.NewErrorf("failed to write backup file").AddError(err)
+		if err := copyFile(sourceFilePath, path, 0640); err != nil {
+			return apperror.NewErrorf("failed to copy database file").AddError(err)
 		}
 
 		d.logger.Info().Msgf("database backup created: %s", path)
@@ -1138,14 +1132,8 @@ func (d *Database[Q]) Restore(backupPath string) error {
 			return apperror.Wrap(err)
 		}
 
-		backupData, err := os.ReadFile(backupPath)
-		if err != nil {
-			return apperror.NewErrorf("failed to read backup file").AddError(err)
-		}
-
-		err = os.WriteFile(targetPath, backupData, 0640)
-		if err != nil {
-			return apperror.NewErrorf("failed to write database file").AddError(err)
+		if err := copyFile(backupPath, targetPath, 0640); err != nil {
+			return apperror.NewErrorf("failed to restore database file").AddError(err)
 		}
 
 		os.Remove(targetPath + "-wal")
@@ -1165,36 +1153,20 @@ func (d *Database[Q]) Restore(backupPath string) error {
 			return apperror.NewErrorf("database instance is nil")
 		}
 
-		backupData, err := os.ReadFile(backupPath)
+		backupFile, err := os.Open(backupPath)
 		if err != nil {
 			return apperror.NewErrorf("failed to read backup file").AddError(err)
 		}
+		defer func() { _ = backupFile.Close() }()
 
-		sqlContent := string(backupData)
-		statements := []string{}
-		currentStmt := ""
-
-		for _, line := range strings.Split(sqlContent, "\n") {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" || strings.HasPrefix(trimmed, "--") {
-				continue
-			}
-
-			currentStmt += line + "\n"
-			if strings.HasSuffix(trimmed, ";") {
-				statements = append(statements, currentStmt)
-				currentStmt = ""
-			}
-		}
-
-		for _, stmt := range statements {
-			if strings.TrimSpace(stmt) == "" {
-				continue
-			}
-			_, err := dbInstance.Exec(stmt)
-			if err != nil {
+		// Statements run as they are read, so the dump is never held in memory as a whole
+		err = forEachStatement(backupFile, func(stmt string) {
+			if _, err := dbInstance.Exec(stmt); err != nil {
 				d.logger.Warn().Err(err).Msgf("failed to execute statement: %s", stmt[:min(50, len(stmt))])
 			}
+		})
+		if err != nil {
+			return apperror.NewErrorf("failed to read backup file").AddError(err)
 		}
 
 		d.logger.Info().Msgf("database restored from backup: %s", backupPath)
@@ -1209,42 +1181,26 @@ func (d *Database[Q]) Restore(backupPath string) error {
 			return apperror.NewErrorf("database instance is nil")
 		}
 
-		backupData, err := os.ReadFile(backupPath)
+		backupFile, err := os.Open(backupPath)
 		if err != nil {
 			return apperror.NewErrorf("failed to read backup file").AddError(err)
 		}
-
-		sqlContent := string(backupData)
-		statements := []string{}
-		currentStmt := ""
-
-		for _, line := range strings.Split(sqlContent, "\n") {
-			trimmed := strings.TrimSpace(line)
-			if trimmed == "" || strings.HasPrefix(trimmed, "--") {
-				continue
-			}
-
-			currentStmt += line + "\n"
-
-			if strings.HasSuffix(trimmed, ";") {
-				statements = append(statements, currentStmt)
-				currentStmt = ""
-			}
-		}
+		defer func() { _ = backupFile.Close() }()
 
 		tx, err := dbInstance.Begin()
 		if err != nil {
 			return apperror.NewErrorf("failed to begin transaction").AddError(err)
 		}
 
-		for _, stmt := range statements {
-			if strings.TrimSpace(stmt) == "" {
-				continue
-			}
-			_, err := tx.Exec(stmt)
-			if err != nil {
+		// Statements run as they are read, so the dump is never held in memory as a whole
+		err = forEachStatement(backupFile, func(stmt string) {
+			if _, err := tx.Exec(stmt); err != nil {
 				d.logger.Warn().Err(err).Msgf("failed to execute statement: %s", stmt[:min(50, len(stmt))])
 			}
+		})
+		if err != nil {
+			_ = tx.Rollback()
+			return apperror.NewErrorf("failed to read backup file").AddError(err)
 		}
 
 		if err := tx.Commit(); err != nil {
