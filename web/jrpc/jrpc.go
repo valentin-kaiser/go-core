@@ -68,6 +68,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -155,7 +156,7 @@ type methodInfo struct {
 	inputType   reflect.Type
 	outputType  reflect.Type
 	messageType proto.Message
-	validated   bool
+	validated   atomic.Bool // set once the method signature was checked; requests run concurrently
 }
 
 // Register creates a new jrpc service instance and registers the provided
@@ -216,7 +217,6 @@ func Register(s Server) *Service {
 				inputType:   it,
 				outputType:  ot,
 				messageType: pm,
-				validated:   false,
 			}
 		}
 	}
@@ -397,7 +397,7 @@ func (s *Service) unary(w http.ResponseWriter, r *http.Request) {
 	}
 	defer apperror.Catch(r.Body.Close, "closing request body failed")
 
-	resp, err := s.call(ctx, service, method, msg)
+	resp, err := s.invoke(ctx, md, service, method, msg)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -555,6 +555,12 @@ func (s *Service) call(ctx context.Context, service, method string, req proto.Me
 	if err != nil {
 		return nil, err
 	}
+	return s.invoke(ctx, methodInfo, service, method, req)
+}
+
+// invoke calls an already resolved method
+func (s *Service) invoke(ctx context.Context, methodInfo *methodInfo, service, method string, req proto.Message) (any, error) {
+	var err error
 
 	if !methodInfo.method.IsValid() {
 		return nil, apperror.Wrap(errMethodReflectionNotFound)
@@ -564,7 +570,7 @@ func (s *Service) call(ctx context.Context, service, method string, req proto.Me
 	mt := methodInfo.reflectType
 
 	// Validate method signature if not already validated
-	if !methodInfo.validated {
+	if !methodInfo.validated.Load() {
 		if mt.NumIn() != 2 || mt.NumOut() != 2 {
 			return nil, apperror.Wrap(errInvalidMethodSignature)
 		}
@@ -574,7 +580,7 @@ func (s *Service) call(ctx context.Context, service, method string, req proto.Me
 		if !mt.Out(1).Implements(errorType) {
 			return nil, apperror.Wrap(errSecondReturnMustBeError)
 		}
-		methodInfo.validated = true
+		methodInfo.validated.Store(true)
 	}
 
 	wanted := mt.In(1)
@@ -632,12 +638,14 @@ func (s *Service) call(ctx context.Context, service, method string, req proto.Me
 		}
 	}
 
-	l := logger.Trace()
+	// Boxing the fields for the call allocates, so check the level first
 	if err != nil {
-		l = logger.Warn().Err(err)
+		if logging.IsEnabled(logger, logging.WarnLevel) {
+			logger.Warn().Err(err).Field("service", service).Field("method", method).Msg("jRPC method called")
+		}
+	} else if logging.IsEnabled(logger, logging.TraceLevel) {
+		logger.Trace().Field("service", service).Field("method", method).Msg("jRPC method called")
 	}
-
-	l.Field("service", service).Field("method", method).Msg("jRPC method called")
 	return res, apperror.Wrap(err)
 }
 
@@ -659,7 +667,9 @@ func (s *Service) message(md *methodInfo) (proto.Message, error) {
 		return nil, apperror.NewError("message type not found")
 	}
 
-	return proto.Clone(md.messageType), nil
+	// A new empty message of the type; md.messageType itself is never filled, so cloning it
+	// would only copy nothing
+	return md.messageType.ProtoReflect().New().Interface(), nil
 }
 
 func (s *Service) marshal(m any) ([]byte, error) {
