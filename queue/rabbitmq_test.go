@@ -1,8 +1,11 @@
 package queue_test
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -33,6 +36,12 @@ func TestRabbitMQ(t *testing.T) {
 	})
 
 	ctx := t.Context()
+
+	// basic.get never auto-deletes a queue, so messages left unacknowledged by an earlier run
+	// come back when its connection closes. Start from an empty queue.
+	if err := q.PurgeQueue(ctx); err != nil {
+		t.Fatalf("Failed to purge queue: %v", err)
+	}
 
 	t.Run("BasicEnqueueDequeue", func(t *testing.T) {
 		job := queue.NewJob("test-job").
@@ -332,7 +341,7 @@ func BenchmarkRabbitMQEnqueue(b *testing.B) {
 	if err != nil {
 		b.Skipf("Skipping RabbitMQ benchmark: %v", err)
 	}
-	defer apperror.Handle(q.Close(), "failed to close queue")
+	defer func() { apperror.Handle(q.Close(), "failed to close queue") }()
 
 	ctx := b.Context()
 
@@ -368,7 +377,7 @@ func BenchmarkRabbitMQDequeue(b *testing.B) {
 	if err != nil {
 		b.Skipf("Skipping RabbitMQ dequeue benchmark: %v", err)
 	}
-	defer apperror.Handle(q.Close(), "failed to close queue")
+	defer func() { apperror.Handle(q.Close(), "failed to close queue") }()
 
 	ctx := b.Context()
 
@@ -399,5 +408,361 @@ func BenchmarkRabbitMQDequeue(b *testing.B) {
 		if err := q.UpdateJob(ctx, job); err != nil {
 			b.Logf("Failed to update job: %v", err)
 		}
+	}
+}
+
+func newTestRabbitMQ(t *testing.T, name string) *queue.RabbitMQ {
+	t.Helper()
+	// A name per run: basic.get never auto-deletes a queue, so fixed names collect leftovers
+	suffix := fmt.Sprintf("%s_%d", name, time.Now().UnixNano())
+	q, err := queue.NewRabbitMQ(queue.RabbitMQConfig{
+		URL:          "amqp://admin:admin123@localhost:5672/",
+		QueueName:    suffix,
+		ExchangeName: suffix + "_exchange",
+		RoutingKey:   suffix,
+		Durable:      false,
+		AutoDelete:   true,
+	})
+	if err != nil {
+		t.Skipf("Skipping RabbitMQ test: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = q.PurgeQueue(context.Background())
+		_ = q.Close()
+	})
+	return q
+}
+
+// Dequeue has to wait for the whole timeout when the queue is empty, like the memory queue does.
+func TestRabbitMQDequeueHonorsTimeout(t *testing.T) {
+	q := newTestRabbitMQ(t, "timeout")
+
+	start := time.Now()
+	_, err := q.Dequeue(t.Context(), 400*time.Millisecond)
+	elapsed := time.Since(start)
+	if !errors.Is(err, queue.ErrNoJobAvailable) {
+		t.Fatalf("expected ErrNoJobAvailable, got %v", err)
+	}
+	if elapsed < 350*time.Millisecond || elapsed > 2*time.Second {
+		t.Fatalf("Dequeue returned after %v, want about 400ms", elapsed)
+	}
+}
+
+// A job enqueued while a consumer waits is delivered long before the timeout.
+func TestRabbitMQDequeueWakesOnNewJob(t *testing.T) {
+	q := newTestRabbitMQ(t, "wake")
+
+	go func() {
+		time.Sleep(150 * time.Millisecond)
+		_ = q.Enqueue(context.Background(), queue.NewJob("wake").WithID("wake-1").Build())
+	}()
+
+	start := time.Now()
+	job, err := q.Dequeue(t.Context(), 5*time.Second)
+	if err != nil {
+		t.Fatalf("Dequeue: %v", err)
+	}
+	if job.ID != "wake-1" {
+		t.Fatalf("got job %q", job.ID)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("job was delivered after %v", elapsed)
+	}
+}
+
+// A scheduled job must not be delivered before its time.
+func TestRabbitMQScheduledJobIsDelayed(t *testing.T) {
+	q := newTestRabbitMQ(t, "delay")
+	ctx := t.Context()
+
+	job := queue.NewJob("delayed").WithID("delayed-1").WithDelay(700 * time.Millisecond).Build()
+	start := time.Now()
+	if err := q.Schedule(ctx, job); err != nil {
+		t.Fatalf("Schedule: %v", err)
+	}
+
+	if _, err := q.Dequeue(ctx, 200*time.Millisecond); !errors.Is(err, queue.ErrNoJobAvailable) {
+		t.Fatalf("the job was delivered before it was due: %v", err)
+	}
+
+	got, err := q.Dequeue(ctx, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Dequeue after the delay: %v", err)
+	}
+	if got.ID != job.ID {
+		t.Fatalf("got job %q, want %q", got.ID, job.ID)
+	}
+	if elapsed := time.Since(start); elapsed < 600*time.Millisecond {
+		t.Fatalf("job delivered after %v, scheduled for 700ms", elapsed)
+	}
+}
+
+// Close must not wait for a consumer that is polling an empty queue.
+func TestRabbitMQCloseDoesNotWaitForDequeue(t *testing.T) {
+	q := newTestRabbitMQ(t, "close")
+
+	done := make(chan struct{})
+	go func() {
+		_, _ = q.Dequeue(context.Background(), 5*time.Second)
+		close(done)
+	}()
+	time.Sleep(100 * time.Millisecond)
+
+	start := time.Now()
+	if err := q.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("Close took %v", elapsed)
+	}
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Dequeue kept polling after Close")
+	}
+}
+
+func newPrefetchRabbitMQ(tb testing.TB, name string, prefetch int) *queue.RabbitMQ {
+	tb.Helper()
+	suffix := fmt.Sprintf("%s_%d", name, time.Now().UnixNano())
+	q, err := queue.NewRabbitMQ(queue.RabbitMQConfig{
+		URL:          "amqp://admin:admin123@localhost:5672/",
+		QueueName:    suffix,
+		ExchangeName: suffix + "_exchange",
+		RoutingKey:   suffix,
+		Durable:      false,
+		AutoDelete:   false, // with a consumer the broker would delete the queue when the consumer goes away
+		Prefetch:     prefetch,
+	})
+	if err != nil {
+		tb.Skipf("Skipping RabbitMQ test: %v", err)
+	}
+	tb.Cleanup(func() {
+		_ = q.PurgeQueue(context.Background())
+		_ = q.Close()
+	})
+	return q
+}
+
+// With Prefetch set Dequeue reads from a consumer: jobs arrive in order, are acknowledged
+// through UpdateJob, and the timeout still applies to an empty queue.
+func TestRabbitMQConsumerMode(t *testing.T) {
+	q := newPrefetchRabbitMQ(t, "consumer", 5)
+	ctx := t.Context()
+
+	for i := 0; i < 3; i++ {
+		if err := q.Enqueue(ctx, queue.NewJob("c").WithID(fmt.Sprintf("c-%d", i)).Build()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i := 0; i < 3; i++ {
+		job, err := q.Dequeue(ctx, 5*time.Second)
+		if err != nil {
+			t.Fatalf("Dequeue %d: %v", i, err)
+		}
+		if want := fmt.Sprintf("c-%d", i); job.ID != want {
+			t.Fatalf("got %s, want %s", job.ID, want)
+		}
+		job.Status = queue.StatusCompleted
+		if err := q.UpdateJob(ctx, job); err != nil {
+			t.Fatalf("ack: %v", err)
+		}
+	}
+
+	start := time.Now()
+	if _, err := q.Dequeue(ctx, 300*time.Millisecond); !errors.Is(err, queue.ErrNoJobAvailable) {
+		t.Fatalf("expected ErrNoJobAvailable, got %v", err)
+	}
+	if elapsed := time.Since(start); elapsed < 250*time.Millisecond {
+		t.Fatalf("returned after %v", elapsed)
+	}
+}
+
+// A job that arrives while a consumer waits is pushed at once, without polling delay.
+func TestRabbitMQConsumerModeWakesImmediately(t *testing.T) {
+	q := newPrefetchRabbitMQ(t, "consumerwake", 1)
+	go func() {
+		time.Sleep(100 * time.Millisecond)
+		_ = q.Enqueue(context.Background(), queue.NewJob("w").WithID("w-1").Build())
+	}()
+
+	start := time.Now()
+	job, err := q.Dequeue(t.Context(), 5*time.Second)
+	if err != nil || job.ID != "w-1" {
+		t.Fatalf("job=%v err=%v", job, err)
+	}
+	if elapsed := time.Since(start); elapsed > 140*time.Millisecond {
+		t.Logf("delivered after %v", elapsed) // informational: includes the 100ms the job was held back
+	}
+}
+
+// Several workers share the consumer and every job is delivered once.
+func TestRabbitMQConsumerModeConcurrentWorkers(t *testing.T) {
+	q := newPrefetchRabbitMQ(t, "consumerworkers", 8)
+	ctx := t.Context()
+
+	const jobs = 200
+	for i := 0; i < jobs; i++ {
+		if err := q.Enqueue(ctx, queue.NewJob("p").WithID(fmt.Sprintf("p-%d", i)).Build()); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var mu sync.Mutex
+	seen := make(map[string]int)
+	var wg sync.WaitGroup
+	for w := 0; w < 4; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				job, err := q.Dequeue(ctx, 500*time.Millisecond)
+				if err != nil {
+					return
+				}
+				mu.Lock()
+				seen[job.ID]++
+				mu.Unlock()
+				job.Status = queue.StatusCompleted
+				_ = q.UpdateJob(ctx, job)
+			}
+		}()
+	}
+	wg.Wait()
+
+	if len(seen) != jobs {
+		t.Fatalf("delivered %d distinct jobs, want %d", len(seen), jobs)
+	}
+	for id, n := range seen {
+		if n != 1 {
+			t.Errorf("job %s delivered %d times", id, n)
+		}
+	}
+}
+
+// Reconnect drops the consumer of the old channel; Dequeue starts a new one.
+func TestRabbitMQConsumerModeSurvivesReconnect(t *testing.T) {
+	q := newPrefetchRabbitMQ(t, "consumerreconnect", 2)
+	ctx := t.Context()
+
+	if err := q.Enqueue(ctx, queue.NewJob("r").WithID("r-1").Build()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := q.Dequeue(ctx, 5*time.Second); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := q.Reconnect(queue.RabbitMQConfig{URL: "amqp://admin:admin123@localhost:5672/"}); err != nil {
+		t.Fatalf("Reconnect: %v", err)
+	}
+	// r-1 was never acknowledged, so the broker hands it out again on the new consumer
+	job, err := q.Dequeue(ctx, 5*time.Second)
+	if err != nil {
+		t.Fatalf("Dequeue after Reconnect: %v", err)
+	}
+	if job.ID != "r-1" {
+		t.Fatalf("got %s", job.ID)
+	}
+}
+
+func BenchmarkRabbitMQDequeuePrefetch(b *testing.B) {
+	q := newPrefetchRabbitMQ(b, "benchprefetch", 100)
+	ctx := b.Context()
+	for i := 0; i < b.N; i++ {
+		if err := q.Enqueue(ctx, queue.NewJob("bench").WithID(fmt.Sprintf("b-%d", i)).Build()); err != nil {
+			b.Fatal(err)
+		}
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		job, err := q.Dequeue(ctx, 5*time.Second)
+		if err != nil {
+			b.Fatal(err)
+		}
+		job.Status = queue.StatusCompleted
+		if err := q.UpdateJob(ctx, job); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func TestRabbitMQFinishedRetention(t *testing.T) {
+	suffix := fmt.Sprintf("retain_%d", time.Now().UnixNano())
+	q, err := queue.NewRabbitMQ(queue.RabbitMQConfig{
+		URL:            "amqp://admin:admin123@localhost:5672/",
+		QueueName:      suffix,
+		ExchangeName:   suffix + "_exchange",
+		RoutingKey:     suffix,
+		RetainFinished: 3,
+	})
+	if err != nil {
+		t.Skipf("Skipping RabbitMQ test: %v", err)
+	}
+	t.Cleanup(func() { _ = q.PurgeQueue(context.Background()); _ = q.Close() })
+	ctx := t.Context()
+
+	for i := 0; i < 10; i++ {
+		job := queue.NewJob("r").WithID(fmt.Sprintf("r-%d", i)).Build()
+		if err := q.Enqueue(ctx, job); err != nil {
+			t.Fatal(err)
+		}
+		got, err := q.Dequeue(ctx, 2*time.Second)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got.Status = queue.StatusCompleted
+		if err := q.UpdateJob(ctx, got); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := q.GetJob(ctx, "r-0"); err == nil {
+		t.Error("the oldest finished job is still indexed")
+	}
+	if _, err := q.GetJob(ctx, "r-9"); err != nil {
+		t.Errorf("the newest finished job was dropped: %v", err)
+	}
+	stats, err := q.GetStats(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Completed != 10 {
+		t.Fatalf("Completed = %d, want 10", stats.Completed)
+	}
+}
+
+// The broker deletes an auto-delete queue when its consumer goes away. Reconnect declares it again,
+// so the queue is usable afterwards.
+func TestRabbitMQReconnectDeclaresAutoDeleteQueue(t *testing.T) {
+	suffix := fmt.Sprintf("redeclare_%d", time.Now().UnixNano())
+	q, err := queue.NewRabbitMQ(queue.RabbitMQConfig{
+		URL:          "amqp://admin:admin123@localhost:5672/",
+		QueueName:    suffix,
+		ExchangeName: suffix + "_exchange",
+		RoutingKey:   suffix,
+		AutoDelete:   true,
+		Prefetch:     2,
+	})
+	if err != nil {
+		t.Skipf("Skipping RabbitMQ test: %v", err)
+	}
+	t.Cleanup(func() { _ = q.Close() })
+	ctx := t.Context()
+
+	if _, err := q.Dequeue(ctx, 100*time.Millisecond); !errors.Is(err, queue.ErrNoJobAvailable) {
+		t.Fatalf("first Dequeue: %v", err)
+	}
+	// An empty Reconnect config keeps the URL and queue names of the original
+	if err := q.Reconnect(queue.RabbitMQConfig{}); err != nil {
+		t.Fatalf("Reconnect: %v", err)
+	}
+
+	if err := q.Enqueue(ctx, queue.NewJob("x").WithID("after-reconnect").Build()); err != nil {
+		t.Fatalf("Enqueue after Reconnect: %v", err)
+	}
+	job, err := q.Dequeue(ctx, 5*time.Second)
+	if err != nil || job.ID != "after-reconnect" {
+		t.Fatalf("job=%v err=%v", job, err)
 	}
 }

@@ -141,7 +141,7 @@ func (rc *RedisCache) Get(ctx context.Context, key string, dest interface{}) (bo
 	data, err := rc.client.Get(ctx, formattedKey).Result()
 	if err != nil {
 		if err == redis.Nil {
-			rc.updateStats(func(s *Stats) { s.Misses++ })
+			rc.recordMiss()
 			rc.emitEvent(EventGet, key, nil, nil)
 			return false, nil
 		}
@@ -158,7 +158,7 @@ func (rc *RedisCache) Get(ctx context.Context, key string, dest interface{}) (bo
 		return false, NewCacheError("get", key, err)
 	}
 
-	rc.updateStats(func(s *Stats) { s.Hits++ })
+	rc.recordHit()
 	rc.emitEvent(EventGet, key, dest, nil)
 	return true, nil
 }
@@ -261,7 +261,7 @@ func (rc *RedisCache) GetMulti(ctx context.Context, keys []string) (map[string]i
 		return nil, NewCacheError("getmulti", "", err)
 	}
 
-	result := make(map[string]interface{})
+	result := make(map[string]interface{}, len(values))
 	for i, value := range values {
 		if value != nil {
 			var dest interface{}
@@ -272,11 +272,11 @@ func (rc *RedisCache) GetMulti(ctx context.Context, keys []string) (map[string]i
 					continue
 				}
 				result[keys[i]] = dest
-				rc.updateStats(func(s *Stats) { s.Hits++ })
+				rc.recordHit()
 				continue
 			}
 
-			rc.updateStats(func(s *Stats) { s.Misses++ })
+			rc.recordMiss()
 		}
 	}
 

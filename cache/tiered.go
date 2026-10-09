@@ -58,7 +58,7 @@ func (tc *TieredCache) Get(ctx context.Context, key string, dest interface{}) (b
 	}
 
 	if found {
-		tc.updateStats(func(s *Stats) { s.Hits++ })
+		tc.recordHit()
 		tc.emitEvent(EventGet, key, dest, nil)
 		return true, nil
 	}
@@ -85,12 +85,12 @@ func (tc *TieredCache) Get(ctx context.Context, key string, dest interface{}) (b
 			tc.recordError(err)
 		}
 
-		tc.updateStats(func(s *Stats) { s.Hits++ })
+		tc.recordHit()
 		tc.emitEvent(EventGet, key, dest, nil)
 		return true, nil
 	}
 
-	tc.updateStats(func(s *Stats) { s.Misses++ })
+	tc.recordMiss()
 	tc.emitEvent(EventGet, key, nil, nil)
 	return false, nil
 }

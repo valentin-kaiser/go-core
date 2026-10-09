@@ -67,8 +67,11 @@ package cache
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/valentin-kaiser/go-core/apperror"
@@ -208,6 +211,12 @@ type Config struct {
 	EnableStats     bool          `json:"enable_stats"`
 	EnableEvents    bool          `json:"enable_events"`
 	Namespace       string        `json:"namespace"`
+	// Shards splits a MemoryCache into this many parts with their own locks. 0 or 1 keeps one
+	// part, which is an exact LRU; more parts let concurrent writers run in parallel but make
+	// eviction approximate: MaxSize is divided exactly between the parts (so the cache never holds
+	// more than MaxSize items) and a full part evicts its own least recently used item. With a
+	// MaxSize below Shards, some parts hold nothing.
+	Shards int `json:"shards,omitempty"`
 	Serializer      Serializer    `json:"-"`
 	EventHandler    EventHandler  `json:"-"`
 }
@@ -234,6 +243,61 @@ func (s *JSONSerializer) Serialize(value interface{}) ([]byte, error) {
 // Deserialize deserializes JSON data into the destination
 func (s *JSONSerializer) Deserialize(data []byte, dest interface{}) error {
 	return json.Unmarshal(data, dest)
+}
+
+// InMemorySerializer is implemented by serializers that let an in-process cache keep values as
+// they are, without encoding them. MemoryCache uses it when its serializer implements it.
+type InMemorySerializer interface {
+	Serializer
+	// Keep returns what the cache stores for the value
+	Keep(value interface{}) (interface{}, error)
+	// Restore copies a stored value into dest, which is a pointer
+	Restore(kept interface{}, dest interface{}) error
+}
+
+// NativeSerializer keeps values in memory as Go values instead of JSON, which makes reads of a
+// MemoryCache several times faster. Serialize and Deserialize are still JSON, so the same
+// serializer works for Redis or the second level of a TieredCache.
+//
+// Values are not copied deeply: a struct is copied by value, but maps, slices and pointers inside
+// it are shared with the caller and with every reader. Treat cached values as read-only, or
+// use the JSON serializer, whose reads each get their own copy. The size of an item is not
+// tracked, so GetMemoryUsage reports 0 for a cache that uses this serializer.
+type NativeSerializer struct{ JSONSerializer }
+
+// Keep stores the value; a pointer is stored as the value it points to
+func (s *NativeSerializer) Keep(value interface{}) (interface{}, error) {
+	rv := reflect.ValueOf(value)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return nil, nil
+		}
+		return rv.Elem().Interface(), nil
+	}
+	return value, nil
+}
+
+// Restore assigns the stored value to dest. When the types do not match it falls back to a JSON round trip.
+func (s *NativeSerializer) Restore(kept interface{}, dest interface{}) error {
+	dv := reflect.ValueOf(dest)
+	if dv.Kind() != reflect.Ptr || dv.IsNil() {
+		return errors.New("destination must be a non-nil pointer")
+	}
+	dv = dv.Elem()
+	if kept == nil {
+		dv.Set(reflect.Zero(dv.Type()))
+		return nil
+	}
+	if kv := reflect.ValueOf(kept); kv.Type().AssignableTo(dv.Type()) {
+		dv.Set(kv)
+		return nil
+	}
+
+	data, err := s.Serialize(kept)
+	if err != nil {
+		return err
+	}
+	return s.Deserialize(data, dest)
 }
 
 // NoOpSerializer implements no serialization (for already serialized data)
@@ -283,6 +347,10 @@ type BaseCache struct {
 	config Config
 	stats  Stats
 	mutex  sync.RWMutex
+	// hits and misses are counted on every read, so they are atomic instead of
+	// going through the stats mutex. GetStats merges them into the snapshot.
+	hits   atomic.Int64
+	misses atomic.Int64
 }
 
 // NewBaseCache creates a new base cache with the given configuration
@@ -305,8 +373,29 @@ func (bc *BaseCache) GetConfig() Config {
 // GetStats returns a copy of the current cache statistics
 func (bc *BaseCache) GetStats() Stats {
 	bc.mutex.RLock()
-	defer bc.mutex.RUnlock()
-	return bc.stats
+	stats := bc.stats
+	bc.mutex.RUnlock()
+
+	stats.Hits += bc.hits.Load()
+	stats.Misses += bc.misses.Load()
+	if total := stats.Hits + stats.Misses; total > 0 {
+		stats.HitRatio = float64(stats.Hits) / float64(total)
+	}
+	return stats
+}
+
+// recordHit counts a cache hit
+func (bc *BaseCache) recordHit() {
+	if bc.config.EnableStats {
+		bc.hits.Add(1)
+	}
+}
+
+// recordMiss counts a cache miss
+func (bc *BaseCache) recordMiss() {
+	if bc.config.EnableStats {
+		bc.misses.Add(1)
+	}
 }
 
 // updateStats updates cache statistics safely
@@ -359,7 +448,7 @@ func (bc *BaseCache) formatKey(key string) string {
 	if bc.config.Namespace == "" {
 		return key
 	}
-	return fmt.Sprintf("%s:%s", bc.config.Namespace, key)
+	return bc.config.Namespace + ":" + key
 }
 
 // calculateTTL calculates the effective TTL for a cache entry

@@ -35,7 +35,7 @@ func typeName(n string) func(*descriptorpb.FieldDescriptorProto) {
 }
 func oneof(f *descriptorpb.FieldDescriptorProto) { f.OneofIndex = proto.Int32(0) }
 
-func allDescriptor(t *testing.T) protoreflect.MessageDescriptor {
+func allDescriptor(t testing.TB) protoreflect.MessageDescriptor {
 	t.Helper()
 	entry := func(name string, key, val *descriptorpb.FieldDescriptorProto) *descriptorpb.DescriptorProto {
 		return &descriptorpb.DescriptorProto{

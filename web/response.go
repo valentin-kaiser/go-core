@@ -35,9 +35,7 @@ func newResponseWriter(w http.ResponseWriter, r *http.Request) *ResponseWriter {
 		w:       w,
 		r:       r,
 		status:  http.StatusOK, // Default status code
-		header:  make(http.Header),
-		buf:     bytes.Buffer{},
-		history: make([][]byte, 0),
+		// header and history are allocated on first use; most responses never need history
 		start:   time.Now(),
 	}
 }
@@ -61,8 +59,17 @@ func (rw *ResponseWriter) Write(b []byte) (int, error) {
 	return rw.buf.Write(b)
 }
 
+// WriteString buffers a string body. Without it io.WriteString converts the string to a new
+// byte slice first, which for a large response is a copy of the whole body.
+func (rw *ResponseWriter) WriteString(s string) (int, error) {
+	return rw.buf.WriteString(s)
+}
+
 // History returns the history of response bodies written
 func (rw *ResponseWriter) History() [][]byte {
+	if rw.history == nil {
+		return [][]byte{}
+	}
 	return rw.history
 }
 

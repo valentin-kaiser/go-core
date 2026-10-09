@@ -12,6 +12,9 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
+// maxDequeuePause is the longest pause between two polls of an empty queue
+const maxDequeuePause = 100 * time.Millisecond
+
 // ErrNoJobAvailable is returned when no job is available in the queue
 var ErrNoJobAvailable = apperror.NewError("no job available")
 
@@ -20,12 +23,20 @@ type RabbitMQ struct {
 	conn         *amqp.Connection
 	channel      *amqp.Channel
 	queueName    string
+	delayQueue   string // holds scheduled jobs until their time, then dead-letters them to queueName
 	exchangeName string
 	routingKey   string
 	jobs         map[string]*Job
 	jobsMutex    sync.RWMutex
 	closed       bool
 	closeMutex   sync.RWMutex
+	prefetch     int
+	finished     finishedJobs
+	topology     RabbitMQConfig // what NewRabbitMQ declared, so Reconnect can declare it again
+	// deliveries is the channel of the consumer that Dequeue reads from when prefetch is set.
+	// It is started by the first Dequeue and dropped again by Reconnect.
+	deliveries   <-chan amqp.Delivery
+	consumerLock sync.Mutex
 }
 
 // RabbitMQConfig holds configuration for RabbitMQ queue
@@ -39,6 +50,19 @@ type RabbitMQConfig struct {
 	Exclusive    bool
 	NoWait       bool
 	MaxPriority  int // Maximum priority level for the queue (0-255)
+	// Prefetch switches Dequeue from polling with basic.get to a consumer that the broker
+	// pushes up to Prefetch unacknowledged jobs to. That removes the round trip per job and the
+	// polling delay, which limit basic.get to about a thousand jobs per second. Set it to at
+	// least the number of workers, otherwise they wait for each other. Jobs that were pushed but
+	// not yet taken are unavailable to other consumers until they are acknowledged or the
+	// connection closes. The broker deletes an AutoDelete queue when its last consumer
+	// goes away; Reconnect declares the queues again. 0 (the default) keeps the polling behavior.
+	Prefetch int
+	// RetainFinished is how many completed, failed and dead-lettered jobs are kept for GetJob and
+	// GetJobs. 0 selects the default of 10000, below 0 keeps all of them (which grows without
+	// bound in a long running process). Older ones are dropped from the index; GetStats still
+	// counts them.
+	RetainFinished int
 }
 
 // NewRabbitMQ creates a new RabbitMQ-backed queue.
@@ -90,7 +114,34 @@ func NewRabbitMQ(config RabbitMQConfig) (*RabbitMQ, error) {
 		return nil, apperror.Wrap(err)
 	}
 
-	err = channel.ExchangeDeclare(
+	err = declareTopology(channel, config)
+	if err != nil {
+		apperror.Handle(channel.Close(), "failed to close channel")
+		apperror.Handle(conn.Close(), "failed to close connection")
+		return nil, apperror.Wrap(err)
+	}
+
+	delayedQueueName := config.QueueName + "_schedule"
+	rq := &RabbitMQ{
+		topology:     config,
+		conn:         conn,
+		channel:      channel,
+		queueName:    config.QueueName,
+		delayQueue:   delayedQueueName,
+		prefetch:     config.Prefetch,
+		finished:     newFinishedJobs(retentionLimit(config.RetainFinished)),
+		exchangeName: config.ExchangeName,
+		routingKey:   config.RoutingKey,
+		jobs:         make(map[string]*Job),
+	}
+
+	return rq, nil
+}
+
+// declareTopology declares the exchange, the work queue, the queue for scheduled jobs and the
+// binding. Declaring is idempotent when the arguments match.
+func declareTopology(channel *amqp.Channel, config RabbitMQConfig) error {
+	err := channel.ExchangeDeclare(
 		config.ExchangeName, // name
 		"direct",            // type
 		config.Durable,      // durable
@@ -100,9 +151,7 @@ func NewRabbitMQ(config RabbitMQConfig) (*RabbitMQ, error) {
 		nil,                 // arguments
 	)
 	if err != nil {
-		apperror.Handle(channel.Close(), "failed to close channel")
-		apperror.Handle(conn.Close(), "failed to close connection")
-		return nil, apperror.Wrap(err)
+		return err
 	}
 
 	queueArgs := amqp.Table{}
@@ -119,9 +168,7 @@ func NewRabbitMQ(config RabbitMQConfig) (*RabbitMQ, error) {
 		queueArgs,         // arguments
 	)
 	if err != nil {
-		apperror.Handle(channel.Close(), "failed to close channel")
-		apperror.Handle(conn.Close(), "failed to close connection")
-		return nil, apperror.Wrap(err)
+		return err
 	}
 
 	err = channel.QueueBind(
@@ -132,40 +179,25 @@ func NewRabbitMQ(config RabbitMQConfig) (*RabbitMQ, error) {
 		nil,                 // arguments
 	)
 	if err != nil {
-		apperror.Handle(channel.Close(), "failed to close channel")
-		apperror.Handle(conn.Close(), "failed to close connection")
-		return nil, apperror.Wrap(err)
+		return err
 	}
 
-	delayedQueueName := config.QueueName + "_delayed"
+	// Scheduled jobs wait here with a per message expiration and are dead-lettered to the
+	// work queue when it runs out. The queue must not have a queue level TTL, which would cap
+	// the expiration. It has its own name: a queue declared earlier under the old name has
+	// different arguments, and redeclaring it with other arguments is refused by the broker.
 	_, err = channel.QueueDeclare(
-		delayedQueueName,  // name
-		config.Durable,    // durable
-		config.AutoDelete, // delete when unused
-		config.Exclusive,  // exclusive
-		config.NoWait,     // no-wait
+		config.QueueName+"_schedule", // name
+		config.Durable,               // durable
+		config.AutoDelete,            // delete when unused
+		config.Exclusive,             // exclusive
+		config.NoWait,                // no-wait
 		map[string]interface{}{
-			"x-message-ttl":             int32(0),
 			"x-dead-letter-exchange":    config.ExchangeName,
 			"x-dead-letter-routing-key": config.RoutingKey,
 		},
 	)
-	if err != nil {
-		apperror.Handle(channel.Close(), "failed to close channel")
-		apperror.Handle(conn.Close(), "failed to close connection")
-		return nil, apperror.Wrap(err)
-	}
-
-	rq := &RabbitMQ{
-		conn:         conn,
-		channel:      channel,
-		queueName:    config.QueueName,
-		exchangeName: config.ExchangeName,
-		routingKey:   config.RoutingKey,
-		jobs:         make(map[string]*Job),
-	}
-
-	return rq, nil
+	return err
 }
 
 // NewRabbitMQFromURL creates a new RabbitMQ queue with a simple URL
@@ -225,7 +257,7 @@ func (rq *RabbitMQ) Enqueue(ctx context.Context, job *Job) error {
 	}
 
 	if job.IsScheduled() {
-		return rq.scheduleJob(ctx, message)
+		return rq.scheduleJob(ctx, message, job.ScheduleAt)
 	}
 
 	return rq.channel.PublishWithContext(
@@ -239,48 +271,113 @@ func (rq *RabbitMQ) Enqueue(ctx context.Context, job *Job) error {
 }
 
 // scheduleJob handles scheduled job publishing
-func (rq *RabbitMQ) scheduleJob(ctx context.Context, message amqp.Publishing) error {
+func (rq *RabbitMQ) scheduleJob(ctx context.Context, message amqp.Publishing, runAt time.Time) error {
+	// Per message expiration in milliseconds. Published through the default exchange
+	// straight into the schedule queue. RabbitMQ expires messages only at the head of a queue,
+	// so a job with a long delay holds back jobs behind it that are due earlier.
+	message.Expiration = strconv.FormatInt(max(time.Until(runAt).Milliseconds(), 0), 10)
 	return rq.channel.PublishWithContext(
 		ctx,
-		rq.exchangeName,
-		rq.routingKey,
+		"",
+		rq.delayQueue,
 		false,
 		false,
 		message,
 	)
 }
 
-// Dequeue retrieves a job from the queue
-func (rq *RabbitMQ) Dequeue(ctx context.Context, timeout time.Duration) (*Job, error) {
+// next returns the next message, waiting until the context is done. It returns
+// ErrNoJobAvailable when that happens first.
+func (rq *RabbitMQ) next(ctx context.Context) (amqp.Delivery, error) {
+	if rq.prefetch > 0 {
+		deliveries, err := rq.consumer()
+		if err != nil {
+			return amqp.Delivery{}, err
+		}
+		select {
+		case msg, ok := <-deliveries:
+			if !ok {
+				return amqp.Delivery{}, apperror.NewError("consumer closed")
+			}
+			return msg, nil
+		case <-ctx.Done():
+			return amqp.Delivery{}, ErrNoJobAvailable
+		}
+	}
+
+	msg, ok, err := rq.get()
+	if err != nil {
+		return amqp.Delivery{}, apperror.Wrap(err)
+	}
+
+	// basic.get does not wait, so poll until the timeout. Start with short pauses so a job that
+	// arrives right away is picked up quickly, then back off to spare the broker.
+	for pause := 5 * time.Millisecond; !ok; pause = min(pause*2, maxDequeuePause) {
+		select {
+		case <-ctx.Done():
+			return amqp.Delivery{}, ErrNoJobAvailable
+		case <-time.After(pause):
+		}
+
+		msg, ok, err = rq.get()
+		if err != nil {
+			return amqp.Delivery{}, apperror.Wrap(err)
+		}
+	}
+	return msg, nil
+}
+
+// consumer returns the delivery channel, starting the consumer on first use
+func (rq *RabbitMQ) consumer() (<-chan amqp.Delivery, error) {
+	// Same order as Reconnect: the close lock first, then the consumer lock
 	rq.closeMutex.RLock()
 	defer rq.closeMutex.RUnlock()
+
+	rq.consumerLock.Lock()
+	defer rq.consumerLock.Unlock()
 
 	if rq.closed {
 		return nil, apperror.NewError("queue is closed")
 	}
+	if rq.deliveries != nil {
+		return rq.deliveries, nil
+	}
 
-	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	msg, ok, err := rq.channel.Get(rq.queueName, false) // manual ack
+	if err := rq.channel.Qos(rq.prefetch, 0, false); err != nil {
+		return nil, apperror.Wrap(err)
+	}
+	deliveries, err := rq.channel.Consume(rq.queueName, "", false, false, false, false, nil)
 	if err != nil {
 		return nil, apperror.Wrap(err)
 	}
+	rq.deliveries = deliveries
+	return deliveries, nil
+}
 
-	if !ok {
-		// No message available, wait a bit and try again
-		select {
-		case <-timeoutCtx.Done():
-			return nil, ErrNoJobAvailable // Timeout, no job available
-		case <-time.After(100 * time.Millisecond):
-			msg, ok, err = rq.channel.Get(rq.queueName, false)
-			if err != nil {
-				return nil, apperror.Wrap(err)
-			}
-			if !ok {
-				return nil, ErrNoJobAvailable // Still no message
-			}
-		}
+// get fetches one message without waiting. The lock is held for the call only, so a Dequeue
+// that is waiting for a job does not hold up Close.
+func (rq *RabbitMQ) get() (amqp.Delivery, bool, error) {
+	rq.closeMutex.RLock()
+	defer rq.closeMutex.RUnlock()
+
+	if rq.closed {
+		return amqp.Delivery{}, false, apperror.NewError("queue is closed")
+	}
+	msg, ok, err := rq.channel.Get(rq.queueName, false)
+	if err != nil {
+		return amqp.Delivery{}, false, apperror.Wrap(err)
+	}
+	return msg, ok, nil
+}
+
+// Dequeue retrieves a job from the queue
+func (rq *RabbitMQ) Dequeue(ctx context.Context, timeout time.Duration) (*Job, error) {
+	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	msg, err := rq.next(timeoutCtx)
+	if err != nil {
+		return nil, err
 	}
 
 	var job Job
@@ -321,6 +418,7 @@ func (rq *RabbitMQ) UpdateJob(_ context.Context, job *Job) error {
 	}
 
 	rq.jobs[job.ID] = job
+	rq.finished.record(rq.jobs, job)
 
 	if job.Metadata != nil {
 		if deliveryTagStr, exists := job.Metadata["delivery_tag"]; exists {
@@ -416,6 +514,8 @@ func (rq *RabbitMQ) GetStats(_ context.Context) (*Stats, error) {
 		stats.TotalJobs++
 	}
 
+	rq.finished.addTo(stats)
+
 	queueInfo, err := rq.channel.QueueDeclarePassive(rq.queueName, true, false, false, false, nil)
 	if err == nil {
 		stats.QueueSize = int64(queueInfo.Messages)
@@ -448,12 +548,17 @@ func (rq *RabbitMQ) Close() error {
 
 	rq.closed = true
 
+	// The connection may be gone already; closing is then a no-op, not a reason to panic
 	if rq.channel != nil {
-		apperror.Handle(rq.channel.Close(), "failed to close channel")
+		if err := rq.channel.Close(); err != nil {
+			logger.Debug().Err(err).Msg("channel was not closed cleanly")
+		}
 	}
 
 	if rq.conn != nil {
-		apperror.Handle(rq.conn.Close(), "failed to close connection")
+		if err := rq.conn.Close(); err != nil {
+			logger.Debug().Err(err).Msg("connection was not closed cleanly")
+		}
 	}
 
 	return nil
@@ -472,14 +577,24 @@ func (rq *RabbitMQ) Reconnect(config RabbitMQConfig) error {
 	rq.closeMutex.Lock()
 	defer rq.closeMutex.Unlock()
 
+	// Reconnect exists to replace a broken connection, so the old channel and connection
+	// are often closed already. That is not an error here and must not panic.
 	if rq.channel != nil {
-		apperror.Handle(rq.channel.Close(), "failed to close old channel")
+		if err := rq.channel.Close(); err != nil {
+			logger.Debug().Err(err).Msg("old channel was not closed cleanly")
+		}
 	}
 	if rq.conn != nil {
-		apperror.Handle(rq.conn.Close(), "failed to close old connection")
+		if err := rq.conn.Close(); err != nil {
+			logger.Debug().Err(err).Msg("old connection was not closed cleanly")
+		}
 	}
 
-	conn, err := amqp.Dial(config.URL)
+	url := config.URL
+	if strings.TrimSpace(url) == "" {
+		url = rq.topology.URL
+	}
+	conn, err := amqp.Dial(url)
 	if err != nil {
 		return apperror.Wrap(err)
 	}
@@ -490,9 +605,22 @@ func (rq *RabbitMQ) Reconnect(config RabbitMQConfig) error {
 		return apperror.Wrap(err)
 	}
 
+	// The broker may have lost the queues: an AutoDelete queue is deleted with its last
+	// consumer, and a non-durable one does not survive a broker restart. Declaring them again
+	// is harmless when they still exist.
+	if err := declareTopology(channel, rq.topology); err != nil {
+		apperror.Handle(channel.Close(), "failed to close channel")
+		apperror.Handle(conn.Close(), "failed to close connection")
+		return apperror.Wrap(err)
+	}
+
 	rq.conn = conn
 	rq.channel = channel
 	rq.closed = false
+	rq.topology.URL = url
+	rq.consumerLock.Lock()
+	rq.deliveries = nil
+	rq.consumerLock.Unlock()
 
 	return nil
 }
@@ -510,9 +638,15 @@ func (rq *RabbitMQ) PurgeQueue(_ context.Context) error {
 	if err != nil {
 		return apperror.Wrap(err)
 	}
+	// Scheduled jobs that have not come due yet are part of the queue
+	_, err = rq.channel.QueuePurge(rq.delayQueue, false)
+	if err != nil {
+		return apperror.Wrap(err)
+	}
 
 	rq.jobsMutex.Lock()
 	rq.jobs = make(map[string]*Job)
+	rq.finished = newFinishedJobs(rq.finished.limit)
 	rq.jobsMutex.Unlock()
 
 	return nil

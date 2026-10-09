@@ -9,7 +9,9 @@ import (
 type StreamWriter struct {
 	mu        sync.RWMutex
 	listeners []chan string
-	buffer    []string
+	buffer    []string // ring buffer holding the most recent bufferMax entries
+	start     int      // index of the oldest entry
+	count     int      // number of entries held
 	bufferMax int
 }
 
@@ -20,7 +22,7 @@ func NewStreamWriter(bufferMax int) *StreamWriter {
 	}
 	return &StreamWriter{
 		listeners: make([]chan string, 0),
-		buffer:    make([]string, 0),
+		buffer:    make([]string, bufferMax),
 		bufferMax: bufferMax,
 	}
 }
@@ -78,11 +80,14 @@ func (sw *StreamWriter) GetListenerCount() int {
 
 // addToBuffer adds an entry to the buffer, maintaining max size
 func (sw *StreamWriter) addToBuffer(entry string) {
-	if len(sw.buffer) >= sw.bufferMax {
-		// Remove oldest entry
-		sw.buffer = sw.buffer[1:]
+	if sw.count < sw.bufferMax {
+		sw.buffer[(sw.start+sw.count)%sw.bufferMax] = entry
+		sw.count++
+		return
 	}
-	sw.buffer = append(sw.buffer, entry)
+	// Full: overwrite the oldest entry
+	sw.buffer[sw.start] = entry
+	sw.start = (sw.start + 1) % sw.bufferMax
 }
 
 // broadcast sends log entry to all listeners
@@ -109,8 +114,8 @@ func (sw *StreamWriter) removeListener(index int) {
 
 // sendBufferedEntries sends all buffered entries to a channel, stopping if channel is full
 func (sw *StreamWriter) sendBufferedEntries(ch chan string) {
-	for i := 0; i < len(sw.buffer); i++ {
-		entry := sw.buffer[i]
+	for i := 0; i < sw.count; i++ {
+		entry := sw.buffer[(sw.start+i)%sw.bufferMax]
 		select {
 		case ch <- entry:
 		default:

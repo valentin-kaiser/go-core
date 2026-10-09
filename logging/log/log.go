@@ -74,10 +74,13 @@ func SLogger() *slog.Logger {
 	return logging.SLogger()
 }
 
+// noop is returned when the global adapter is unusable, so that case does not allocate
+var noop = logging.NewNoOpAdapter()
+
 func global() logging.Adapter {
-	adapter, ok := logging.GetGlobalAdapter[logging.Adapter]()
-	if !ok {
-		return logging.NewNoOpAdapter()
+	adapter := logging.GetGlobalAdapterInterface()
+	if adapter == nil {
+		return noop
 	}
 	return adapter
 }

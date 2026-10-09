@@ -94,6 +94,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/spf13/pflag"
 	"github.com/valentin-kaiser/go-core/apperror"
@@ -210,9 +211,18 @@ func OnChange(f func(o Config, n Config) error) {
 
 // Get returns the current configuration
 func Get() Config {
-	mutex.RLock()
-	defer mutex.RUnlock()
-	return cm.config
+	if box := current.Load(); box != nil {
+		return box.config
+	}
+	return nil
+}
+
+// current is the active configuration, published by set. Get is called from hot paths on
+// many goroutines, and reading an atomic pointer does not contend on the manager mutex.
+var current atomic.Pointer[configBox]
+
+type configBox struct {
+	config Config
 }
 
 // Read loads the configuration from the configured sources, validates it and
@@ -283,6 +293,7 @@ func StopWatch() {
 func Reset() {
 	mutex.Lock()
 	defer mutex.Unlock()
+	current.Store(nil)
 
 	if cm.watchCancel != nil {
 		cm.watchCancel()
@@ -335,6 +346,9 @@ func (m *manager) set(appConfig Config) {
 	mutex.Lock()
 	defer mutex.Unlock()
 	m.config = appConfig
+	if m == cm {
+		current.Store(&configBox{config: appConfig})
+	}
 }
 
 // ensureBase guarantees that a base source is configured. When none was set

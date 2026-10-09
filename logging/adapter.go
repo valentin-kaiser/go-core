@@ -113,3 +113,9 @@ type Event interface {
 	// Log the formatted message
 	Msgf(format string, v ...interface{})
 }
+
+// IsEnabled reports whether the adapter would write an event of the given level.
+// Use it to skip building expensive log fields for events that would be dropped.
+func IsEnabled(a Adapter, level Level) bool {
+	return a.Enabled() && level >= a.GetLevel()
+}

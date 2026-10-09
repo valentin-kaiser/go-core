@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 
 	"github.com/valentin-kaiser/go-core/apperror"
@@ -71,12 +72,24 @@ func (c *Client) TryLock(ctx context.Context, key string, ttl time.Duration) (*L
 		seconds = 1
 	}
 
+	fullKey := c.key("locks", key)
+
+	// A session is a lease plus a keep-alive stream, which costs several milliseconds to set
+	// up. When somebody holds the lock there is no point in creating one just to be refused,
+	// so look at the lock first. The mutex keeps one key per holder or waiter under key + "/".
+	held, err := c.raw.Get(ctx, fullKey+"/", clientv3.WithPrefix(), clientv3.WithCountOnly())
+	if err != nil {
+		return nil, apperror.NewError("attempting etcd lock failed").AddError(err)
+	}
+	if held.Count > 0 {
+		return nil, nil
+	}
+
 	session, err := concurrency.NewSession(c.raw, concurrency.WithTTL(seconds), concurrency.WithContext(ctx))
 	if err != nil {
 		return nil, apperror.NewError("creating etcd session failed").AddError(err)
 	}
 
-	fullKey := c.key("locks", key)
 	mutex := concurrency.NewMutex(session, fullKey)
 	err = mutex.TryLock(ctx)
 	if err != nil {

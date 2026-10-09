@@ -134,6 +134,9 @@ func Parse(lang string) Language {
 type Bundle struct {
 	mu           sync.RWMutex
 	translations map[Language]map[string]string
+	// matcher caches the language matcher built from the loaded languages. It is
+	// dropped whenever a language is added, and rebuilt on the next request.
+	matcher atomic.Pointer[languageMatcher]
 }
 
 // Option configures a Bundle during creation.
@@ -183,6 +186,7 @@ func WithMap(lang Language, translations map[string]string) Option {
 		defer b.mu.Unlock()
 		if b.translations[lang] == nil {
 			b.translations[lang] = make(map[string]string)
+			b.matcher.Store(nil)
 		}
 		for k, v := range translations {
 			b.translations[lang][k] = v
@@ -296,6 +300,7 @@ func (b *Bundle) Register(lang Language, translations map[string]string) {
 	defer b.mu.Unlock()
 	if b.translations[lang] == nil {
 		b.translations[lang] = make(map[string]string)
+		b.matcher.Store(nil)
 	}
 	for k, v := range translations {
 		b.translations[lang][k] = v
@@ -364,6 +369,7 @@ func (b *Bundle) loadJSON(lang Language, data []byte) error {
 	defer b.mu.Unlock()
 	if b.translations[lang] == nil {
 		b.translations[lang] = make(map[string]string)
+		b.matcher.Store(nil)
 	}
 	for k, v := range m {
 		b.translations[lang][k] = v

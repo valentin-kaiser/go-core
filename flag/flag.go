@@ -79,6 +79,10 @@ var (
 
 	envNames  = make(map[string]string)
 	envNamesM sync.RWMutex
+
+	// envNameCache remembers the result of EnvVarName per flag name. Every entry records the
+	// prefix it was built with, because Prefix is a plain variable that can change.
+	envNameCache sync.Map
 )
 
 // RegisterEnvVar maps a flag name to the environment variable name it is read
@@ -88,6 +92,12 @@ func RegisterEnvVar(name, env string) {
 	envNamesM.Lock()
 	defer envNamesM.Unlock()
 	envNames[name] = env
+	envNameCache.Clear()
+}
+
+type cachedEnvName struct {
+	prefix string
+	env    string
 }
 
 func init() {
@@ -123,10 +133,20 @@ func PrintHelp() {
 
 // EnvVarName returns the environment variable name derived from a flag name
 func EnvVarName(name string) string {
-	envNamesM.RLock()
-	env, ok := envNames[name]
-	envNamesM.RUnlock()
+	prefix := Prefix
+	if cached, ok := envNameCache.Load(name); ok {
+		if c, ok := cached.(cachedEnvName); ok && c.prefix == prefix {
+			return c.env
+		}
+	}
 
+	// The read lock is held until the result is stored. RegisterEnvVar clears the cache under the
+	// write lock, so it cannot run between reading the mapping and storing it, which would leave
+	// the stale name in the cache.
+	envNamesM.RLock()
+	defer envNamesM.RUnlock()
+
+	env, ok := envNames[name]
 	if !ok {
 		env = name
 	}
@@ -135,10 +155,11 @@ func EnvVarName(name string) string {
 	env = strings.ReplaceAll(env, "-", "_")
 	env = strings.ToUpper(env)
 
-	if Prefix == "" {
-		return env
+	if prefix != "" {
+		env = prefix + "_" + env
 	}
-	return Prefix + "_" + env
+	envNameCache.Store(name, cachedEnvName{prefix: prefix, env: env})
+	return env
 }
 
 // PrintEnvVars prints the environment variables derived from the registered

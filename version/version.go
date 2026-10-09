@@ -85,6 +85,7 @@ import (
 	"runtime/debug"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/logging"
@@ -248,28 +249,53 @@ type Module struct {
 
 // Get returns the current version information of the application.
 func Get() *Release {
-	format := DetectFormat(GitTag)
-	parser := GetParser(format)
+	tag := GitTag
+	info := parsedTag(tag)
 
 	var parsedVersion *ParsedVersion
-	if parser != nil {
-		pv, err := parser.Parse(GitTag)
-		if err == nil {
-			parsedVersion = pv
-		}
+	if info.parsed != nil {
+		// A copy, so a caller changing the result does not change what later calls see
+		copied := *info.parsed
+		parsedVersion = &copied
 	}
 
 	return &Release{
-		GitTag:        GitTag,
+		GitTag:        tag,
 		GitCommit:     GitCommit,
 		GitShort:      GitShort,
 		BuildDate:     BuildDate,
 		GoVersion:     GoVersion,
 		Platform:      Platform,
 		Modules:       Modules,
-		VersionFormat: format,
+		VersionFormat: info.format,
 		ParsedVersion: parsedVersion,
 	}
+}
+
+// tagInfo is the detected format and parsed version of a git tag
+type tagInfo struct {
+	tag    string
+	format Format
+	parsed *ParsedVersion
+}
+
+// lastTag remembers the result for the most recent tag. GitTag is set at link time and
+// does not change while the program runs, so Get does not need to parse it on every call.
+var lastTag atomic.Pointer[tagInfo]
+
+func parsedTag(tag string) *tagInfo {
+	if info := lastTag.Load(); info != nil && info.tag == tag {
+		return info
+	}
+
+	info := &tagInfo{tag: tag, format: DetectFormat(tag)}
+	if parser := GetParser(info.format); parser != nil {
+		if pv, err := parser.Parse(tag); err == nil {
+			info.parsed = pv
+		}
+	}
+	lastTag.Store(info)
+	return info
 }
 
 // Major returns the major version number from the Git tag if it follows semantic versioning.
@@ -378,6 +404,30 @@ func ParseSemver(tag string, n int) int {
 	return v
 }
 
+// semverSegment returns segment n of a tag that IsSemver already accepted, without validating
+// it again or splitting the whole tag. Missing or unparsable segments are 0.
+func semverSegment(tag string, n int) int {
+	tag = strings.TrimPrefix(tag, "v")
+	if i := strings.IndexByte(tag, '-'); i >= 0 {
+		tag = tag[:i]
+	}
+	for ; n > 0; n-- {
+		i := strings.IndexByte(tag, '.')
+		if i < 0 {
+			return 0
+		}
+		tag = tag[i+1:]
+	}
+	if i := strings.IndexByte(tag, '.'); i >= 0 {
+		tag = tag[:i]
+	}
+	v, err := strconv.Atoi(tag)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
 // ExtractSemanticVersion parses the version number from the Git tag.
 // It returns the version string without the "v" prefix and any pre-release/build metadata.
 // If the tag is not a valid Git tag, it returns an empty string.
@@ -393,6 +443,10 @@ func ExtractSemanticVersion(tag string) string {
 // ParseVersion parses a version string and returns a ParsedVersion struct
 func ParseVersion(tag string) (*ParsedVersion, error) {
 	format := DetectFormat(tag)
+	// DetectFormat has just matched the tag against the semver pattern; do not match it again
+	if format == FormatSemVer {
+		return (&SemVerParser{}).parseValid(tag), nil
+	}
 	parser := GetParser(format)
 	if parser == nil {
 		return nil, apperror.NewError("unsupported version format")
@@ -463,19 +517,34 @@ func GetVersionComponents(tag string) (map[string]interface{}, error) {
 	return components, nil
 }
 
+// calverCandidate reports whether the tag starts, after an optional "v", with a number of
+// two or four digits followed by a dot, which every CalVer pattern requires.
+func calverCandidate(tag string) bool {
+	tag = strings.TrimPrefix(tag, "v")
+	digits := 0
+	for digits < len(tag) && tag[digits] >= '0' && tag[digits] <= '9' {
+		digits++
+	}
+	return (digits == 2 || digits == 4) && digits < len(tag) && tag[digits] == '.'
+}
+
 // DetectFormat automatically detects the version format from a tag string
 func DetectFormat(tag string) Format {
-	if IsCalVerYYYYMMDDMICRO(tag) {
-		return FormatCalVerYYYYMMDDMICRO
-	}
-	if IsCalVerYYYYMMDD(tag) {
-		return FormatCalVerYYYYMMDD
-	}
-	if IsCalVerYYMMMICRO(tag) {
-		return FormatCalVerYYMMMICRO
-	}
-	if IsCalVerYYYYWW(tag) {
-		return FormatCalVerYYYYWW
+	// Every CalVer pattern starts with a two or four digit number, so most tags (all
+	// semantic versions, for one) skip the four regular expressions
+	if calverCandidate(tag) {
+		if IsCalVerYYYYMMDDMICRO(tag) {
+			return FormatCalVerYYYYMMDDMICRO
+		}
+		if IsCalVerYYYYMMDD(tag) {
+			return FormatCalVerYYYYMMDD
+		}
+		if IsCalVerYYMMMICRO(tag) {
+			return FormatCalVerYYMMMICRO
+		}
+		if IsCalVerYYYYWW(tag) {
+			return FormatCalVerYYYYWW
+		}
 	}
 	if IsSemver(tag) {
 		return FormatSemVer
@@ -581,15 +650,18 @@ func (p *SemVerParser) Parse(tag string) (*ParsedVersion, error) {
 		return nil, apperror.NewError("invalid semantic version format")
 	}
 
-	pv := &ParsedVersion{
+	return p.parseValid(tag), nil
+}
+
+// parseValid builds the result for a tag that IsSemver already accepted
+func (p *SemVerParser) parseValid(tag string) *ParsedVersion {
+	return &ParsedVersion{
 		Original: tag,
 		Format:   FormatSemVer,
-		Major:    ParseSemver(tag, 0),
-		Minor:    ParseSemver(tag, 1),
-		Patch:    ParseSemver(tag, 2),
+		Major:    semverSegment(tag, 0),
+		Minor:    semverSegment(tag, 1),
+		Patch:    semverSegment(tag, 2),
 	}
-
-	return pv, nil
 }
 
 // IsValid checks if the given tag is a valid semantic version format.
