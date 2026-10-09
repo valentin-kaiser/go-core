@@ -768,10 +768,13 @@ func (s *TaskScheduler) GetTasks() map[string]*Task {
 	defer s.tasksMutex.RUnlock()
 
 	tasks := make(map[string]*Task, len(s.tasks))
+	// One allocation for all copies instead of one per task; the pointers stay valid
+	copies := make([]Task, len(s.tasks))
+	i := 0
 	for name, task := range s.tasks {
 		// Create a safe copy of each task with proper locking
 		task.mutex.RLock()
-		taskCopy := Task{
+		copies[i] = Task{
 			ID:                  task.ID,
 			Name:                task.Name,
 			Type:                task.Type,
@@ -797,7 +800,8 @@ func (s *TaskScheduler) GetTasks() map[string]*Task {
 		}
 		task.mutex.RUnlock()
 
-		tasks[name] = &taskCopy
+		tasks[name] = &copies[i]
+		i++
 	}
 
 	return tasks

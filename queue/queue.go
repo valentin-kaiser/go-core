@@ -521,15 +521,15 @@ func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
 				Field("retry_delay", m.calculateRetryDelay(job.Attempts).Milliseconds()).
 				Msg("job scheduled for retry")
 
-			go func() {
-				time.Sleep(m.calculateRetryDelay(job.Attempts))
+			// A timer instead of a goroutine that sleeps: nothing is parked while the job waits
+			time.AfterFunc(m.calculateRetryDelay(job.Attempts), func() {
 				job.Status = StatusPending
 				job.RetryAt = time.Time{}
 				enqueueErr := m.queue.Enqueue(ctx, job)
 				if enqueueErr != nil {
 					logger.Error().Err(enqueueErr).Field("job_id", job.ID).Msg("failed to re-enqueue job for retry")
 				}
-			}()
+			})
 			return
 		}
 
