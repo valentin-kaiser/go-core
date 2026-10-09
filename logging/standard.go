@@ -4,29 +4,30 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync/atomic"
 )
 
 // StandardAdapter implements LogAdapter using Go's standard log package
 type StandardAdapter struct {
 	logger *log.Logger
-	level  Level
+	level  atomic.Int64
 	pkg    string
+}
+
+func newStandardAdapter(logger *log.Logger, level Level, pkg string) *StandardAdapter {
+	s := &StandardAdapter{logger: logger, pkg: pkg}
+	s.level.Store(int64(level))
+	return s
 }
 
 // NewStandardAdapter creates a new standard log adapter with the default logger
 func NewStandardAdapter() Adapter {
-	return &StandardAdapter{
-		logger: log.Default(),
-		level:  InfoLevel,
-	}
+	return newStandardAdapter(log.Default(), InfoLevel, "")
 }
 
 // NewStandardAdapterWithLogger creates a new standard log adapter with a custom logger
 func NewStandardAdapterWithLogger(logger *log.Logger) Adapter {
-	return &StandardAdapter{
-		logger: logger,
-		level:  InfoLevel,
-	}
+	return newStandardAdapter(logger, InfoLevel, "")
 }
 
 // StandardEvent wraps standard log functionality to implement our Event interface
@@ -76,12 +77,15 @@ func (e *StandardEvent) Msg(msg string) {
 
 // Msgf logs the formatted message with all accumulated fields
 func (e *StandardEvent) Msgf(format string, v ...interface{}) {
+	if !e.shouldLog() {
+		return
+	}
 	e.Msg(fmt.Sprintf(format, v...))
 }
 
 // shouldLog checks if the event should be logged based on the level
 func (e *StandardEvent) shouldLog() bool {
-	return e.level >= e.adapter.level
+	return int64(e.level) >= e.adapter.level.Load()
 }
 
 // formatMessage formats the message with level, fields, and error
@@ -118,76 +122,57 @@ func (e *StandardEvent) formatMessage(msg string) string {
 
 // SetLevel sets the log level
 func (s *StandardAdapter) SetLevel(level Level) Adapter {
-	s.level = level
+	s.level.Store(int64(level))
 	return s
 }
 
 // GetLevel returns the current log level
 func (s *StandardAdapter) GetLevel() Level {
-	return s.level
+	return Level(s.level.Load())
+}
+
+// event creates an event for the level. The caller lookup is skipped for levels that will not be logged.
+func (s *StandardAdapter) event(level Level) Event {
+	e := &StandardEvent{adapter: s, level: level}
+	if debug.Load() && e.shouldLog() {
+		e.caller = callerInfo(4)
+	}
+	return e
 }
 
 // Trace returns a trace level event
 func (s *StandardAdapter) Trace() Event {
-	e := &StandardEvent{adapter: s, level: TraceLevel}
-	if debug {
-		e.caller = track()
-	}
-	return e
+	return s.event(TraceLevel)
 }
 
 // Debug returns a debug level event
 func (s *StandardAdapter) Debug() Event {
-	e := &StandardEvent{adapter: s, level: DebugLevel}
-	if debug {
-		e.caller = track()
-	}
-	return e
+	return s.event(DebugLevel)
 }
 
 // Info returns an info level event
 func (s *StandardAdapter) Info() Event {
-	e := &StandardEvent{adapter: s, level: InfoLevel}
-	if debug {
-		e.caller = track()
-	}
-	return e
+	return s.event(InfoLevel)
 }
 
 // Warn returns a warning level event
 func (s *StandardAdapter) Warn() Event {
-	e := &StandardEvent{adapter: s, level: WarnLevel}
-	if debug {
-		e.caller = track()
-	}
-	return e
+	return s.event(WarnLevel)
 }
 
 // Error returns an error level event
 func (s *StandardAdapter) Error() Event {
-	e := &StandardEvent{adapter: s, level: ErrorLevel}
-	if debug {
-		e.caller = track()
-	}
-	return e
+	return s.event(ErrorLevel)
 }
 
 // Fatal returns a fatal level event
 func (s *StandardAdapter) Fatal() Event {
-	e := &StandardEvent{adapter: s, level: FatalLevel}
-	if debug {
-		e.caller = track()
-	}
-	return e
+	return s.event(FatalLevel)
 }
 
 // Panic returns a panic level event
 func (s *StandardAdapter) Panic() Event {
-	e := &StandardEvent{adapter: s, level: PanicLevel}
-	if debug {
-		e.caller = track()
-	}
-	return e
+	return s.event(PanicLevel)
 }
 
 // Printf prints a formatted message
@@ -197,16 +182,12 @@ func (s *StandardAdapter) Printf(format string, v ...interface{}) {
 
 // WithPackage returns a new adapter with package name field
 func (s *StandardAdapter) WithPackage(pkg string) Adapter {
-	return &StandardAdapter{
-		logger: s.logger,
-		level:  s.level,
-		pkg:    pkg,
-	}
+	return newStandardAdapter(s.logger, Level(s.level.Load()), pkg)
 }
 
 // Enabled returns true if the adapter's log level is not DisabledLevel
 func (s *StandardAdapter) Enabled() bool {
-	return s.level != DisabledLevel
+	return Level(s.level.Load()) != DisabledLevel
 }
 
 func (s *StandardAdapter) Logger() *log.Logger {

@@ -5,42 +5,45 @@ import (
 	"log"
 	"runtime"
 	"sync"
+	"sync/atomic"
 )
 
+// adapterBox lets the global adapter, an interface value, live in an atomic.Pointer
+type adapterBox struct {
+	adapter Adapter
+}
+
 var (
-	// global is the default adapter used when no package-specific adapter is set
-	global = NewNoOpAdapter()
+	// global is the default adapter used when no package-specific adapter is set.
+	// It is read on every log call, so it is an atomic pointer instead of a mutex-guarded value.
+	global atomic.Pointer[adapterBox]
 	// packages stores package-specific adapters
 	packages sync.Map
-	// mu protects the global adapter
-	mu sync.RWMutex
 	// debug enables/disables caller tracking for all adapters
-	debug bool
+	debug atomic.Bool
 	// anonymous enables anonymous caller tracking by using the package name and line instead of file path
-	anonymous bool
+	anonymous atomic.Bool
 )
+
+func init() {
+	global.Store(&adapterBox{adapter: NewNoOpAdapter()})
+}
 
 // SetGlobalAdapter sets the global logging adapter for all packages
 // This will be used as the default for all packages unless they have a specific adapter
 func SetGlobalAdapter(adapter Adapter) {
-	mu.Lock()
-	defer mu.Unlock()
-	global = adapter
+	global.Store(&adapterBox{adapter: adapter})
 }
 
 // GetGlobalAdapter returns the current global adapter
 func GetGlobalAdapter[T Adapter]() (T, bool) {
-	mu.RLock()
-	defer mu.RUnlock()
-	a, ok := global.(T)
+	a, ok := global.Load().adapter.(T)
 	return a, ok
 }
 
 // GetGlobalAdapterInterface returns the current global adapter as an interface
 func GetGlobalAdapterInterface() Adapter {
-	mu.RLock()
-	defer mu.RUnlock()
-	return global
+	return global.Load().adapter
 }
 
 // SetPackageAdapter sets a specific adapter for a package
@@ -127,12 +130,12 @@ func (d *DynamicAdapter) Logger() *log.Logger {
 
 // Debug sets whether to use caller tracking
 func Debug(d bool) {
-	debug = d
+	debug.Store(d)
 }
 
 // Anonymous sets whether to use anonymous caller tracking
 func Anonymous(a bool) {
-	anonymous = a
+	anonymous.Store(a)
 }
 
 // GetPackageLogger returns a logger for a specific package
@@ -165,17 +168,15 @@ func SetPackageLevel(pkg string, level Level) {
 	}
 
 	// Create a package-specific adapter based on the global one
-	mu.RLock()
 	var newAdapter Adapter
-	switch adapter := global.(type) {
+	switch adapter := global.Load().adapter.(type) {
 	case *ZerologAdapter:
-		newAdapter = NewZerologAdapterWithLogger(adapter.logger)
+		newAdapter = NewZerologAdapterWithLogger(adapter.state.Load().logger)
 	case *StandardAdapter:
 		newAdapter = NewStandardAdapterWithLogger(adapter.logger)
 	default:
 		newAdapter = NewNoOpAdapter() // Fallback to NoOpAdapter if unknown type
 	}
-	mu.RUnlock()
 
 	newAdapter.SetLevel(level)
 	SetPackageAdapter(pkg, newAdapter.WithPackage(pkg))
@@ -203,23 +204,28 @@ func (d *DynamicAdapter) current() Adapter {
 	if adapter, ok := packages.Load(d.pkg); ok {
 		a, ok := adapter.(Adapter)
 		if !ok {
-			return global
+			return global.Load().adapter
 		}
 		return a
 	}
 
-	mu.RLock()
-	defer mu.RUnlock()
-	return global.WithPackage(d.pkg)
+	// WithPackage caches the derived adapter per package, so this does not allocate
+	return global.Load().adapter.WithPackage(d.pkg)
 }
 
+// track returns the location of the caller of the adapter method that called it.
 func track() string {
-	pc, file, line, ok := runtime.Caller(3)
+	return callerInfo(4)
+}
+
+// callerInfo resolves the call site skip frames above itself.
+func callerInfo(skip int) string {
+	pc, file, line, ok := runtime.Caller(skip)
 	if !ok {
 		return ""
 	}
 
-	if anonymous {
+	if anonymous.Load() {
 		if f := runtime.FuncForPC(pc); f != nil {
 			return fmt.Sprintf("%s:%d", f.Name(), line)
 		}
