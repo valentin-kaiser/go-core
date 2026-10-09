@@ -1,0 +1,98 @@
+---
+name: Benchmark
+
+# Runs the benchmarks on demand and, when a base ref is given, compares them with benchstat.
+# Timings on shared runners are noisy: read the comparison as a hint and look at allocs/op,
+# which does not depend on the machine.
+on:
+  workflow_dispatch:
+    inputs:
+      base:
+        description: "Ref to compare against (leave empty to only run the benchmarks)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+      rabbitmq:
+        image: rabbitmq:3-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: admin
+          RABBITMQ_DEFAULT_PASS: admin123
+        ports:
+          - 5672:5672
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Install benchstat
+        run: go install golang.org/x/perf/cmd/benchstat@latest
+
+      - name: Run benchmarks
+        run: scripts/bench.sh bench-head.txt
+
+      - name: Run benchmarks on the base ref
+        if: ${{ inputs.base != '' }}
+        run: |
+          git worktree add ../base "${{ inputs.base }}"
+          cd ../base
+          # The base may not have the script yet, so use the one from this checkout
+          "$GITHUB_WORKSPACE/scripts/bench.sh" "$GITHUB_WORKSPACE/bench-base.txt"
+
+      - name: Compare
+        if: ${{ inputs.base != '' }}
+        run: |
+          benchstat bench-base.txt bench-head.txt | tee comparison.txt
+          {
+            echo '```'
+            cat comparison.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Check allocations
+        id: allocs
+        if: ${{ inputs.base != '' }}
+        continue-on-error: true
+        shell: bash # with pipefail, so the exit code of the check survives the tee
+        run: |
+          # allocs/op does not depend on the machine, so unlike the timings it can fail the run
+          scripts/allocs-check.sh bench-base.txt bench-head.txt | tee allocs.txt
+          {
+            echo
+            echo '```'
+            cat allocs.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks
+          path: |
+            bench-*.txt
+            comparison.txt
+            allocs.txt
+
+      - name: Fail on more allocations
+        if: ${{ steps.allocs.outcome == 'failure' }}
+        run: |
+          echo "Some benchmarks allocate more than on the base ref, see the summary"
+          exit 1
