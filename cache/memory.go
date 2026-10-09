@@ -25,13 +25,14 @@ type MemoryCache struct {
 
 // memShard is one slice of the key space
 type memShard struct {
+	index   int // position in MemoryCache.shards, which decides its share of MaxSize
 	items   map[string]*list.Element
 	lruList *list.List
 	mutex   sync.RWMutex
 }
 
-func newMemShard() *memShard {
-	return &memShard{items: make(map[string]*list.Element), lruList: list.New()}
+func newMemShard(index int) *memShard {
+	return &memShard{index: index, items: make(map[string]*list.Element), lruList: list.New()}
 }
 
 // memoryItem represents an item stored in memory cache
@@ -84,7 +85,7 @@ func NewMemoryCacheWithConfig(config Config) *MemoryCache {
 		stopChan:  make(chan struct{}),
 	}
 	for i := range mc.shards {
-		mc.shards[i] = newMemShard()
+		mc.shards[i] = newMemShard(i)
 	}
 	mc.native, _ = mc.config.Serializer.(InMemorySerializer)
 
@@ -110,13 +111,20 @@ func (mc *MemoryCache) shardFor(formattedKey string) *memShard {
 	return mc.shards[h%uint32(len(mc.shards))]
 }
 
-// shardLimit is the number of items one shard may hold, or 0 for no limit
-func (mc *MemoryCache) shardLimit() int64 {
+// shardLimit is the number of items the shard may hold. The second result is false when the
+// cache has no size limit. MaxSize is divided exactly: the first MaxSize%n shards hold one item
+// more than the others, so the limits add up to MaxSize. A shard can have a limit of 0 when
+// MaxSize is smaller than the number of shards, and then it holds nothing.
+func (mc *MemoryCache) shardLimit(sh *memShard) (int64, bool) {
 	if mc.config.MaxSize <= 0 {
-		return 0
+		return 0, false
 	}
 	n := int64(len(mc.shards))
-	return (mc.config.MaxSize + n - 1) / n
+	limit := mc.config.MaxSize / n
+	if int64(sh.index) < mc.config.MaxSize%n {
+		limit++
+	}
+	return limit, true
 }
 
 // WithMaxSize sets the maximum number of items in the cache
@@ -295,7 +303,7 @@ func (mc *MemoryCache) Set(_ context.Context, key string, value interface{}, ttl
 	})
 
 	// Check if we need to evict items
-	if limit := mc.shardLimit(); limit > 0 && int64(len(sh.items)) > limit {
+	if limit, bounded := mc.shardLimit(sh); bounded && int64(len(sh.items)) > limit {
 		mc.evictLRU(sh)
 	}
 

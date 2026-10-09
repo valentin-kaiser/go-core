@@ -213,8 +213,9 @@ type Config struct {
 	Namespace       string        `json:"namespace"`
 	// Shards splits a MemoryCache into this many parts with their own locks. 0 or 1 keeps one
 	// part, which is an exact LRU; more parts let concurrent writers run in parallel but make
-	// eviction approximate: MaxSize is divided between the parts and a full part evicts its own
-	// least recently used item.
+	// eviction approximate: MaxSize is divided exactly between the parts (so the cache never holds
+	// more than MaxSize items) and a full part evicts its own least recently used item. With a
+	// MaxSize below Shards, some parts hold nothing.
 	Shards int `json:"shards,omitempty"`
 	Serializer      Serializer    `json:"-"`
 	EventHandler    EventHandler  `json:"-"`

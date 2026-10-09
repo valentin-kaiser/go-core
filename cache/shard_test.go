@@ -55,7 +55,27 @@ func TestShardedCacheBasicOperations(t *testing.T) {
 	}
 }
 
-// The total never exceeds MaxSize by more than what the rounding of the per shard limit allows.
+// MaxSize is a hard maximum, also when it is not a multiple of the shard count or is smaller than it.
+func TestShardedCacheNeverExceedsMaxSize(t *testing.T) {
+	for _, tc := range []struct {
+		shards int
+		max    int64
+	}{{16, 1}, {16, 5}, {4, 10}, {16, 100}, {7, 50}} {
+		mc := cache.NewMemoryCacheWithConfig(shardedConfig(tc.shards, tc.max))
+		ctx := context.Background()
+		for i := 0; i < 2000; i++ {
+			_ = mc.Set(ctx, fmt.Sprintf("k%d", i), i, time.Hour)
+			if got := mc.GetSize(); int64(got) > tc.max {
+				t.Fatalf("shards=%d max=%d: holds %d items", tc.shards, tc.max, got)
+			}
+		}
+		if got := mc.GetStats().Size; got > tc.max {
+			t.Fatalf("shards=%d max=%d: stats size %d", tc.shards, tc.max, got)
+		}
+	}
+}
+
+// The total never exceeds MaxSize.
 func TestShardedCacheRespectsMaxSize(t *testing.T) {
 	mc := cache.NewMemoryCacheWithConfig(shardedConfig(4, 100))
 	ctx := context.Background()
