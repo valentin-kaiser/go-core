@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/valentin-kaiser/go-core/apperror"
@@ -25,6 +26,13 @@ type MemoryCache struct {
 type memoryItem struct {
 	item     *Item
 	dataSize int64
+	// accessed is the time of the last read in unix nanoseconds. Readers only set this
+	// atomic and hold the shared lock; the LRU list is reordered lazily when an item is
+	// about to be evicted (see evictLRU), so reads never need the exclusive lock.
+	accessed atomic.Int64
+	// promoted is the value of accessed the last time it was applied to the LRU list.
+	// Guarded by the exclusive lock.
+	promoted int64
 }
 
 // NewMemoryCache creates a new in-memory cache with default configuration.
@@ -104,46 +112,43 @@ func (mc *MemoryCache) WithEventHandler(handler EventHandler) *MemoryCache {
 func (mc *MemoryCache) Get(_ context.Context, key string, dest interface{}) (bool, error) {
 	formattedKey := mc.formatKey(key)
 
-	mc.mutex.Lock()
+	mc.mutex.RLock()
 	element, exists := mc.items[formattedKey]
 	if !exists {
-		mc.mutex.Unlock()
-		mc.updateStats(func(s *Stats) { s.Misses++ })
+		mc.mutex.RUnlock()
+		mc.recordMiss()
 		mc.emitEvent(EventGet, key, nil, nil)
 		return false, nil
 	}
 
 	memItem, ok := element.Value.(*memoryItem)
 	if !ok {
-		mc.mutex.Unlock()
-		mc.updateStats(func(s *Stats) { s.Misses++ })
+		mc.mutex.RUnlock()
+		mc.recordMiss()
 		mc.emitEvent(EventGet, key, nil, nil)
 		return false, NewCacheError("get", key, errors.New("invalid cache item type"))
 	}
 	item := memItem.item
+	now := time.Now()
 
 	// Check if item has expired
-	if item.IsExpired() {
-		// Remove expired item
-		mc.removeElement(element, formattedKey)
-		mc.mutex.Unlock()
-		mc.updateStats(func(s *Stats) { s.Misses++ })
+	if !item.ExpiresAt.IsZero() && now.After(item.ExpiresAt) {
+		mc.mutex.RUnlock()
+		mc.removeIfExpired(formattedKey)
+		mc.recordMiss()
 		mc.emitEvent(EventExpire, key, nil, nil)
 		return false, nil
 	}
 
-	// Update access time for LRU
-	item.AccessAt = time.Now()
-	if mc.config.EnableLRU {
-		mc.lruList.MoveToFront(element)
-	}
+	data, ok := item.Value.([]byte)
+	mc.mutex.RUnlock()
 
-	mc.mutex.Unlock()
+	// Remember the access for the LRU order
+	memItem.accessed.Store(now.UnixNano())
 
 	// Deserialize the value
-	data, ok := item.Value.([]byte)
 	if !ok {
-		mc.updateStats(func(s *Stats) { s.Misses++ })
+		mc.recordMiss()
 		return false, NewCacheError("get", key, errors.New("invalid item value type"))
 	}
 	err := mc.config.Serializer.Deserialize(data, dest)
@@ -153,7 +158,7 @@ func (mc *MemoryCache) Get(_ context.Context, key string, dest interface{}) (boo
 		return false, NewCacheError("get", key, err)
 	}
 
-	mc.updateStats(func(s *Stats) { s.Hits++ })
+	mc.recordHit()
 	mc.emitEvent(EventGet, key, dest, nil)
 	return true, nil
 }
@@ -258,6 +263,18 @@ func (mc *MemoryCache) Delete(_ context.Context, key string) error {
 	return nil
 }
 
+// removeIfExpired removes the key if it is still expired. The caller must not hold the lock:
+// the entry may have been removed or replaced by a fresh value since it was seen.
+func (mc *MemoryCache) removeIfExpired(formattedKey string) {
+	mc.mutex.Lock()
+	defer mc.mutex.Unlock()
+	if element, exists := mc.items[formattedKey]; exists {
+		if memItem, ok := element.Value.(*memoryItem); ok && memItem.item.IsExpired() {
+			mc.removeElement(element, formattedKey)
+		}
+	}
+}
+
 // Exists checks if a key exists in the cache
 func (mc *MemoryCache) Exists(_ context.Context, key string) (bool, error) {
 	formattedKey := mc.formatKey(key)
@@ -283,10 +300,23 @@ func (mc *MemoryCache) Exists(_ context.Context, key string) (bool, error) {
 	}
 
 	mc.mutex.RUnlock()
-	// Remove expired item
+
+	// Remove the expired item. The lock was released, so look the key up again: another
+	// goroutine may have removed it or stored a fresh value under the same key.
 	mc.mutex.Lock()
-	mc.removeElement(element, formattedKey)
-	mc.mutex.Unlock()
+	defer mc.mutex.Unlock()
+	current, exists := mc.items[formattedKey]
+	if !exists {
+		return false, nil
+	}
+	currentItem, ok := current.Value.(*memoryItem)
+	if !ok {
+		return false, NewCacheError("exists", key, errors.New("invalid item type"))
+	}
+	if !currentItem.item.IsExpired() {
+		return true, nil
+	}
+	mc.removeElement(current, formattedKey)
 	return false, nil
 }
 
@@ -456,14 +486,34 @@ func (mc *MemoryCache) evictLRU() {
 		return
 	}
 
-	element := mc.lruList.Back()
-	if element == nil {
-		return
+	// Second chance: an item that was read since it was last placed in the list moves to
+	// the front instead of being evicted. Each item is moved at most once per call.
+	var memItem *memoryItem
+	var element *list.Element
+	for i, n := 0, mc.lruList.Len(); i < n; i++ {
+		element = mc.lruList.Back()
+		candidate, ok := element.Value.(*memoryItem)
+		if !ok {
+			return // Skip if invalid type
+		}
+		memItem = candidate
+		accessed := memItem.accessed.Load()
+		if accessed <= memItem.promoted {
+			break
+		}
+		memItem.promoted = accessed
+		memItem.item.AccessAt = time.Unix(0, accessed)
+		mc.lruList.MoveToFront(element)
+		memItem, element = nil, nil
 	}
-
-	memItem, ok := element.Value.(*memoryItem)
-	if !ok {
-		return // Skip if invalid type
+	if element == nil {
+		// Every item was read recently: evict the oldest one
+		element = mc.lruList.Back()
+		candidate, ok := element.Value.(*memoryItem)
+		if !ok {
+			return
+		}
+		memItem = candidate
 	}
 
 	key := memItem.item.Key

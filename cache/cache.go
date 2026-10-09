@@ -69,6 +69,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/valentin-kaiser/go-core/apperror"
@@ -283,6 +284,10 @@ type BaseCache struct {
 	config Config
 	stats  Stats
 	mutex  sync.RWMutex
+	// hits and misses are counted on every read, so they are atomic instead of
+	// going through the stats mutex. GetStats merges them into the snapshot.
+	hits   atomic.Int64
+	misses atomic.Int64
 }
 
 // NewBaseCache creates a new base cache with the given configuration
@@ -305,8 +310,29 @@ func (bc *BaseCache) GetConfig() Config {
 // GetStats returns a copy of the current cache statistics
 func (bc *BaseCache) GetStats() Stats {
 	bc.mutex.RLock()
-	defer bc.mutex.RUnlock()
-	return bc.stats
+	stats := bc.stats
+	bc.mutex.RUnlock()
+
+	stats.Hits += bc.hits.Load()
+	stats.Misses += bc.misses.Load()
+	if total := stats.Hits + stats.Misses; total > 0 {
+		stats.HitRatio = float64(stats.Hits) / float64(total)
+	}
+	return stats
+}
+
+// recordHit counts a cache hit
+func (bc *BaseCache) recordHit() {
+	if bc.config.EnableStats {
+		bc.hits.Add(1)
+	}
+}
+
+// recordMiss counts a cache miss
+func (bc *BaseCache) recordMiss() {
+	if bc.config.EnableStats {
+		bc.misses.Add(1)
+	}
 }
 
 // updateStats updates cache statistics safely
@@ -359,7 +385,7 @@ func (bc *BaseCache) formatKey(key string) string {
 	if bc.config.Namespace == "" {
 		return key
 	}
-	return fmt.Sprintf("%s:%s", bc.config.Namespace, key)
+	return bc.config.Namespace + ":" + key
 }
 
 // calculateTTL calculates the effective TTL for a cache entry
