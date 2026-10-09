@@ -31,6 +31,20 @@ jobs:
           RABBITMQ_DEFAULT_PASS: admin123
         ports:
           - 5672:5672
+      mysql:
+        image: mysql:8
+        env:
+          MYSQL_ROOT_PASSWORD: bench
+          MYSQL_DATABASE: bench
+        ports:
+          - 13306:3306
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_PASSWORD: bench
+          POSTGRES_DB: bench
+        ports:
+          - 15432:5432
 
     steps:
       - name: Checkout code
