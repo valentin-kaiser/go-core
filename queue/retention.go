@@ -11,10 +11,18 @@ const defaultFinishedRetention = 10000
 // It has no lock of its own: the owning queue calls it with its job lock held.
 type finishedJobs struct {
 	limit   int // 0 or less keeps everything
-	ring    []string
+	ring    []finishedEntry
 	start   int
 	count   int
+	seq     uint64 // last sequence number handed out, so the first one is 1
 	evicted map[Status]int64
+}
+
+// finishedEntry is one completion in the ring. The ID alone is not enough: a job that is retried
+// and finishes again has a newer entry, and the older one must not delete it.
+type finishedEntry struct {
+	id  string
+	seq uint64
 }
 
 func newFinishedJobs(limit int) finishedJobs {
@@ -46,20 +54,27 @@ func (f *finishedJobs) record(jobs map[string]*Job, job *Job) {
 	}
 
 	if f.ring == nil {
-		f.ring = make([]string, f.limit)
+		f.ring = make([]finishedEntry, f.limit)
 	}
+
+	f.seq++
+	job.finishSeq = f.seq
+	entry := finishedEntry{id: job.ID, seq: f.seq}
+
 	if f.count == f.limit {
 		oldest := f.ring[f.start]
-		f.ring[f.start] = job.ID
+		f.ring[f.start] = entry
 		f.start = (f.start + 1) % f.limit
-		// The job may have been retried or deleted since, in which case it stays
-		if old, ok := jobs[oldest]; ok && isFinished(old.Status) {
+		// The job may have been retried, deleted or replaced since, and may have finished again
+		// with a newer entry that is still retained. Only the completion this entry stands for
+		// is dropped.
+		if old, ok := jobs[oldest.id]; ok && old.finishSeq == oldest.seq && isFinished(old.Status) {
 			f.evicted[old.Status]++
-			delete(jobs, oldest)
+			delete(jobs, oldest.id)
 		}
 		return
 	}
-	f.ring[(f.start+f.count)%f.limit] = job.ID
+	f.ring[(f.start+f.count)%f.limit] = entry
 	f.count++
 }
 

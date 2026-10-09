@@ -101,6 +101,10 @@ type Job struct {
 	Results     json.RawMessage   `json:"results,omitempty"`
 	Error       string            `json:"error,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
+
+	// finishSeq identifies the completion that finishedJobs last recorded for this job. It is
+	// only read and written by finishedJobs, with the owning queue's job lock held.
+	finishSeq uint64
 }
 
 // IsScheduled returns true if the job is scheduled for a future time

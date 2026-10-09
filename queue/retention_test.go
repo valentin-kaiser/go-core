@@ -78,3 +78,38 @@ func TestMemoryQueueUnlimitedRetention(t *testing.T) {
 		t.Fatalf("a job was dropped although retention is unlimited: %v", err)
 	}
 }
+
+// A job that finishes, is retried and finishes again has a newer ring entry. Evicting the older
+// entry must not drop the job while that newer entry is still retained.
+func TestMemoryQueueRetentionKeepsNewerIncarnation(t *testing.T) {
+	q := queue.NewMemoryQueue().WithFinishedRetention(3)
+	ctx := t.Context()
+
+	job := queue.NewJob("r").WithID("again").Build()
+	if err := q.Enqueue(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	job.Status = queue.StatusFailed
+	if err := q.UpdateJob(ctx, job); err != nil { // entry 1
+		t.Fatal(err)
+	}
+	finish(t, q, "a", queue.StatusCompleted) // entry 2
+	job.Status = queue.StatusRunning
+	if err := q.UpdateJob(ctx, job); err != nil {
+		t.Fatal(err)
+	}
+	job.Status = queue.StatusCompleted
+	if err := q.UpdateJob(ctx, job); err != nil { // entry 3, the ring is full
+		t.Fatal(err)
+	}
+	finish(t, q, "b", queue.StatusCompleted) // evicts entry 1
+
+	if _, err := q.GetJob(ctx, "again"); err != nil {
+		t.Fatalf("the newer completion was dropped by its older ring entry: %v", err)
+	}
+	finish(t, q, "c", queue.StatusCompleted) // evicts entry 2
+	finish(t, q, "d", queue.StatusCompleted) // evicts entry 3, the job's own
+	if _, err := q.GetJob(ctx, "again"); err == nil {
+		t.Fatal("the job is still indexed after its own entry was evicted")
+	}
+}
