@@ -59,6 +59,12 @@ func (rw *ResponseWriter) Write(b []byte) (int, error) {
 	return rw.buf.Write(b)
 }
 
+// WriteString buffers a string body. Without it io.WriteString converts the string to a new
+// byte slice first, which for a large response is a copy of the whole body.
+func (rw *ResponseWriter) WriteString(s string) (int, error) {
+	return rw.buf.WriteString(s)
+}
+
 // History returns the history of response bodies written
 func (rw *ResponseWriter) History() [][]byte {
 	if rw.history == nil {
