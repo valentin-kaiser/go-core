@@ -90,14 +90,22 @@ type routeState struct {
 	sorted           [][]Middleware
 	onStatusPatterns map[string]struct{}
 	limitedPatterns  map[string]struct{}
-	whitelist        map[string]*net.IPNet
-	blacklist        map[string]*net.IPNet
+	// limits is a copy published together with limitedPatterns, so a request that matched a
+	// pattern in this snapshot always finds the store that belongs to it
+	limits    map[string]*limitStore
+	whitelist map[string]*net.IPNet
+	blacklist map[string]*net.IPNet
 }
 
 // publish makes the current mux, middlewares and pattern sets visible to requests.
 // Must be called with the mutex held after any of them changed.
 func (router *Router) publish() {
+	limits := make(map[string]*limitStore, len(router.limits))
+	for pattern, store := range router.limits {
+		limits[pattern] = store
+	}
 	router.state.Store(&routeState{
+		limits:           limits,
 		mux:              router.mux,
 		sorted:           router.sorted,
 		onStatusPatterns: router.onStatusPatterns,
@@ -111,13 +119,13 @@ func (router *Router) publish() {
 // It wraps the request with middlewares and handles the response
 func (router *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	state := router.state.Load()
-	mux, onStatusPatterns, limitedPatterns, sorted := state.mux, state.onStatusPatterns, state.limitedPatterns, state.sorted
+	mux, onStatusPatterns, sorted := state.mux, state.onStatusPatterns, state.sorted
 
 	rw := newResponseWriter(w, r)
 	blocked := router.block(rw, r, state.whitelist, state.blacklist)
 	if !blocked {
 		if redirected := router.canonicalRedirect(rw, r); !redirected {
-			router.rateLimit(rw, r, limitedPatterns)
+			router.rateLimit(rw, r, state.limitedPatterns, state.limits)
 			router.wrapWith(sorted, mux).ServeHTTP(rw, r)
 		}
 	}
@@ -419,9 +427,14 @@ func (router *Router) handleStatusHooks(rw *ResponseWriter, r *http.Request, pat
 	}
 }
 
-func (router *Router) rateLimit(w http.ResponseWriter, r *http.Request, patterns map[string]struct{}) {
+func (router *Router) rateLimit(w http.ResponseWriter, r *http.Request, patterns map[string]struct{}, limits map[string]*limitStore) {
 	matched := router.matchPattern(r.URL.Path, patterns)
 	if matched != "" {
+		store := limits[matched]
+		if store == nil {
+			return
+		}
+
 		ip := router.clientIP(r)
 		if ip == "" {
 			logger.Warn().Msg("rate limiting failed, no client IP found")
@@ -429,11 +442,7 @@ func (router *Router) rateLimit(w http.ResponseWriter, r *http.Request, patterns
 			return
 		}
 
-		router.mutex.RLock()
-		limiter := router.limits[matched].limiter(ip)
-		router.mutex.RUnlock()
-
-		if !limiter.Allow() {
+		if !store.limiter(ip).Allow() {
 			http.Error(w, "Too Many Requests", http.StatusTooManyRequests)
 			return
 		}
