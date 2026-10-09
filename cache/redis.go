@@ -261,7 +261,7 @@ func (rc *RedisCache) GetMulti(ctx context.Context, keys []string) (map[string]i
 		return nil, NewCacheError("getmulti", "", err)
 	}
 
-	result := make(map[string]interface{})
+	result := make(map[string]interface{}, len(values))
 	for i, value := range values {
 		if value != nil {
 			var dest interface{}
