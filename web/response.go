@@ -35,9 +35,7 @@ func newResponseWriter(w http.ResponseWriter, r *http.Request) *ResponseWriter {
 		w:       w,
 		r:       r,
 		status:  http.StatusOK, // Default status code
-		header:  make(http.Header),
-		buf:     bytes.Buffer{},
-		history: make([][]byte, 0),
+		// header and history are allocated on first use; most responses never need history
 		start:   time.Now(),
 	}
 }
@@ -63,6 +61,9 @@ func (rw *ResponseWriter) Write(b []byte) (int, error) {
 
 // History returns the history of response bodies written
 func (rw *ResponseWriter) History() [][]byte {
+	if rw.history == nil {
+		return [][]byte{}
+	}
 	return rw.history
 }
 

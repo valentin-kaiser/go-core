@@ -352,7 +352,18 @@ func logMiddleware(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(rw, r)
 
-		// Log the request with appropriate level based on status
+		// Pick the level from the status first, so nothing is built for events that are dropped
+		level := logging.DebugLevel
+		switch {
+		case rw.status >= 500:
+			level = logging.ErrorLevel
+		case rw.status >= 400:
+			level = logging.WarnLevel
+		}
+		if !logging.IsEnabled(logger, level) {
+			return
+		}
+
 		fields := []logging.Field{
 			logging.F("remote", r.RemoteAddr),
 			logging.F("real-ip", r.Header.Get("X-Real-IP")),
@@ -366,10 +377,10 @@ func logMiddleware(next http.Handler) http.Handler {
 		}
 
 		var event logging.Event
-		switch {
-		case rw.status >= 500:
+		switch level {
+		case logging.ErrorLevel:
 			event = logger.Error()
-		case rw.status >= 400:
+		case logging.WarnLevel:
 			event = logger.Warn()
 		default:
 			event = logger.Debug()

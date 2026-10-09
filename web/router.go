@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/logging"
@@ -34,6 +35,9 @@ type Router struct {
 	honeypotCallback     func(map[string]*net.IPNet)
 	routes               map[string]http.Handler // Track registered routes for unregistration
 	mutex                sync.RWMutex            // Protect concurrent access to routes
+	// state is an immutable snapshot of what a request needs to be dispatched. It is
+	// published by publish after every change, so requests do not touch the mutex.
+	state atomic.Pointer[routeState]
 }
 
 type limitStore struct {
@@ -75,30 +79,41 @@ func NewRouter() *Router {
 		corsPatterns:         make(map[string]struct{}),
 	}
 
+	r.publish()
 	return r
+}
+
+// routeState is the part of the router a request reads before dispatching
+type routeState struct {
+	mux              *http.ServeMux
+	sorted           [][]Middleware
+	onStatusPatterns map[string]struct{}
+	limitedPatterns  map[string]struct{}
+}
+
+// publish makes the current mux, middlewares and pattern sets visible to requests.
+// Must be called with the mutex held after any of them changed.
+func (router *Router) publish() {
+	router.state.Store(&routeState{
+		mux:              router.mux,
+		sorted:           router.sorted,
+		onStatusPatterns: router.onStatusPatterns,
+		limitedPatterns:  router.limitedPatterns,
+	})
 }
 
 // ServeHTTP implements the http.Handler interface for the Router
 // It wraps the request with middlewares and handles the response
 func (router *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	router.mutex.RLock()
-	mux := router.mux
-	onStatusPatterns := make(map[string]struct{})
-	for k, v := range router.onStatusPatterns {
-		onStatusPatterns[k] = v
-	}
-	limitedPatterns := make(map[string]struct{})
-	for k, v := range router.limitedPatterns {
-		limitedPatterns[k] = v
-	}
-	router.mutex.RUnlock()
+	state := router.state.Load()
+	mux, onStatusPatterns, limitedPatterns, sorted := state.mux, state.onStatusPatterns, state.limitedPatterns, state.sorted
 
 	rw := newResponseWriter(w, r)
 	blocked := router.block(rw, r)
 	if !blocked {
 		if redirected := router.canonicalRedirect(rw, r); !redirected {
 			router.rateLimit(rw, r, limitedPatterns)
-			router.wrap(mux).ServeHTTP(rw, r)
+			router.wrapWith(sorted, mux).ServeHTTP(rw, r)
 		}
 	}
 	router.handleStatusHooks(rw, r, onStatusPatterns)
@@ -109,11 +124,15 @@ func (router *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // It allows you to specify the order of execution using MiddlewareOrder
 // All middlewares of the same order will be executed in the order they were added
 func (router *Router) Use(order MiddlewareOrder, middleware func(http.Handler) http.Handler) {
+	router.mutex.Lock()
+	defer router.mutex.Unlock()
+
 	if _, ok := router.middlewares[order]; !ok {
 		router.middlewares[order] = make([]Middleware, 0)
 	}
 	router.middlewares[order] = append(router.middlewares[order], middleware)
 	router.sort()
+	router.publish()
 }
 
 // Handle registers a handler for the given pattern
@@ -141,7 +160,8 @@ func (router *Router) OnStatus(pattern string, status int, fn func(http.Response
 		router.onStatus[pattern] = make(map[int]func(http.ResponseWriter, *http.Request))
 	}
 	router.onStatus[pattern][status] = fn
-	router.onStatusPatterns[pattern] = struct{}{}
+	router.onStatusPatterns = withPattern(router.onStatusPatterns, pattern)
+	router.publish()
 }
 
 // UnregisterHandler removes routes from the router
@@ -164,7 +184,7 @@ func (router *Router) UnregisterHandler(patterns []string) {
 	for _, pattern := range patterns {
 		delete(router.routes, pattern)
 		delete(router.limits, pattern)
-		delete(router.limitedPatterns, pattern)
+		router.limitedPatterns = withoutPattern(router.limitedPatterns, pattern)
 		delete(router.cacheControl, pattern)
 		delete(router.cacheControlPatterns, pattern)
 		delete(router.headers, pattern)
@@ -192,6 +212,7 @@ func (router *Router) UnregisterAllHandler() {
 	router.cors = make(map[string]func(http.ResponseWriter, *http.Request))
 	router.corsPatterns = make(map[string]struct{})
 	router.mux = http.NewServeMux()
+	router.publish()
 }
 
 // GetRegisteredRoutes returns a slice of all currently registered route patterns
@@ -214,6 +235,7 @@ func (router *Router) rebuildMux() {
 	for pattern, handler := range router.routes {
 		router.mux.Handle(pattern, handler)
 	}
+	router.publish()
 }
 
 // registerRateLimit applies a rate limit to the given pattern
@@ -235,7 +257,8 @@ func (router *Router) registerRateLimit(pattern string, limit rate.Limit, burst 
 		burst: burst,
 		state: make(map[string]*rate.Limiter),
 	}
-	router.limitedPatterns[pattern] = struct{}{}
+	router.limitedPatterns = withPattern(router.limitedPatterns, pattern)
+	router.publish()
 	return nil
 }
 
@@ -324,13 +347,43 @@ func (router *Router) corsFor(path string) (func(http.ResponseWriter, *http.Requ
 // wrap applies all registered middlewares to the given handler
 // It sorts the middlewares by their order and applies them LIFO (last in, first out)
 func (router *Router) wrap(handler http.Handler) http.Handler {
-	for _, middlewares := range router.sorted {
+	router.mutex.RLock()
+	sorted := router.sorted
+	router.mutex.RUnlock()
+	return router.wrapWith(sorted, handler)
+}
+
+// wrapWith applies the given middlewares, which sort has already ordered, to the handler
+func (router *Router) wrapWith(sorted [][]Middleware, handler http.Handler) http.Handler {
+	for _, middlewares := range sorted {
 		for i := len(middlewares) - 1; i >= 0; i-- {
 			handler = middlewares[i](handler)
 		}
 	}
 
 	return handler
+}
+
+// withPattern returns a copy of the set with the pattern added.
+// The sets are read by requests without a lock, so they are replaced instead of modified.
+func withPattern(set map[string]struct{}, pattern string) map[string]struct{} {
+	copied := make(map[string]struct{}, len(set)+1)
+	for k := range set {
+		copied[k] = struct{}{}
+	}
+	copied[pattern] = struct{}{}
+	return copied
+}
+
+// withoutPattern returns a copy of the set without the pattern
+func withoutPattern(set map[string]struct{}, pattern string) map[string]struct{} {
+	copied := make(map[string]struct{}, len(set))
+	for k := range set {
+		if k != pattern {
+			copied[k] = struct{}{}
+		}
+	}
+	return copied
 }
 
 func (router *Router) sort() {
