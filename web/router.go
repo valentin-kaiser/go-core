@@ -3,6 +3,7 @@ package web
 import (
 	"net"
 	"net/http"
+	"net/netip"
 	"sort"
 	"strings"
 	"sync"
@@ -89,6 +90,8 @@ type routeState struct {
 	sorted           [][]Middleware
 	onStatusPatterns map[string]struct{}
 	limitedPatterns  map[string]struct{}
+	whitelist        map[string]*net.IPNet
+	blacklist        map[string]*net.IPNet
 }
 
 // publish makes the current mux, middlewares and pattern sets visible to requests.
@@ -99,6 +102,8 @@ func (router *Router) publish() {
 		sorted:           router.sorted,
 		onStatusPatterns: router.onStatusPatterns,
 		limitedPatterns:  router.limitedPatterns,
+		whitelist:        router.whitelist,
+		blacklist:        router.blacklist,
 	})
 }
 
@@ -109,7 +114,7 @@ func (router *Router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	mux, onStatusPatterns, limitedPatterns, sorted := state.mux, state.onStatusPatterns, state.limitedPatterns, state.sorted
 
 	rw := newResponseWriter(w, r)
-	blocked := router.block(rw, r)
+	blocked := router.block(rw, r, state.whitelist, state.blacklist)
 	if !blocked {
 		if redirected := router.canonicalRedirect(rw, r); !redirected {
 			router.rateLimit(rw, r, limitedPatterns)
@@ -483,7 +488,7 @@ func (router *Router) honeypot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	logger.Trace().Fields(logging.F("ip", ip.String())).Msg("honeypot triggered, checking IP address")
-	if !router.ipInList(ip, router.whitelist) {
+	if !router.ipInList(ip, router.state.Load().whitelist) {
 		cidr := ip.String() + "/32"
 		if ip.To4() == nil {
 			cidr = ip.String() + "/128" // Use /128 for IPv6 addresses
@@ -496,16 +501,38 @@ func (router *Router) honeypot(w http.ResponseWriter, r *http.Request) {
 		}
 
 		logger.Debug().Fields(logging.F("ip", network.String())).Msg("honeypot triggered, blocking IP address")
-		router.blacklist[network.String()] = network
-		if router.honeypotCallback != nil {
-			router.honeypotCallback(router.blacklist)
+		// Requests read the blacklist without a lock, so add to a copy and publish it
+		router.mutex.Lock()
+		blacklist := make(map[string]*net.IPNet, len(router.blacklist)+1)
+		for k, v := range router.blacklist {
+			blacklist[k] = v
+		}
+		blacklist[network.String()] = network
+		router.blacklist = blacklist
+		router.publish()
+		callback := router.honeypotCallback
+		router.mutex.Unlock()
+
+		if callback != nil {
+			callback(blacklist)
 		}
 	}
 }
 
 // block blocks all requests to the router coming from a IP address defined in the blacklist
-func (router *Router) block(w http.ResponseWriter, r *http.Request) bool {
+func (router *Router) block(w http.ResponseWriter, r *http.Request, whitelist, blacklist map[string]*net.IPNet) bool {
 	ipStr := router.clientIP(r)
+
+	// Without lists there is nothing to look up, so the address only has to be valid
+	if len(blacklist) == 0 {
+		if !validClientIP(ipStr) {
+			logger.Warn().Fields(logging.F("ip", ipStr)).Msg("blocked request with invalid IP address")
+			http.Error(w, "Invalid IP address", http.StatusBadRequest)
+			return true
+		}
+		return false
+	}
+
 	ip := net.ParseIP(ipStr)
 	if ip == nil {
 		logger.Warn().Fields(logging.F("ip", ipStr)).Msg("blocked request with invalid IP address")
@@ -513,7 +540,7 @@ func (router *Router) block(w http.ResponseWriter, r *http.Request) bool {
 		return true
 	}
 
-	if !router.ipInList(ip, router.whitelist) && router.ipInList(ip, router.blacklist) {
+	if !router.ipInList(ip, whitelist) && router.ipInList(ip, blacklist) {
 		logger.Trace().Fields(logging.F("ip", ip.String())).Msg("blocked request from IP address")
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return true
@@ -527,10 +554,15 @@ func (router *Router) setWhitelist(entries []string) error {
 	if err != nil {
 		return apperror.Wrap(err)
 	}
-	router.whitelist = make(map[string]*net.IPNet, len(networks))
+	whitelist := make(map[string]*net.IPNet, len(networks))
 	for _, network := range networks {
-		router.whitelist[network.String()] = network
+		whitelist[network.String()] = network
 	}
+
+	router.mutex.Lock()
+	router.whitelist = whitelist
+	router.publish()
+	router.mutex.Unlock()
 	return nil
 }
 
@@ -539,10 +571,15 @@ func (router *Router) setBlacklist(entries []string) error {
 	if err != nil {
 		return apperror.Wrap(err)
 	}
-	router.blacklist = make(map[string]*net.IPNet, len(networks))
+	blacklist := make(map[string]*net.IPNet, len(networks))
 	for _, network := range networks {
-		router.blacklist[network.String()] = network
+		blacklist[network.String()] = network
 	}
+
+	router.mutex.Lock()
+	router.blacklist = blacklist
+	router.publish()
+	router.mutex.Unlock()
 	return nil
 }
 
@@ -560,13 +597,18 @@ func (router *Router) matchPattern(path string, patterns map[string]struct{}) (m
 }
 
 func (router *Router) clientIP(r *http.Request) string {
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		parts := strings.Split(xff, ",")
-		return strings.TrimSpace(parts[0])
+	// The keys are already in canonical form, so index the map instead of canonicalizing them
+	// again for every request, which is what Header.Get does
+	if values := r.Header["X-Forwarded-For"]; len(values) > 0 && values[0] != "" {
+		xff := values[0]
+		if i := strings.IndexByte(xff, ','); i >= 0 {
+			xff = xff[:i]
+		}
+		return strings.TrimSpace(xff)
 	}
 
-	if xRealIP := r.Header.Get("X-Real-IP"); xRealIP != "" {
-		return strings.TrimSpace(xRealIP)
+	if values := r.Header["X-Real-Ip"]; len(values) > 0 && values[0] != "" {
+		return strings.TrimSpace(values[0])
 	}
 
 	if r.RemoteAddr != "" {
@@ -578,6 +620,12 @@ func (router *Router) clientIP(r *http.Request) string {
 	}
 
 	return ""
+}
+
+// validClientIP reports whether net.ParseIP would accept the address, without allocating
+func validClientIP(s string) bool {
+	addr, err := netip.ParseAddr(s)
+	return err == nil && addr.Zone() == ""
 }
 
 func (router *Router) ipInList(ip net.IP, list map[string]*net.IPNet) bool {
