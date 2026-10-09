@@ -140,10 +140,13 @@ func EnvVarName(name string) string {
 		}
 	}
 
+	// The read lock is held until the result is stored. RegisterEnvVar clears the cache under the
+	// write lock, so it cannot run between reading the mapping and storing it, which would leave
+	// the stale name in the cache.
 	envNamesM.RLock()
-	env, ok := envNames[name]
-	envNamesM.RUnlock()
+	defer envNamesM.RUnlock()
 
+	env, ok := envNames[name]
 	if !ok {
 		env = name
 	}
