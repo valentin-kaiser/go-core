@@ -31,7 +31,7 @@ var (
 	sharedErr    error
 )
 
-func sharedEtcd(t *testing.T) []string {
+func sharedEtcd(t testing.TB) []string {
 	t.Helper()
 	sharedOnce.Do(func() {
 		sharedServer, sharedErr = startEmbedded()
@@ -104,7 +104,7 @@ func freePort() (int, error) {
 	return l.Addr().(*net.TCPAddr).Port, nil
 }
 
-func newTestClient(t *testing.T) *etcd.Client {
+func newTestClient(t testing.TB) *etcd.Client {
 	t.Helper()
 	endpoints := sharedEtcd(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
