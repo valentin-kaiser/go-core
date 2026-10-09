@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/logging"
 )
 
 // SMTP errors
@@ -44,14 +45,15 @@ const (
 	StatusAuthSuccessful = 235
 	StatusAuthContinue   = 334
 
-	StatusBadCommand     = 500
-	StatusBadSyntax      = 501
-	StatusNotImplemented = 502
-	StatusBadSequence    = 503
-	StatusTempFailure    = 451
-	StatusPermFailure    = 550
-	StatusAuthFailed     = 535
-	StatusAuthRequired   = 530
+	StatusBadCommand      = 500
+	StatusBadSyntax       = 501
+	StatusNotImplemented  = 502
+	StatusBadSequence     = 503
+	StatusTempFailure     = 451
+	StatusPermFailure     = 550
+	StatusMessageTooLarge = 552
+	StatusAuthFailed      = 535
+	StatusAuthRequired    = 530
 )
 
 // Options represents MAIL command options
@@ -603,15 +605,8 @@ func (s *session) Rcpt(to string, _ *RcptOptions) error {
 
 // Data handles the email data
 func (s *session) Data(r io.Reader) error {
-	// Validate HELO first if needed
-	err := s.validateHeloIfNeeded()
-	if err != nil {
+	if err := s.checkData(); err != nil {
 		return err
-	}
-
-	if s.server.config.Auth && !s.authenticated {
-		logger.Warn().Msg("unauthenticated DATA command rejected")
-		return ErrAuthRequired
 	}
 
 	// Read message data
@@ -620,6 +615,26 @@ func (s *session) Data(r io.Reader) error {
 		return apperror.NewError("failed to read email data").AddError(err)
 	}
 
+	return s.receive(data)
+}
+
+// checkData makes the checks that come before a message is accepted: HELO and authentication
+func (s *session) checkData() error {
+	// Validate HELO first if needed
+	if err := s.validateHeloIfNeeded(); err != nil {
+		return err
+	}
+
+	if s.server.config.Auth && !s.authenticated {
+		logger.Warn().Msg("unauthenticated DATA command rejected")
+		return ErrAuthRequired
+	}
+	return nil
+}
+
+// receive hands a complete message to the manager and the handlers. The caller has already called
+// checkData.
+func (s *session) receive(data []byte) error {
 	// Notify manager
 	if s.server.manager != nil {
 		s.server.manager.NotifyMessageReceived()
@@ -818,7 +833,9 @@ func (s *smtpServer) handleCommands(conn *Conn, session Session) {
 			continue
 		}
 
-		logger.Trace().Field("command", line).Field("remote_addr", conn.RemoteAddr()).Msg("received SMTP command")
+		if logging.IsEnabled(logger, logging.TraceLevel) {
+			logger.Trace().Field("command", line).Field("remote_addr", conn.RemoteAddr()).Msg("received SMTP command")
+		}
 
 		parts := strings.SplitN(line, " ", 2)
 		command := strings.ToUpper(parts[0])
@@ -1139,29 +1156,56 @@ func (s *smtpServer) handleRcpt(conn *Conn, session Session, args string) {
 }
 
 // handleData handles DATA command
-func (s *smtpServer) handleData(conn *Conn, session Session) {
+func (s *smtpServer) handleData(conn *Conn, current Session) {
 	s.writeResponse(conn, StatusStartData, "Start mail input; end with <CRLF>.<CRLF>")
 
-	// Read message data until ".\r\n"
-	var data strings.Builder
+	// Read message data until a line with a single dot. The limit is advertised in the EHLO response, so it has to
+	// hold: without it a client can make the server collect data without end.
+	var data []byte
+	tooLarge := false
 	for {
 		if !conn.scanner.Scan() {
 			return
 		}
 
-		line := conn.scanner.Text()
-		if line == "." {
+		line := conn.scanner.Bytes()
+		if len(line) == 1 && line[0] == '.' {
 			break
+		}
+		if tooLarge {
+			continue // keep reading to the end of the message, so the connection stays in step
 		}
 
 		// Handle dot-stuffing
-		line = strings.TrimPrefix(line, ".")
+		if len(line) > 0 && line[0] == '.' {
+			line = line[1:]
+		}
 
-		data.WriteString(line)
-		data.WriteString("\r\n")
+		if s.config.MaxMessageBytes > 0 && int64(len(data)+len(line)+2) > s.config.MaxMessageBytes {
+			tooLarge = true
+			data = nil
+			continue
+		}
+
+		data = append(data, line...)
+		data = append(data, '\r', '\n')
 	}
 
-	err := session.Data(strings.NewReader(data.String()))
+	if tooLarge {
+		logger.Warn().Field("remote_addr", conn.RemoteAddr().String()).Field("limit", s.config.MaxMessageBytes).Msg("message exceeds the size limit")
+		s.writeResponse(conn, StatusMessageTooLarge, "Message size exceeds fixed maximum message size")
+		return
+	}
+
+	var err error
+	if sess, ok := current.(*session); ok {
+		// The message is complete in memory already; do not copy it through a reader again
+		if err = sess.checkData(); err == nil {
+			err = sess.receive(data)
+		}
+	} else {
+		err = current.Data(bytes.NewReader(data))
+	}
 	if err != nil {
 		if errors.Is(err, ErrAuthRequired) {
 			s.writeResponse(conn, StatusAuthRequired, "Authentication required")
