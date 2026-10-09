@@ -40,7 +40,7 @@ jobs:
           go test -v $packages
 
       - name: Run race detector on concurrency-sensitive packages
-        run: go test -race ./logging/... ./cache ./config ./web/... ./i18n ./flag ./security ./version ./apperror ./queue ./database ./etcd
+        run: go test -race ./logging/... ./cache ./config ./web/... ./i18n ./flag ./security ./version ./apperror ./queue ./database ./etcd ./mail
 
       - name: Run go vet
         run: go vet ./...
