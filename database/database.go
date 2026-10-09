@@ -747,175 +747,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 			return apperror.NewErrorf("database instance is nil")
 		}
 
-		backupFile, err := os.Create(path)
-		if err != nil {
-			return apperror.NewErrorf("failed to create backup file").AddError(err)
-		}
-		defer backupFile.Close()
-
-		_, err = fmt.Fprintf(backupFile, "-- MySQL/MariaDB database backup\n-- DSN: %s\n-- Generated: %s\n\n",
-			d.dsn, time.Now().Format(time.RFC3339))
-		if err != nil {
-			return apperror.NewErrorf("failed to write backup header").AddError(err)
-		}
-
-		_, err = backupFile.WriteString("SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS = 0;\n\n")
-		if err != nil {
-			return apperror.NewErrorf("failed to write charset settings").AddError(err)
-		}
-
-		rows, err := dbInstance.Query("SHOW TABLES")
-		if err != nil {
-			return apperror.NewErrorf("failed to get table list").AddError(err)
-		}
-
-		var tables []string
-		for rows.Next() {
-			var table string
-			if err := rows.Scan(&table); err != nil {
-				rows.Close()
-				return apperror.NewErrorf("failed to scan table name").AddError(err)
-			}
-			tables = append(tables, table)
-		}
-		rows.Close()
-
-		for _, table := range tables {
-			quotedTable, err := quoteIdentifier(table, DriverMySQL)
-			if err != nil {
-				d.logger.Warn().Err(err).Msgf("invalid table name: %s", table)
-				continue
-			}
-			var tableName, createStmt string
-			err = dbInstance.QueryRow(fmt.Sprintf("SHOW CREATE TABLE %s", quotedTable)).Scan(&tableName, &createStmt)
-			if err != nil {
-				d.logger.Warn().Err(err).Msgf("failed to get schema for table %s", table)
-				continue
-			}
-
-			_, err = fmt.Fprintf(backupFile, "\n-- Table structure for %s\nDROP TABLE IF EXISTS `%s`;\n%s;\n\n",
-				table, table, createStmt)
-			if err != nil {
-				return apperror.NewErrorf("failed to write table schema").AddError(err)
-			}
-
-			dataRows, err := dbInstance.Query(fmt.Sprintf("SELECT * FROM %s", quotedTable))
-			if err != nil {
-				d.logger.Warn().Err(err).Msgf("failed to read data from table %s", table)
-				continue
-			}
-
-			columns, err := dataRows.Columns()
-			if err != nil {
-				dataRows.Close()
-				return apperror.NewErrorf("failed to get columns for table %s", table).AddError(err)
-			}
-
-			if len(columns) > 0 {
-				_, err = fmt.Fprintf(backupFile, "-- Data for table %s\n", table)
-				if err != nil {
-					dataRows.Close()
-					return apperror.NewErrorf("failed to write data header").AddError(err)
-				}
-
-				hasData := false
-				values := make([]interface{}, len(columns))
-				valuePtrs := make([]interface{}, len(columns))
-				for i := range values {
-					valuePtrs[i] = &values[i]
-				}
-
-				colsList := make([]string, len(columns))
-				for i, col := range columns {
-					quotedCol, err := quoteIdentifier(col, DriverMySQL)
-					if err != nil {
-						dataRows.Close()
-						return apperror.NewErrorf("invalid column name").AddError(err)
-					}
-					colsList[i] = quotedCol
-				}
-				colsStr := strings.Join(colsList, ", ")
-
-				for dataRows.Next() {
-					if !hasData {
-						quotedTableForInsert, err := quoteIdentifier(table, DriverMySQL)
-						if err != nil {
-							dataRows.Close()
-							return apperror.NewErrorf("invalid table name for insert").AddError(err)
-						}
-						_, err = fmt.Fprintf(backupFile, "INSERT INTO %s (%s) VALUES\n", quotedTableForInsert, colsStr)
-						if err != nil {
-							dataRows.Close()
-							return apperror.NewErrorf("failed to write insert header").AddError(err)
-						}
-						hasData = true
-					} else {
-						_, err = backupFile.WriteString(",\n")
-						if err != nil {
-							dataRows.Close()
-							return apperror.NewErrorf("failed to write comma").AddError(err)
-						}
-					}
-
-					err = dataRows.Scan(valuePtrs...)
-					if err != nil {
-						dataRows.Close()
-						return apperror.NewErrorf("failed to scan row").AddError(err)
-					}
-
-					// Build value list
-					var valueStrings []string
-					for _, val := range values {
-						if val == nil {
-							valueStrings = append(valueStrings, "NULL")
-						} else {
-							switch v := val.(type) {
-							case []byte:
-								escaped := strings.ReplaceAll(string(v), "\\", "\\\\")
-								escaped = strings.ReplaceAll(escaped, "'", "\\'")
-								escaped = strings.ReplaceAll(escaped, "\n", "\\n")
-								escaped = strings.ReplaceAll(escaped, "\r", "\\r")
-								valueStrings = append(valueStrings, fmt.Sprintf("'%s'", escaped))
-							case string:
-								escaped := strings.ReplaceAll(v, "\\", "\\\\")
-								escaped = strings.ReplaceAll(escaped, "'", "\\'")
-								escaped = strings.ReplaceAll(escaped, "\n", "\\n")
-								escaped = strings.ReplaceAll(escaped, "\r", "\\r")
-								valueStrings = append(valueStrings, fmt.Sprintf("'%s'", escaped))
-							case time.Time:
-								valueStrings = append(valueStrings, fmt.Sprintf("'%s'", v.Format("2006-01-02 15:04:05")))
-							default:
-								valueStrings = append(valueStrings, fmt.Sprintf("%v", v))
-							}
-						}
-					}
-
-					_, err = fmt.Fprintf(backupFile, "(%s)", strings.Join(valueStrings, ", "))
-					if err != nil {
-						dataRows.Close()
-						return apperror.NewErrorf("failed to write values").AddError(err)
-					}
-				}
-
-				if hasData {
-					_, err = backupFile.WriteString(";\n\n")
-					if err != nil {
-						dataRows.Close()
-						return apperror.NewErrorf("failed to write statement terminator").AddError(err)
-					}
-				}
-			}
-			dataRows.Close()
-		}
-
-		// Re-enable foreign key checks
-		_, err = backupFile.WriteString("SET FOREIGN_KEY_CHECKS = 1;\n")
-		if err != nil {
-			return apperror.NewErrorf("failed to write footer").AddError(err)
-		}
-
-		d.logger.Info().Msgf("database backup created: %s", path)
-		return nil
+		return d.backupMySQL(dbInstance, path)
 
 	case DriverPostgres:
 		d.dbMutex.RLock()
@@ -926,166 +758,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 			return apperror.NewErrorf("database instance is nil")
 		}
 
-		backupFile, err := os.Create(path)
-		if err != nil {
-			return apperror.NewErrorf("failed to create backup file").AddError(err)
-		}
-		defer backupFile.Close()
-
-		_, err = fmt.Fprintf(backupFile, "-- PostgreSQL database backup\n-- DSN: %s\n-- Generated: %s\n\n",
-			d.dsn, time.Now().Format(time.RFC3339))
-		if err != nil {
-			return apperror.NewErrorf("failed to write backup header").AddError(err)
-		}
-
-		rows, err := dbInstance.Query(`
-			SELECT tablename 
-			FROM pg_tables 
-			WHERE schemaname = $1
-			ORDER BY tablename
-		`, schema)
-		if err != nil {
-			return apperror.NewErrorf("failed to get table list").AddError(err)
-		}
-
-		var tables []string
-		for rows.Next() {
-			var table string
-			if err := rows.Scan(&table); err != nil {
-				rows.Close()
-				return apperror.NewErrorf("failed to scan table name").AddError(err)
-			}
-			tables = append(tables, table)
-		}
-		rows.Close()
-
-		for _, table := range tables {
-			var createStmt string
-			err = dbInstance.QueryRow(`
-				SELECT 'CREATE TABLE IF NOT EXISTS "' || c.relname || '" (' || 
-					string_agg(a.attname || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod) || 
-						CASE WHEN a.attnotnull THEN ' NOT NULL' ELSE '' END, ', ') || 
-					');' as create_stmt
-				FROM pg_class c
-				JOIN pg_namespace n ON n.oid = c.relnamespace
-				JOIN pg_attribute a ON a.attrelid = c.oid
-				WHERE c.relname = $1 AND n.nspname = $2 AND a.attnum > 0 AND NOT a.attisdropped
-				GROUP BY c.relname
-			`, table, schema).Scan(&createStmt)
-			if err != nil {
-				d.logger.Warn().Err(err).Msgf("failed to get schema for table %s", table)
-				continue
-			}
-
-			_, err = fmt.Fprintf(backupFile, "\n-- Table: %s\n%s\n\n", table, createStmt)
-			if err != nil {
-				return apperror.NewErrorf("failed to write table schema").AddError(err)
-			}
-
-			// Use schema-qualified table name with proper quoting
-			quotedSchema, err := quoteIdentifier(schema, DriverPostgres)
-			if err != nil {
-				return apperror.NewErrorf("invalid schema name").AddError(err)
-			}
-			quotedTableForQuery, err := quoteIdentifier(table, DriverPostgres)
-			if err != nil {
-				return apperror.NewErrorf("invalid table name").AddError(err)
-			}
-
-			dataRows, err := dbInstance.Query(fmt.Sprintf("SELECT * FROM %s.%s", quotedSchema, quotedTableForQuery))
-			if err != nil {
-				d.logger.Warn().Err(err).Msgf("failed to read data from table %s", table)
-				continue
-			}
-
-			columns, err := dataRows.Columns()
-			if err != nil {
-				dataRows.Close()
-				return apperror.NewErrorf("failed to get columns for table %s", table).AddError(err)
-			}
-
-			if len(columns) > 0 {
-				_, err = fmt.Fprintf(backupFile, "-- Data for table: %s\n", table)
-				if err != nil {
-					dataRows.Close()
-					return apperror.NewErrorf("failed to write data header").AddError(err)
-				}
-
-				values := make([]interface{}, len(columns))
-				valuePtrs := make([]interface{}, len(columns))
-				for i := range values {
-					valuePtrs[i] = &values[i]
-				}
-
-				colsList := make([]string, len(columns))
-				for i, col := range columns {
-					quotedCol, err := quoteIdentifier(col, DriverPostgres)
-					if err != nil {
-						dataRows.Close()
-						return apperror.NewErrorf("invalid column name").AddError(err)
-					}
-					colsList[i] = quotedCol
-				}
-
-				for dataRows.Next() {
-					err = dataRows.Scan(valuePtrs...)
-					if err != nil {
-						dataRows.Close()
-						return apperror.NewErrorf("failed to scan row").AddError(err)
-					}
-
-					var valueStrings []string
-					for _, val := range values {
-						if val == nil {
-							valueStrings = append(valueStrings, "NULL")
-						} else {
-							switch v := val.(type) {
-							case []byte:
-								escaped := strings.ReplaceAll(string(v), "\\", "\\\\")
-								escaped = strings.ReplaceAll(escaped, "'", "''")
-								escaped = strings.ReplaceAll(escaped, "\n", "\\n")
-								escaped = strings.ReplaceAll(escaped, "\r", "\\r")
-								valueStrings = append(valueStrings, fmt.Sprintf("'%s'", escaped))
-							case string:
-								escaped := strings.ReplaceAll(v, "\\", "\\\\")
-								escaped = strings.ReplaceAll(escaped, "'", "''")
-								escaped = strings.ReplaceAll(escaped, "\n", "\\n")
-								escaped = strings.ReplaceAll(escaped, "\r", "\\r")
-								valueStrings = append(valueStrings, fmt.Sprintf("'%s'", escaped))
-							case time.Time:
-								valueStrings = append(valueStrings, fmt.Sprintf("'%s'", v.Format("2006-01-02 15:04:05")))
-							default:
-								valueStrings = append(valueStrings, fmt.Sprintf("%v", v))
-							}
-						}
-					}
-
-					quotedTableForInsert, err := quoteIdentifier(table, DriverPostgres)
-					if err != nil {
-						dataRows.Close()
-						return apperror.NewErrorf("invalid table name").AddError(err)
-					}
-
-					insertStmt := fmt.Sprintf("INSERT INTO %s.%s (%s) VALUES (%s);\n",
-						quotedSchema, quotedTableForInsert,
-						strings.Join(colsList, ", "),
-						strings.Join(valueStrings, ", "))
-					_, err = backupFile.WriteString(insertStmt)
-					if err != nil {
-						dataRows.Close()
-						return apperror.NewErrorf("failed to write insert statement").AddError(err)
-					}
-				}
-			}
-			dataRows.Close()
-			_, err = backupFile.WriteString("\n")
-			if err != nil {
-				return apperror.NewErrorf("failed to write newline").AddError(err)
-			}
-		}
-
-		d.logger.Info().Msgf("database backup created: %s", path)
-		return nil
+		return d.backupPostgres(dbInstance, path, schema)
 
 	default:
 		return apperror.NewErrorf("unsupported database driver for backup: %v", d.driver)
@@ -1159,14 +832,38 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		}
 		defer func() { _ = backupFile.Close() }()
 
+		// SET NAMES and SET FOREIGN_KEY_CHECKS in the dump apply to one connection, so all
+		// statements have to run on the same one, not on whichever the pool hands out
+		conn, err := dbInstance.Conn(context.Background())
+		if err != nil {
+			return apperror.NewErrorf("failed to get a database connection").AddError(err)
+		}
+		defer func() { _ = conn.Close() }()
+
+		// Every statement is its own transaction otherwise, and each commit waits for the disk. The
+		// CREATE and DROP statements of the dump commit implicitly, so the rows of a table go in as
+		// one transaction.
+		if _, err := conn.ExecContext(context.Background(), "SET autocommit = 0"); err != nil {
+			return apperror.NewErrorf("failed to start the restore").AddError(err)
+		}
+		// The connection goes back to the pool, so it must not stay in this mode
+		defer func() {
+			_, _ = conn.ExecContext(context.Background(), "SET autocommit = 1")
+			_, _ = conn.ExecContext(context.Background(), "SET FOREIGN_KEY_CHECKS = 1")
+		}()
+
 		// Statements run as they are read, so the dump is never held in memory as a whole
 		err = forEachStatement(backupFile, func(stmt string) {
-			if _, err := dbInstance.Exec(stmt); err != nil {
+			if _, err := conn.ExecContext(context.Background(), stmt); err != nil {
 				d.logger.Warn().Err(err).Msgf("failed to execute statement: %s", stmt[:min(50, len(stmt))])
 			}
 		})
 		if err != nil {
 			return apperror.NewErrorf("failed to read backup file").AddError(err)
+		}
+
+		if _, err := conn.ExecContext(context.Background(), "COMMIT"); err != nil {
+			return apperror.NewErrorf("failed to commit the restore").AddError(err)
 		}
 
 		d.logger.Info().Msgf("database restored from backup: %s", backupPath)

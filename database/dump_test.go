@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // oldStatements is the algorithm Restore used before: split the whole dump and append line by line.
@@ -121,5 +122,87 @@ func TestForEachStatementVeryLongLine(t *testing.T) {
 	want, got := oldStatements(long), newStatements(t, long)
 	if !reflect.DeepEqual(want, got) {
 		t.Fatalf("a long line was read incorrectly: %d statements, lengths %d and %d", len(got), len(want[0]), len(got[0]))
+	}
+}
+
+func TestAppendMySQLValue(t *testing.T) {
+	when := time.Date(2026, 3, 4, 5, 6, 7, 123456000, time.UTC)
+	cases := []struct {
+		in   interface{}
+		want string
+	}{
+		{nil, "NULL"},
+		{"plain", "'plain'"},
+		{"it's", `'it\'s'`},
+		{"a\\b", `'a\\b'`},
+		{"line\r\nbreak", `'line\r\nbreak'`},
+		{"ctrl\x1az", `'ctrl\Zz'`},
+		{"café", "'café'"},
+		{[]byte("bytes"), "'bytes'"},
+		{[]byte{0, 1, 255}, "X'0001ff'"},
+		{"nul\x00inside", "X'6e756c00696e73696465'"},
+		{int64(-5), "-5"},
+		{uint64(7), "7"},
+		{1.5, "1.5"},
+		{true, "true"},
+		{when, "'2026-03-04 05:06:07.123456'"},
+		{time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC), "'2026-03-04 05:06:07'"},
+	}
+	for _, c := range cases {
+		if got := string(appendMySQLValue(nil, c.in)); got != c.want {
+			t.Errorf("appendMySQLValue(%#v) = %s, want %s", c.in, got, c.want)
+		}
+	}
+}
+
+func TestAppendPostgresValue(t *testing.T) {
+	cases := []struct {
+		in   interface{}
+		want string
+	}{
+		{nil, "NULL"},
+		{"plain", "E'plain'"},
+		{"it's", "E'it''s'"},
+		{"a\\b", `E'a\\b'`},
+		{"line\r\nbreak", `E'line\r\nbreak'`},
+		{[]byte{0, 1, 255}, `E'\\x0001ff'`},
+		{"nul\x00inside", `E'\\x6e756c00696e73696465'`},
+		{int64(42), "42"},
+		{2.25, "2.25"},
+		{false, "false"},
+		{time.Date(2026, 3, 4, 5, 6, 7, 500000000, time.FixedZone("x", 3600)), "'2026-03-04 05:06:07.5+01:00'"},
+	}
+	for _, c := range cases {
+		if got := string(appendPostgresValue(nil, c.in)); got != c.want {
+			t.Errorf("appendPostgresValue(%#v) = %s, want %s", c.in, got, c.want)
+		}
+	}
+}
+
+// A dump row never contains a raw newline, so the line based reader can not split a value.
+func TestDumpValuesStayOnOneLine(t *testing.T) {
+	nasty := "a\nb\r\nc;\n-- not a comment\n'"
+	for name, got := range map[string][]byte{
+		"mysql":    appendMySQLValue(nil, nasty),
+		"postgres": appendPostgresValue(nil, nasty),
+	} {
+		if strings.ContainsAny(string(got), "\r\n") {
+			t.Errorf("%s: %q holds a raw line break", name, got)
+		}
+	}
+}
+
+func TestRedactDSN(t *testing.T) {
+	cases := map[string]string{
+		"root:secret@tcp(127.0.0.1:3306)/db?parseTime=true":   "root:xxxxx@tcp(127.0.0.1:3306)/db?parseTime=true",
+		"postgres://user:secret@host:5432/db?sslmode=disable": "postgres://user:xxxxx@host:5432/db?sslmode=disable",
+		"postgres://user@host/db":                             "postgres://user@host/db",
+		"file:/data/app.db?_pragma=busy_timeout(5000)":        "file:/data/app.db?_pragma=busy_timeout(5000)",
+		"": "",
+	}
+	for in, want := range cases {
+		if got := redactDSN(in); got != want {
+			t.Errorf("redactDSN(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
