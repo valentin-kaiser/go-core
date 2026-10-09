@@ -37,6 +37,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/valentin-kaiser/go-core/flag"
 	"github.com/valentin-kaiser/go-core/i18n"
@@ -81,7 +83,7 @@ var (
 	}
 
 	// anonymous controls whether to use anonymous caller tracking
-	anonymous = false
+	anonymous atomic.Bool
 )
 
 // Error represents an application error with a stack trace and additional errors
@@ -416,7 +418,7 @@ func Where(level int) string {
 // When enabled, the trace will use package name and line number instead of full file path
 // This can help reduce noise in logs while still providing useful context
 func Anonymous(enable bool) {
-	anonymous = enable
+	anonymous.Store(enable)
 }
 
 // TraceError generates a stack TraceError for the error
@@ -428,17 +430,41 @@ func TraceError(e Error) []string {
 
 // Trace returns the caller location as a string in the format "file:line"
 func Trace(skip int) string {
-	pc, file, line, ok := runtime.Caller(skip)
-	if !ok {
+	// runtime.Callers counts the frame of Callers itself as 0, runtime.Caller counts the caller as 0
+	var pcs [1]uintptr
+	if runtime.Callers(skip+1, pcs[:]) == 0 {
 		return "unknown"
 	}
 
-	if anonymous {
-		if f := runtime.FuncForPC(pc); f != nil {
-			return f.Name() + ":" + strconv.Itoa(line)
+	// Turning a program counter into file, function and line is the expensive part and the
+	// answer never changes, so it is remembered per call site
+	key := traceKey{pc: pcs[0], anonymous: anonymous.Load()}
+	if cached, ok := traceCache.Load(key); ok {
+		if s, ok := cached.(string); ok {
+			return s
 		}
-		return "unknown"
 	}
 
-	return file + ":" + strconv.Itoa(line)
+	frame, _ := runtime.CallersFrames(pcs[:]).Next()
+	var s string
+	switch {
+	case key.anonymous && frame.Function != "":
+		s = frame.Function + ":" + strconv.Itoa(frame.Line)
+	case key.anonymous:
+		s = "unknown"
+	default:
+		s = frame.File + ":" + strconv.Itoa(frame.Line)
+	}
+	traceCache.Store(key, s)
+	return s
 }
+
+// traceKey identifies a cached trace entry
+type traceKey struct {
+	pc        uintptr
+	anonymous bool
+}
+
+// traceCache maps a call site to its trace text. It is bounded by the number of call sites
+// in the program that create errors.
+var traceCache sync.Map
