@@ -9,6 +9,9 @@ import (
 	"github.com/valentin-kaiser/go-core/queue"
 )
 
+// Nothing consumes the jobs, so the queue grows during the run and a large part of the time is
+// garbage collection and map growth, not the queue lock. BenchmarkMemoryQueueEnqueueDequeueParallel
+// below keeps the queue short and is the one to compare lock contention with.
 func BenchmarkMemoryQueueEnqueueParallel(b *testing.B) {
 	ctx := b.Context()
 	q := queue.NewMemoryQueue()

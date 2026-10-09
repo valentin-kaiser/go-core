@@ -17,6 +17,7 @@ type MemoryQueue struct {
 	mutex         sync.RWMutex
 	notifyC       chan struct{}
 	closed        bool
+	finished      finishedJobs
 }
 
 // NewMemoryQueue creates and initializes a new in-memory job queue with priority support.
@@ -33,7 +34,18 @@ func NewMemoryQueue() *MemoryQueue {
 		pendingJobs:   &jobHeap{},
 		scheduledJobs: make(map[string]*Job),
 		notifyC:       make(chan struct{}, 1),
+		finished:      newFinishedJobs(defaultFinishedRetention),
 	}
+}
+
+// WithFinishedRetention sets how many completed, failed and dead-lettered jobs the queue keeps
+// for GetJob and GetJobs (default 10000). Older ones are dropped from the index; GetStats
+// still counts them. Zero or less keeps every job, which grows without bound.
+func (mq *MemoryQueue) WithFinishedRetention(n int) *MemoryQueue {
+	mq.mutex.Lock()
+	defer mq.mutex.Unlock()
+	mq.finished = newFinishedJobs(n)
+	return mq
 }
 
 // Enqueue adds a job to the queue
@@ -158,6 +170,7 @@ func (mq *MemoryQueue) UpdateJob(_ context.Context, job *Job) error {
 		mq.scheduledJobs[job.ID] = job
 	case StatusCompleted, StatusFailed, StatusDeadLetter:
 		delete(mq.scheduledJobs, job.ID)
+		mq.finished.record(mq.jobs, job)
 	}
 
 	return nil
@@ -238,6 +251,8 @@ func (mq *MemoryQueue) GetStats(_ context.Context) (*Stats, error) {
 			stats.DeadLetter++
 		}
 	}
+
+	mq.finished.addTo(stats)
 
 	return stats, nil
 }
