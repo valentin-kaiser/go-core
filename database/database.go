@@ -540,8 +540,19 @@ func (d *Database[Q]) Connect(interval time.Duration, dsn string) {
 					}
 
 					d.dbMutex.Lock()
+					replaced := d.db
 					d.db = instance
 					d.dbMutex.Unlock()
+
+					// The pool being replaced (a reconnect after a configuration change or a
+					// failed health check) is no longer reachable through the handle, so close
+					// it: otherwise its idle connections and opener goroutine live until exit,
+					// once per reconnect. Queries already running on it finish normally.
+					if replaced != nil && replaced != instance {
+						if err := replaced.Close(); err != nil {
+							d.logger.Warn().Err(err).Msg("failed to close replaced connection pool")
+						}
+					}
 
 					d.handlerMutex.Lock()
 					handlers := make([]func(db *sql.DB) error, len(d.onConnectHandler))
