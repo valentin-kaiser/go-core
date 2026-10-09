@@ -35,6 +35,7 @@ import (
 	"context"
 	"fmt"
 	"runtime"
+	"strconv"
 	"strings"
 
 	"github.com/valentin-kaiser/go-core/flag"
@@ -434,10 +435,10 @@ func Trace(skip int) string {
 
 	if anonymous {
 		if f := runtime.FuncForPC(pc); f != nil {
-			return fmt.Sprintf("%v:%v", f.Name(), line)
+			return f.Name() + ":" + strconv.Itoa(line)
 		}
 		return "unknown"
 	}
 
-	return fmt.Sprintf("%s:%d", file, line)
+	return file + ":" + strconv.Itoa(line)
 }
