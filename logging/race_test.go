@@ -2,6 +2,7 @@ package logging_test
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"log"
 	"strings"
@@ -145,5 +146,18 @@ func TestFieldOutputMatchesInterface(t *testing.T) {
 		if typed.String() != generic.String() {
 			t.Errorf("%T: typed %q, generic %q", v, typed.String(), generic.String())
 		}
+	}
+}
+
+// The standard adapter's line format must stay as it was while avoiding fmt for common values.
+func TestStandardAdapterLineFormat(t *testing.T) {
+	var buf bytes.Buffer
+	a := logging.NewStandardAdapterWithLogger(log.New(&buf, "", 0)).SetLevel(logging.InfoLevel).WithPackage("p")
+	err := errors.New("boom")
+	a.Warn().Field("s", "text").Field("i", 42).Field("u", uint64(7)).Field("b", true).Field("f", 1.5).
+		Field("st", time.Second).Field("sl", []int{1, 2}).Err(err).Msg("hello")
+	want := "[WARN] hello pkg=p s=text i=42 u=7 b=true f=1.5 st=1s sl=[1 2] error=boom\n"
+	if buf.String() != want {
+		t.Fatalf("got  %q\nwant %q", buf.String(), want)
 	}
 }

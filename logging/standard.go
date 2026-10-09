@@ -3,6 +3,7 @@ package logging
 import (
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync/atomic"
 )
@@ -90,34 +91,99 @@ func (e *StandardEvent) shouldLog() bool {
 
 // formatMessage formats the message with level, fields, and error
 func (e *StandardEvent) formatMessage(msg string) string {
-	var parts []string
+	var b strings.Builder
+	b.Grow(len(msg) + 48 + 24*len(e.fields))
 
-	// Add level prefix
-	parts = append(parts, fmt.Sprintf("[%s]", strings.ToUpper(e.level.String())))
+	// Level prefix
+	b.WriteByte('[')
+	b.WriteString(upperLevelName(e.level))
+	b.WriteByte(']')
 
 	if e.caller != "" {
-		parts = append(parts, e.caller+" > ")
+		b.WriteByte(' ')
+		b.WriteString(e.caller)
+		b.WriteString(" > ")
 	}
 
-	// Add the main message
-	parts = append(parts, msg)
+	// The main message
+	b.WriteByte(' ')
+	b.WriteString(msg)
 
-	// Add package name if set
+	// Package name if set
 	if e.adapter.pkg != "" {
-		parts = append(parts, "pkg="+e.adapter.pkg)
+		b.WriteString(" pkg=")
+		b.WriteString(e.adapter.pkg)
 	}
 
-	// Add fields
 	for _, field := range e.fields {
-		parts = append(parts, field.Key+"="+fmt.Sprintf("%v", field.Value))
+		b.WriteByte(' ')
+		b.WriteString(field.Key)
+		b.WriteByte('=')
+		writeValue(&b, field.Value)
 	}
 
-	// Add error if present
 	if e.err != nil {
-		parts = append(parts, "error="+fmt.Sprintf("%v", e.err))
+		b.WriteString(" error=")
+		writeValue(&b, e.err)
 	}
 
-	return strings.Join(parts, " ")
+	return b.String()
+}
+
+// upperLevelName returns the upper case name of the level without allocating
+func upperLevelName(l Level) string {
+	switch l {
+	case VerboseLevel:
+		return "VERBOSE"
+	case TraceLevel:
+		return "TRACE"
+	case DebugLevel:
+		return "DEBUG"
+	case InfoLevel:
+		return "INFO"
+	case WarnLevel:
+		return "WARN"
+	case ErrorLevel:
+		return "ERROR"
+	case FatalLevel:
+		return "FATAL"
+	case PanicLevel:
+		return "PANIC"
+	case DisabledLevel:
+		return "DISABLED"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// writeValue writes the value like fmt.Sprintf("%v") would, without going through fmt for
+// the common types
+func writeValue(b *strings.Builder, v interface{}) {
+	var scratch [32]byte
+	switch x := v.(type) {
+	case string:
+		b.WriteString(x)
+	case int:
+		b.Write(strconv.AppendInt(scratch[:0], int64(x), 10))
+	case int64:
+		b.Write(strconv.AppendInt(scratch[:0], x, 10))
+	case int32:
+		b.Write(strconv.AppendInt(scratch[:0], int64(x), 10))
+	case uint:
+		b.Write(strconv.AppendUint(scratch[:0], uint64(x), 10))
+	case uint64:
+		b.Write(strconv.AppendUint(scratch[:0], x, 10))
+	case uint32:
+		b.Write(strconv.AppendUint(scratch[:0], uint64(x), 10))
+	case bool:
+		b.Write(strconv.AppendBool(scratch[:0], x))
+	case float64:
+		b.Write(strconv.AppendFloat(scratch[:0], x, 'g', -1, 64))
+	case error:
+		b.WriteString(x.Error())
+	default:
+		fmt.Fprintf(b, "%v", v)
+	}
 }
 
 // SetLevel sets the log level
