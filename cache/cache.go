@@ -67,7 +67,9 @@ package cache
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -209,6 +211,11 @@ type Config struct {
 	EnableStats     bool          `json:"enable_stats"`
 	EnableEvents    bool          `json:"enable_events"`
 	Namespace       string        `json:"namespace"`
+	// Shards splits a MemoryCache into this many parts with their own locks. 0 or 1 keeps one
+	// part, which is an exact LRU; more parts let concurrent writers run in parallel but make
+	// eviction approximate: MaxSize is divided between the parts and a full part evicts its own
+	// least recently used item.
+	Shards int `json:"shards,omitempty"`
 	Serializer      Serializer    `json:"-"`
 	EventHandler    EventHandler  `json:"-"`
 }
@@ -235,6 +242,61 @@ func (s *JSONSerializer) Serialize(value interface{}) ([]byte, error) {
 // Deserialize deserializes JSON data into the destination
 func (s *JSONSerializer) Deserialize(data []byte, dest interface{}) error {
 	return json.Unmarshal(data, dest)
+}
+
+// InMemorySerializer is implemented by serializers that let an in-process cache keep values as
+// they are, without encoding them. MemoryCache uses it when its serializer implements it.
+type InMemorySerializer interface {
+	Serializer
+	// Keep returns what the cache stores for the value
+	Keep(value interface{}) (interface{}, error)
+	// Restore copies a stored value into dest, which is a pointer
+	Restore(kept interface{}, dest interface{}) error
+}
+
+// NativeSerializer keeps values in memory as Go values instead of JSON, which makes reads of a
+// MemoryCache several times faster. Serialize and Deserialize are still JSON, so the same
+// serializer works for Redis or the second level of a TieredCache.
+//
+// Values are not copied deeply: a struct is copied by value, but maps, slices and pointers inside
+// it are shared with the caller and with every reader. Treat cached values as read-only, or
+// use the JSON serializer, whose reads each get their own copy. The size of an item is not
+// tracked, so GetMemoryUsage reports 0 for a cache that uses this serializer.
+type NativeSerializer struct{ JSONSerializer }
+
+// Keep stores the value; a pointer is stored as the value it points to
+func (s *NativeSerializer) Keep(value interface{}) (interface{}, error) {
+	rv := reflect.ValueOf(value)
+	if rv.Kind() == reflect.Ptr {
+		if rv.IsNil() {
+			return nil, nil
+		}
+		return rv.Elem().Interface(), nil
+	}
+	return value, nil
+}
+
+// Restore assigns the stored value to dest. When the types do not match it falls back to a JSON round trip.
+func (s *NativeSerializer) Restore(kept interface{}, dest interface{}) error {
+	dv := reflect.ValueOf(dest)
+	if dv.Kind() != reflect.Ptr || dv.IsNil() {
+		return errors.New("destination must be a non-nil pointer")
+	}
+	dv = dv.Elem()
+	if kept == nil {
+		dv.Set(reflect.Zero(dv.Type()))
+		return nil
+	}
+	if kv := reflect.ValueOf(kept); kv.Type().AssignableTo(dv.Type()) {
+		dv.Set(kv)
+		return nil
+	}
+
+	data, err := s.Serialize(kept)
+	if err != nil {
+		return err
+	}
+	return s.Deserialize(data, dest)
 }
 
 // NoOpSerializer implements no serialization (for already serialized data)

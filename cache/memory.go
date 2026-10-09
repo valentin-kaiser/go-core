@@ -15,11 +15,23 @@ import (
 type MemoryCache struct {
 	*BaseCache
 
-	items     map[string]*list.Element
-	lruList   *list.List
-	mutex     sync.RWMutex
+	// shards split the keys, each with its own lock and LRU list. With Config.Shards of 0 or 1
+	// there is one shard and the cache behaves as one exact LRU.
+	shards    []*memShard
+	native    InMemorySerializer // set when the serializer keeps values without encoding them
 	stopChan  chan struct{}
 	cleanupWg sync.WaitGroup
+}
+
+// memShard is one slice of the key space
+type memShard struct {
+	items   map[string]*list.Element
+	lruList *list.List
+	mutex   sync.RWMutex
+}
+
+func newMemShard() *memShard {
+	return &memShard{items: make(map[string]*list.Element), lruList: list.New()}
 }
 
 // memoryItem represents an item stored in memory cache
@@ -51,6 +63,10 @@ func NewMemoryCache() *MemoryCache {
 // This allows fine-tuning of cache behavior including size limits, TTL settings,
 // LRU eviction policies, cleanup intervals, and serialization options.
 //
+// Config.Shards splits the cache into that many independent parts, each with its own lock, so
+// concurrent writers do not wait for each other. MaxSize is then divided between the shards, and
+// eviction picks the least recently used item of the shard that is full, not of the whole cache.
+//
 // Example usage:
 //
 //	config := cache.Config{
@@ -61,12 +77,16 @@ func NewMemoryCache() *MemoryCache {
 //	}
 //	cache := cache.NewMemoryCacheWithConfig(config)
 func NewMemoryCacheWithConfig(config Config) *MemoryCache {
+	shards := max(config.Shards, 1)
 	mc := &MemoryCache{
 		BaseCache: NewBaseCache(config),
-		items:     make(map[string]*list.Element),
-		lruList:   list.New(),
+		shards:    make([]*memShard, shards),
 		stopChan:  make(chan struct{}),
 	}
+	for i := range mc.shards {
+		mc.shards[i] = newMemShard()
+	}
+	mc.native, _ = mc.config.Serializer.(InMemorySerializer)
 
 	// Start cleanup goroutine if cleanup interval is set
 	if config.CleanupInterval > 0 {
@@ -74,6 +94,29 @@ func NewMemoryCacheWithConfig(config Config) *MemoryCache {
 	}
 
 	return mc
+}
+
+// shardFor returns the shard that holds the key
+func (mc *MemoryCache) shardFor(formattedKey string) *memShard {
+	if len(mc.shards) == 1 {
+		return mc.shards[0]
+	}
+	// FNV-1a
+	h := uint32(2166136261)
+	for i := 0; i < len(formattedKey); i++ {
+		h ^= uint32(formattedKey[i])
+		h *= 16777619
+	}
+	return mc.shards[h%uint32(len(mc.shards))]
+}
+
+// shardLimit is the number of items one shard may hold, or 0 for no limit
+func (mc *MemoryCache) shardLimit() int64 {
+	if mc.config.MaxSize <= 0 {
+		return 0
+	}
+	n := int64(len(mc.shards))
+	return (mc.config.MaxSize + n - 1) / n
 }
 
 // WithMaxSize sets the maximum number of items in the cache
@@ -111,11 +154,12 @@ func (mc *MemoryCache) WithEventHandler(handler EventHandler) *MemoryCache {
 // Get retrieves a value from the cache
 func (mc *MemoryCache) Get(_ context.Context, key string, dest interface{}) (bool, error) {
 	formattedKey := mc.formatKey(key)
+	sh := mc.shardFor(formattedKey)
 
-	mc.mutex.RLock()
-	element, exists := mc.items[formattedKey]
+	sh.mutex.RLock()
+	element, exists := sh.items[formattedKey]
 	if !exists {
-		mc.mutex.RUnlock()
+		sh.mutex.RUnlock()
 		mc.recordMiss()
 		mc.emitEvent(EventGet, key, nil, nil)
 		return false, nil
@@ -123,7 +167,7 @@ func (mc *MemoryCache) Get(_ context.Context, key string, dest interface{}) (boo
 
 	memItem, ok := element.Value.(*memoryItem)
 	if !ok {
-		mc.mutex.RUnlock()
+		sh.mutex.RUnlock()
 		mc.recordMiss()
 		mc.emitEvent(EventGet, key, nil, nil)
 		return false, NewCacheError("get", key, errors.New("invalid cache item type"))
@@ -133,25 +177,30 @@ func (mc *MemoryCache) Get(_ context.Context, key string, dest interface{}) (boo
 
 	// Check if item has expired
 	if !item.ExpiresAt.IsZero() && now.After(item.ExpiresAt) {
-		mc.mutex.RUnlock()
-		mc.removeIfExpired(formattedKey)
+		sh.mutex.RUnlock()
+		mc.removeIfExpired(sh, formattedKey)
 		mc.recordMiss()
 		mc.emitEvent(EventExpire, key, nil, nil)
 		return false, nil
 	}
 
-	data, ok := item.Value.([]byte)
-	mc.mutex.RUnlock()
+	stored := item.Value
+	sh.mutex.RUnlock()
 
 	// Remember the access for the LRU order
 	memItem.accessed.Store(now.UnixNano())
 
-	// Deserialize the value
-	if !ok {
-		mc.recordMiss()
-		return false, NewCacheError("get", key, errors.New("invalid item value type"))
+	var err error
+	if mc.native != nil {
+		err = mc.native.Restore(stored, dest)
+	} else {
+		data, isBytes := stored.([]byte)
+		if !isBytes {
+			mc.recordMiss()
+			return false, NewCacheError("get", key, errors.New("invalid item value type"))
+		}
+		err = mc.config.Serializer.Deserialize(data, dest)
 	}
-	err := mc.config.Serializer.Deserialize(data, dest)
 	if err != nil {
 		mc.recordError(err)
 		mc.emitEvent(EventGet, key, nil, err)
@@ -169,19 +218,27 @@ func (mc *MemoryCache) Set(_ context.Context, key string, value interface{}, ttl
 	effectiveTTL := mc.calculateTTL(ttl)
 
 	// Serialize the value
-	data, err := mc.config.Serializer.Serialize(value)
+	var stored interface{}
+	var dataSize int64
+	var err error
+	if mc.native != nil {
+		stored, err = mc.native.Keep(value)
+	} else {
+		var data []byte
+		data, err = mc.config.Serializer.Serialize(value)
+		stored, dataSize = data, int64(len(data))
+	}
 	if err != nil {
 		mc.recordError(err)
 		mc.emitEvent(EventSet, key, value, err)
 		return NewCacheError("set", key, err)
 	}
 
-	dataSize := int64(len(data))
 	now := time.Now()
 
 	item := &Item{
 		Key:       formattedKey,
-		Value:     data,
+		Value:     stored,
 		CreatedAt: now,
 		UpdatedAt: now,
 		AccessAt:  now,
@@ -200,11 +257,12 @@ func (mc *MemoryCache) Set(_ context.Context, key string, value interface{}, ttl
 		dataSize: dataSize,
 	}
 
-	mc.mutex.Lock()
-	defer mc.mutex.Unlock()
+	sh := mc.shardFor(formattedKey)
+	sh.mutex.Lock()
+	defer sh.mutex.Unlock()
 
 	// Check if key already exists
-	element, exists := mc.items[formattedKey]
+	element, exists := sh.items[formattedKey]
 	if exists {
 		// Update existing item
 		oldMemItem, ok := element.Value.(*memoryItem)
@@ -213,34 +271,34 @@ func (mc *MemoryCache) Set(_ context.Context, key string, value interface{}, ttl
 		}
 		element.Value = memItem
 		if mc.config.EnableLRU {
-			mc.lruList.MoveToFront(element)
+			sh.lruList.MoveToFront(element)
 		}
 
-		// Update memory usage
+		// Update memory usage and count the set
 		mc.updateStats(func(s *Stats) {
 			s.Memory = s.Memory - oldMemItem.dataSize + dataSize
+			s.Sets++
 		})
 
-		mc.updateStats(func(s *Stats) { s.Sets++ })
 		mc.emitEvent(EventSet, key, value, nil)
 		return nil
 	}
 
 	// Add new item
-	element = mc.lruList.PushFront(memItem)
-	mc.items[formattedKey] = element
+	element = sh.lruList.PushFront(memItem)
+	sh.items[formattedKey] = element
 
 	mc.updateStats(func(s *Stats) {
 		s.Size++
 		s.Memory += dataSize
+		s.Sets++
 	})
 
 	// Check if we need to evict items
-	if mc.config.MaxSize > 0 && mc.stats.Size > mc.config.MaxSize {
-		mc.evictLRU()
+	if limit := mc.shardLimit(); limit > 0 && int64(len(sh.items)) > limit {
+		mc.evictLRU(sh)
 	}
 
-	mc.updateStats(func(s *Stats) { s.Sets++ })
 	mc.emitEvent(EventSet, key, value, nil)
 	return nil
 }
@@ -248,16 +306,17 @@ func (mc *MemoryCache) Set(_ context.Context, key string, value interface{}, ttl
 // Delete removes a value from the cache
 func (mc *MemoryCache) Delete(_ context.Context, key string) error {
 	formattedKey := mc.formatKey(key)
+	sh := mc.shardFor(formattedKey)
 
-	mc.mutex.Lock()
-	defer mc.mutex.Unlock()
+	sh.mutex.Lock()
+	defer sh.mutex.Unlock()
 
-	element, exists := mc.items[formattedKey]
+	element, exists := sh.items[formattedKey]
 	if !exists {
 		return nil // Key doesn't exist, consider it a successful deletion
 	}
 
-	mc.removeElement(element, formattedKey)
+	mc.removeElement(sh, element, formattedKey)
 	mc.updateStats(func(s *Stats) { s.Deletes++ })
 	mc.emitEvent(EventDelete, key, nil, nil)
 	return nil
@@ -265,12 +324,12 @@ func (mc *MemoryCache) Delete(_ context.Context, key string) error {
 
 // removeIfExpired removes the key if it is still expired. The caller must not hold the lock:
 // the entry may have been removed or replaced by a fresh value since it was seen.
-func (mc *MemoryCache) removeIfExpired(formattedKey string) {
-	mc.mutex.Lock()
-	defer mc.mutex.Unlock()
-	if element, exists := mc.items[formattedKey]; exists {
+func (mc *MemoryCache) removeIfExpired(sh *memShard, formattedKey string) {
+	sh.mutex.Lock()
+	defer sh.mutex.Unlock()
+	if element, exists := sh.items[formattedKey]; exists {
 		if memItem, ok := element.Value.(*memoryItem); ok && memItem.item.IsExpired() {
-			mc.removeElement(element, formattedKey)
+			mc.removeElement(sh, element, formattedKey)
 		}
 	}
 }
@@ -278,34 +337,35 @@ func (mc *MemoryCache) removeIfExpired(formattedKey string) {
 // Exists checks if a key exists in the cache
 func (mc *MemoryCache) Exists(_ context.Context, key string) (bool, error) {
 	formattedKey := mc.formatKey(key)
+	sh := mc.shardFor(formattedKey)
 
-	mc.mutex.RLock()
-	element, exists := mc.items[formattedKey]
+	sh.mutex.RLock()
+	element, exists := sh.items[formattedKey]
 	if !exists {
-		mc.mutex.RUnlock()
+		sh.mutex.RUnlock()
 		return false, nil
 	}
 
 	memItem, ok := element.Value.(*memoryItem)
 	if !ok {
-		mc.mutex.RUnlock()
+		sh.mutex.RUnlock()
 		return false, NewCacheError("exists", key, errors.New("invalid item type"))
 	}
 	item := memItem.item
 
 	// Check if item has expired
 	if !item.IsExpired() {
-		mc.mutex.RUnlock()
+		sh.mutex.RUnlock()
 		return true, nil
 	}
 
-	mc.mutex.RUnlock()
+	sh.mutex.RUnlock()
 
 	// Remove the expired item. The lock was released, so look the key up again: another
 	// goroutine may have removed it or stored a fresh value under the same key.
-	mc.mutex.Lock()
-	defer mc.mutex.Unlock()
-	current, exists := mc.items[formattedKey]
+	sh.mutex.Lock()
+	defer sh.mutex.Unlock()
+	current, exists := sh.items[formattedKey]
 	if !exists {
 		return false, nil
 	}
@@ -316,17 +376,18 @@ func (mc *MemoryCache) Exists(_ context.Context, key string) (bool, error) {
 	if !currentItem.item.IsExpired() {
 		return true, nil
 	}
-	mc.removeElement(current, formattedKey)
+	mc.removeElement(sh, current, formattedKey)
 	return false, nil
 }
 
 // Clear removes all entries from the cache
 func (mc *MemoryCache) Clear(_ context.Context) error {
-	mc.mutex.Lock()
-	defer mc.mutex.Unlock()
-
-	mc.items = make(map[string]*list.Element)
-	mc.lruList = list.New()
+	for _, sh := range mc.shards {
+		sh.mutex.Lock()
+		sh.items = make(map[string]*list.Element)
+		sh.lruList = list.New()
+		sh.mutex.Unlock()
+	}
 
 	mc.updateStats(func(s *Stats) {
 		s.Size = 0
@@ -339,7 +400,7 @@ func (mc *MemoryCache) Clear(_ context.Context) error {
 
 // GetMulti retrieves multiple values from the cache
 func (mc *MemoryCache) GetMulti(ctx context.Context, keys []string) (map[string]interface{}, error) {
-	result := make(map[string]interface{})
+	result := make(map[string]interface{}, len(keys))
 
 	for _, key := range keys {
 		var value interface{}
@@ -380,11 +441,12 @@ func (mc *MemoryCache) DeleteMulti(ctx context.Context, keys []string) error {
 // GetTTL returns the remaining TTL for a key
 func (mc *MemoryCache) GetTTL(_ context.Context, key string) (time.Duration, error) {
 	formattedKey := mc.formatKey(key)
+	sh := mc.shardFor(formattedKey)
 
-	mc.mutex.RLock()
-	defer mc.mutex.RUnlock()
+	sh.mutex.RLock()
+	defer sh.mutex.RUnlock()
 
-	element, exists := mc.items[formattedKey]
+	element, exists := sh.items[formattedKey]
 	if !exists {
 		return 0, apperror.NewError("key not found")
 	}
@@ -409,11 +471,12 @@ func (mc *MemoryCache) GetTTL(_ context.Context, key string) (time.Duration, err
 // SetTTL updates the TTL for an existing key
 func (mc *MemoryCache) SetTTL(_ context.Context, key string, ttl time.Duration) error {
 	formattedKey := mc.formatKey(key)
+	sh := mc.shardFor(formattedKey)
 
-	mc.mutex.Lock()
-	defer mc.mutex.Unlock()
+	sh.mutex.Lock()
+	defer sh.mutex.Unlock()
 
-	element, exists := mc.items[formattedKey]
+	element, exists := sh.items[formattedKey]
 	if !exists {
 		return apperror.NewError("key not found")
 	}
@@ -443,36 +506,43 @@ func (mc *MemoryCache) Close() error {
 
 // GetKeys returns all keys in the cache (useful for debugging)
 func (mc *MemoryCache) GetKeys() []string {
-	mc.mutex.RLock()
-	defer mc.mutex.RUnlock()
-
-	keys := make([]string, 0, len(mc.items))
-	for key := range mc.items {
-		keys = append(keys, key)
+	keys := make([]string, 0, mc.GetSize())
+	for _, sh := range mc.shards {
+		sh.mutex.RLock()
+		for key := range sh.items {
+			keys = append(keys, key)
+		}
+		sh.mutex.RUnlock()
 	}
 	return keys
 }
 
 // GetSize returns the current number of items in the cache
 func (mc *MemoryCache) GetSize() int64 {
-	mc.mutex.RLock()
-	defer mc.mutex.RUnlock()
-	return int64(len(mc.items))
+	var size int64
+	for _, sh := range mc.shards {
+		sh.mutex.RLock()
+		size += int64(len(sh.items))
+		sh.mutex.RUnlock()
+	}
+	return size
 }
 
 // GetMemoryUsage returns the current memory usage in bytes
 func (mc *MemoryCache) GetMemoryUsage() int64 {
+	mc.BaseCache.mutex.RLock()
+	defer mc.BaseCache.mutex.RUnlock()
 	return mc.stats.Memory
 }
 
-// removeElement removes an element from the cache (must be called with lock held)
-func (mc *MemoryCache) removeElement(element *list.Element, key string) {
+// removeElement removes an element from the shard (must be called with the shard lock held)
+func (mc *MemoryCache) removeElement(sh *memShard, element *list.Element, key string) {
 	memItem, ok := element.Value.(*memoryItem)
 	if !ok {
 		return // Skip if invalid type
 	}
-	delete(mc.items, key)
-	mc.lruList.Remove(element)
+	delete(sh.items, key)
+	sh.lruList.Remove(element)
 
 	mc.updateStats(func(s *Stats) {
 		s.Size--
@@ -480,9 +550,9 @@ func (mc *MemoryCache) removeElement(element *list.Element, key string) {
 	})
 }
 
-// evictLRU evicts the least recently used item (must be called with lock held)
-func (mc *MemoryCache) evictLRU() {
-	if !mc.config.EnableLRU || mc.lruList.Len() == 0 {
+// evictLRU evicts the least recently used item of the shard (must be called with the shard lock held)
+func (mc *MemoryCache) evictLRU(sh *memShard) {
+	if !mc.config.EnableLRU || sh.lruList.Len() == 0 {
 		return
 	}
 
@@ -490,8 +560,8 @@ func (mc *MemoryCache) evictLRU() {
 	// the front instead of being evicted. Each item is moved at most once per call.
 	var memItem *memoryItem
 	var element *list.Element
-	for i, n := 0, mc.lruList.Len(); i < n; i++ {
-		element = mc.lruList.Back()
+	for i, n := 0, sh.lruList.Len(); i < n; i++ {
+		element = sh.lruList.Back()
 		candidate, ok := element.Value.(*memoryItem)
 		if !ok {
 			return // Skip if invalid type
@@ -503,12 +573,12 @@ func (mc *MemoryCache) evictLRU() {
 		}
 		memItem.promoted = accessed
 		memItem.item.AccessAt = time.Unix(0, accessed)
-		mc.lruList.MoveToFront(element)
+		sh.lruList.MoveToFront(element)
 		memItem, element = nil, nil
 	}
 	if element == nil {
 		// Every item was read recently: evict the oldest one
-		element = mc.lruList.Back()
+		element = sh.lruList.Back()
 		candidate, ok := element.Value.(*memoryItem)
 		if !ok {
 			return
@@ -517,7 +587,7 @@ func (mc *MemoryCache) evictLRU() {
 	}
 
 	key := memItem.item.Key
-	mc.removeElement(element, key)
+	mc.removeElement(sh, element, key)
 
 	mc.updateStats(func(s *Stats) { s.Evictions++ })
 	mc.emitEvent(EventEvict, key, nil, nil)
@@ -542,16 +612,22 @@ func (mc *MemoryCache) startCleanup() {
 	}()
 }
 
-// cleanupExpired removes expired items from the cache
+// cleanupExpired removes expired items from the cache, one shard at a time
 func (mc *MemoryCache) cleanupExpired() {
-	mc.mutex.Lock()
-	defer mc.mutex.Unlock()
+	for _, sh := range mc.shards {
+		mc.cleanupShard(sh)
+	}
+}
+
+func (mc *MemoryCache) cleanupShard(sh *memShard) {
+	sh.mutex.Lock()
+	defer sh.mutex.Unlock()
 
 	now := time.Now()
 	var expiredKeys []string
 
 	// Find expired items
-	for key, element := range mc.items {
+	for key, element := range sh.items {
 		memItem, ok := element.Value.(*memoryItem)
 		if !ok {
 			continue
@@ -567,12 +643,12 @@ func (mc *MemoryCache) cleanupExpired() {
 
 	// Remove expired items
 	for _, key := range expiredKeys {
-		element, exists := mc.items[key]
+		element, exists := sh.items[key]
 		if !exists {
 			continue
 		}
 
-		mc.removeElement(element, key)
+		mc.removeElement(sh, element, key)
 		mc.emitEvent(EventExpire, key, nil, nil)
 	}
 }
