@@ -76,7 +76,7 @@ func NewZerologAdapterWithLogger(logger zerolog.Logger) Adapter {
 // WithConsole adds a console writer to the logger if in interactive mode
 func (z *ZerologAdapter) WithConsole() *ZerologAdapter {
 	if Interactive() {
-		return z.With(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339})
+		return z.With(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339, NoColor: !terminal()})
 	}
 	return z
 }
