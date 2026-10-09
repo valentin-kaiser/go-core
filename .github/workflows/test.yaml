@@ -22,7 +22,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.24.x
+          go-version-file: go.mod
 
       - name: Download dependencies
         run: go mod download
@@ -40,7 +40,7 @@ jobs:
           go test -v $packages
 
       - name: Run race detector on concurrency-sensitive packages
-        run: go test -race ./logging/... ./cache ./config ./web ./i18n ./flag ./security ./version
+        run: go test -race ./logging/... ./cache ./config ./web/... ./i18n ./flag ./security ./version ./apperror ./queue ./database ./etcd
 
       - name: Run go vet
         run: go vet ./...
@@ -63,7 +63,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.24.x
+          go-version-file: go.mod
 
       - name: Download dependencies
         run: go mod download
@@ -84,7 +84,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: 1.24.x
+          go-version-file: go.mod
 
       - name: Download dependencies
         run: go mod download
