@@ -404,6 +404,22 @@ func (c codec) readJSONField(m protoreflect.Message, fd protoreflect.FieldDescri
 	return nil
 }
 
+// simpleString returns the contents of a JSON string made only of printable ASCII without escapes,
+// which is nearly all identifiers, numbers sent as strings and enum names. Anything else goes
+// through encoding/json, which handles escapes and invalid UTF-8.
+func simpleString(raw []byte) (string, bool) {
+	if len(raw) < 2 || raw[0] != '"' || raw[len(raw)-1] != '"' {
+		return "", false
+	}
+	body := raw[1 : len(raw)-1]
+	for _, b := range body {
+		if b < 0x20 || b > 0x7e || b == '"' || b == '\\' {
+			return "", false
+		}
+	}
+	return string(body), true
+}
+
 func (c codec) readJSONValue(fd protoreflect.FieldDescriptor, raw []byte, cur protoreflect.Value, depth int) (protoreflect.Value, error) {
 	if fd.Message() != nil {
 		return cur, c.readJSON(raw, cur.Message(), depth+1)
@@ -415,7 +431,9 @@ func (c codec) readJSONValue(fd protoreflect.FieldDescriptor, raw []byte, cur pr
 	var text string
 	switch raw[0] {
 	case '"':
-		if err := json.Unmarshal(raw, &text); err != nil {
+		if s, ok := simpleString(raw); ok {
+			text = s
+		} else if err := json.Unmarshal(raw, &text); err != nil {
 			return protoreflect.Value{}, err
 		}
 	case '{', '[':
