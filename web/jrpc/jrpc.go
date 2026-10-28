@@ -129,7 +129,7 @@ const (
 	ContextKeyWebSocketConn ContextKey = "websocket"
 )
 
-// Service implements the RTLS-Suite API server with support for both
+// Service implements the API server with support for both
 // HTTP and WebSocket endpoints. It provides automatic method dispatch,
 // protocol buffer message handling, and context enrichment.
 type Service struct {
