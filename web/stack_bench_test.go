@@ -44,7 +44,9 @@ func runStack(b *testing.B, s *Server, acceptEncoding string) {
 
 // A response of about 10 KB through the router with the log, security header and CORS middlewares
 func BenchmarkStackPlain(b *testing.B) {
-	s := benchStack(b, func(s *Server) *Server { return s.WithLog().WithSecurityHeaders().WithCORSHeaders(&CORSConfig{AllowOrigin: "*"}) })
+	s := benchStack(b, func(s *Server) *Server {
+		return s.WithLog().WithSecurityHeaders().WithCORSHeaders(&CORSConfig{AllowOrigin: "*"})
+	})
 	runStack(b, s, "")
 }
 

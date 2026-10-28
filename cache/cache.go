@@ -216,9 +216,9 @@ type Config struct {
 	// eviction approximate: MaxSize is divided exactly between the parts (so the cache never holds
 	// more than MaxSize items) and a full part evicts its own least recently used item. With a
 	// MaxSize below Shards, some parts hold nothing.
-	Shards int `json:"shards,omitempty"`
-	Serializer      Serializer    `json:"-"`
-	EventHandler    EventHandler  `json:"-"`
+	Shards       int          `json:"shards,omitempty"`
+	Serializer   Serializer   `json:"-"`
+	EventHandler EventHandler `json:"-"`
 }
 
 // Changed checks if the cache configuration has changed compared to another configuration.
