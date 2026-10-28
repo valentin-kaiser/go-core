@@ -7,7 +7,7 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
-// Wrap-at-every-return is the pattern across bleep, so the cost that matters is
+// Wrap-at-every-return is a common pattern, so the cost that matters is
 // a chain of wraps, not a single one.
 
 func wrapChain(depth int, base error) error {

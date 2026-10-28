@@ -32,11 +32,11 @@ type ResponseWriter struct {
 
 func newResponseWriter(w http.ResponseWriter, r *http.Request) *ResponseWriter {
 	return &ResponseWriter{
-		w:       w,
-		r:       r,
-		status:  http.StatusOK, // Default status code
+		w:      w,
+		r:      r,
+		status: http.StatusOK, // Default status code
 		// header and history are allocated on first use; most responses never need history
-		start:   time.Now(),
+		start: time.Now(),
 	}
 }
 

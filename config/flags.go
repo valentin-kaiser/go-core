@@ -235,13 +235,13 @@ func (m *manager) parseStructTags(v reflect.Value, labelBase string) error {
 // kebabCase converts a string to kebab-case (dash-separated lowercase)
 // Example: "ApplicationName" -> "application-name"
 // Handles acronyms properly: "HTTPPort" -> "http-port", "ARCHost" -> "arc-host"
-// Handles dot-separated paths: "RTLS.ARCHost" -> "rtls.arc-host"
+// Handles dot-separated paths: "Server.ARCHost" -> "server.arc-host"
 func kebabCase(s string) string {
 	if s == "" {
 		return s
 	}
 
-	// Handle dot-separated segments (e.g., "RTLS.ARCHost")
+	// Handle dot-separated segments (e.g., "Server.ARCHost")
 	if strings.Contains(s, ".") {
 		parts := strings.Split(s, ".")
 		for i, part := range parts {

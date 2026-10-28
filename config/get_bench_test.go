@@ -7,7 +7,7 @@ import (
 	"github.com/valentin-kaiser/go-core/flag"
 )
 
-// Get() is called per scan batch in bleep's hot paths, from many goroutines.
+// Get() is typically called in hot paths, from many goroutines.
 
 func setupGet(b *testing.B) {
 	b.Helper()
