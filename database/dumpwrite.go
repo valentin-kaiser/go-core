@@ -247,7 +247,7 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 	}()
 
 	_, err = fmt.Fprintf(w, "-- MySQL/MariaDB database backup\n-- DSN: %s\n-- Generated: %s\n\n",
-		redactDSN(d.dsn), time.Now().Format(time.RFC3339))
+		redactDSN(d.getDSN()), time.Now().Format(time.RFC3339))
 	if err != nil {
 		return apperror.NewErrorf("failed to write backup header").AddError(err)
 	}
@@ -344,7 +344,7 @@ func (d *Database[Q]) backupPostgres(dbInstance *sql.DB, path string, schema str
 	}()
 
 	_, err = fmt.Fprintf(w, "-- PostgreSQL database backup\n-- DSN: %s\n-- Generated: %s\n\n",
-		redactDSN(d.dsn), time.Now().Format(time.RFC3339))
+		redactDSN(d.getDSN()), time.Now().Format(time.RFC3339))
 	if err != nil {
 		return apperror.NewErrorf("failed to write backup header").AddError(err)
 	}
