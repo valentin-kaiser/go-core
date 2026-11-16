@@ -191,6 +191,7 @@ type Database[Q any] struct {
 	dbMutex          sync.RWMutex
 	driver           Driver
 	dsn              string
+	dsnMutex         sync.RWMutex
 	connected        atomic.Bool
 	failed           atomic.Bool
 	cancel           atomic.Bool
@@ -462,6 +463,18 @@ func (d *Database[Q]) TestConnection(dsn string) error {
 	return nil
 }
 
+func (d *Database[Q]) setDSN(dsn string) {
+	d.dsnMutex.Lock()
+	d.dsn = dsn
+	d.dsnMutex.Unlock()
+}
+
+func (d *Database[Q]) getDSN() string {
+	d.dsnMutex.RLock()
+	defer d.dsnMutex.RUnlock()
+	return d.dsn
+}
+
 // Connected returns true if the database is connected, false otherwise
 func (d *Database[Q]) Connected() bool {
 	return d.connected.Load()
@@ -469,7 +482,7 @@ func (d *Database[Q]) Connected() bool {
 
 // Reconnect will set the connected state to false and trigger a reconnect
 func (d *Database[Q]) Reconnect(dsn string) {
-	d.dsn = dsn
+	d.setDSN(dsn)
 	d.logger.Trace().Msg("reconnecting...")
 	d.connected.Store(false)
 	d.failed.Store(false)
@@ -500,7 +513,7 @@ func (d *Database[Q]) AwaitConnection() {
 // Connect will try to connect to the database every interval until it is connected
 // It will also check if the connection is still alive every interval and reconnect if it is not
 func (d *Database[Q]) Connect(interval time.Duration, dsn string) {
-	d.dsn = dsn
+	d.setDSN(dsn)
 	go func() {
 		for {
 			func() {
@@ -510,7 +523,7 @@ func (d *Database[Q]) Connect(interval time.Duration, dsn string) {
 				// If we are not connected to the database, try to connect
 				if !d.connected.Load() {
 					var err error
-					instance, err := d.connect(d.driver, d.dsn)
+					instance, err := d.connect(d.driver, d.getDSN())
 					if err != nil {
 						// Prevent spamming the logs with connection errors
 						if !d.failed.Load() {
@@ -710,7 +723,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 
 	switch d.driver {
 	case DriverSQLite:
-		if !strings.HasPrefix(d.dsn, "file:") {
+		if !strings.HasPrefix(d.getDSN(), "file:") {
 			return apperror.NewErrorf("database backup is only supported for file-based SQLite databases")
 		}
 
@@ -725,7 +738,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 		}
 
 		// Parse and validate the SQLite DSN to get the file path
-		sourceFilePath, err := parseSQLiteFilePath(d.dsn)
+		sourceFilePath, err := parseSQLiteFilePath(d.getDSN())
 		if err != nil {
 			return apperror.Wrap(err)
 		}
@@ -782,7 +795,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 
 	switch d.driver {
 	case DriverSQLite:
-		if !strings.HasPrefix(d.dsn, "file:") {
+		if !strings.HasPrefix(d.getDSN(), "file:") {
 			return apperror.NewErrorf("restore is only supported for file-based SQLite databases")
 		}
 
@@ -800,7 +813,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		d.connected.Store(false)
 
 		// Parse and validate the SQLite DSN to get the file path
-		targetPath, err := parseSQLiteFilePath(d.dsn)
+		targetPath, err := parseSQLiteFilePath(d.getDSN())
 		if err != nil {
 			return apperror.Wrap(err)
 		}
@@ -814,7 +827,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 
 		d.logger.Info().Msgf("database restored from backup: %s", backupPath)
 
-		d.Reconnect(d.dsn)
+		d.Reconnect(d.getDSN())
 		return nil
 
 	case DriverMySQL:
