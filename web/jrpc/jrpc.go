@@ -69,6 +69,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -392,7 +393,7 @@ func (s *Service) unary(w http.ResponseWriter, r *http.Request) {
 
 		err = s.unmarshalOpts.Unmarshal(*bufPtr, msg)
 		if err != nil {
-			http.Error(w, apperror.Wrap(err).Error(), http.StatusBadRequest)
+			http.Error(w, apperror.NewError("unmarshaling request failed").AddError(err).Error(), http.StatusBadRequest)
 			return
 		}
 	}
@@ -591,7 +592,7 @@ func (s *Service) invoke(ctx context.Context, methodInfo *methodInfo, service, m
 		// Use buffer pool for better performance
 		bufPtr, ok := bufferPool.Get().(*[]byte)
 		if !ok {
-			return nil, errors.New("failed to get buffer from pool")
+			return nil, apperror.NewError("getting buffer from pool failed")
 		}
 		defer func() {
 			*bufPtr = (*bufPtr)[:0]
@@ -601,7 +602,7 @@ func (s *Service) invoke(ctx context.Context, methodInfo *methodInfo, service, m
 		reqPtr := reflect.New(wanted.Elem())
 		b, err := s.marshalOpts.Marshal(req)
 		if err != nil {
-			return nil, apperror.Wrap(err)
+			return nil, apperror.NewError("marshaling request failed").AddError(err)
 		}
 		pm, ok := reflect.TypeAssert[proto.Message](reqPtr)
 		if !ok {
@@ -609,7 +610,7 @@ func (s *Service) invoke(ctx context.Context, methodInfo *methodInfo, service, m
 		}
 		err = s.unmarshalOpts.Unmarshal(b, pm)
 		if err != nil {
-			return nil, apperror.Wrap(err)
+			return nil, apperror.NewError("unmarshaling request failed").AddError(err)
 		}
 		reqVal = reqPtr
 	}
@@ -674,12 +675,12 @@ func (s *Service) marshal(m any) ([]byte, error) {
 	case proto.Message:
 		out, err := s.marshalOpts.Marshal(msg)
 		if err != nil {
-			return nil, apperror.NewError("failed to marshal response").AddError(err)
+			return nil, apperror.NewError("marshaling response failed").AddError(err)
 		}
 
 		return out, nil
 	default:
-		return nil, apperror.NewError("failed to marshal response")
+		return nil, apperror.NewError("message is not a proto message")
 	}
 }
 
@@ -720,7 +721,7 @@ func (s *Service) handleBidirectionalStream(ctx context.Context, conn *websocket
 	<-write
 
 	if final != nil && !websocket.IsCloseError(final, websocket.CloseNormalClosure) {
-		s.closeWS(conn, websocket.CloseInternalServerErr, apperror.Wrap(final))
+		s.closeWS(conn, websocket.CloseInternalServerErr, apperror.NewError("handling bidirectional stream failed").AddError(final))
 		return
 	}
 	s.closeWS(conn, websocket.CloseNormalClosure, nil)
@@ -734,7 +735,7 @@ func (s *Service) handleServerStream(ctx context.Context, conn *websocket.Conn, 
 
 	msg, err := s.message(md)
 	if err != nil {
-		s.closeWS(conn, websocket.CloseInternalServerErr, apperror.Wrap(err))
+		s.closeWS(conn, websocket.CloseInternalServerErr, apperror.NewError("creating request message failed").AddError(err))
 		return
 	}
 
@@ -742,7 +743,7 @@ func (s *Service) handleServerStream(ctx context.Context, conn *websocket.Conn, 
 	reqPtr := reflect.New(mt.In(1).Elem())
 	err = s.readWSMessage(conn, reqPtr)
 	if err != nil {
-		s.closeWS(conn, websocket.CloseInternalServerErr, apperror.Wrap(err))
+		s.closeWS(conn, websocket.CloseInternalServerErr, apperror.NewError("reading request message failed").AddError(err))
 		return
 	}
 
@@ -754,12 +755,12 @@ func (s *Service) handleServerStream(ctx context.Context, conn *websocket.Conn, 
 		}
 		b, err := s.marshalOpts.Marshal(pmsg)
 		if err != nil {
-			s.closeWS(conn, websocket.CloseInternalServerErr, apperror.Wrap(err))
+			s.closeWS(conn, websocket.CloseInternalServerErr, apperror.NewError("marshaling request message failed").AddError(err))
 			return
 		}
 		err = s.unmarshalOpts.Unmarshal(b, msg)
 		if err != nil {
-			s.closeWS(conn, websocket.CloseInternalServerErr, apperror.Wrap(err))
+			s.closeWS(conn, websocket.CloseInternalServerErr, apperror.NewError("unmarshaling request message failed").AddError(err))
 			return
 		}
 	}
@@ -800,7 +801,7 @@ func (s *Service) handleServerStream(ctx context.Context, conn *websocket.Conn, 
 	<-write
 
 	if final != nil && !websocket.IsCloseError(final, websocket.CloseNormalClosure) {
-		s.closeWS(conn, websocket.CloseInternalServerErr, apperror.Wrap(final))
+		s.closeWS(conn, websocket.CloseInternalServerErr, apperror.NewError("handling server stream failed").AddError(final))
 		return
 	}
 	s.closeWS(conn, websocket.CloseNormalClosure, nil)
@@ -853,14 +854,14 @@ func (s *Service) handleClientStream(ctx context.Context, conn *websocket.Conn, 
 	}
 
 	if final.err != nil && !websocket.IsCloseError(final.err, websocket.CloseNormalClosure) {
-		s.closeWS(conn, websocket.CloseInternalServerErr, apperror.Wrap(final.err))
+		s.closeWS(conn, websocket.CloseInternalServerErr, apperror.NewError("handling client stream failed").AddError(final.err))
 		return
 	}
 
 	if final.resp != nil {
 		err := s.writeWSMessage(conn, reflect.ValueOf(final.resp), reflect.TypeOf(final.resp))
 		if err != nil {
-			s.closeWS(conn, websocket.CloseInternalServerErr, apperror.Wrap(err))
+			s.closeWS(conn, websocket.CloseInternalServerErr, apperror.NewError("writing response message failed").AddError(err))
 			return
 		}
 	}
@@ -869,7 +870,7 @@ func (s *Service) handleClientStream(ctx context.Context, conn *websocket.Conn, 
 func (s *Service) readWSMessage(conn *websocket.Conn, msgPtr reflect.Value) error {
 	messageType, payload, err := conn.ReadMessage()
 	if err != nil {
-		return apperror.NewError("failed to read websocket message").AddError(err)
+		return apperror.NewError("reading websocket message failed").AddError(err)
 	}
 
 	if messageType != websocket.TextMessage {
@@ -888,7 +889,7 @@ func (s *Service) readWSMessage(conn *websocket.Conn, msgPtr reflect.Value) erro
 	if len(payload) > 0 {
 		err = s.unmarshalOpts.Unmarshal(payload, msg)
 		if err != nil {
-			return apperror.NewError("failed to unmarshal websocket message").AddError(err)
+			return apperror.NewError("unmarshaling websocket message failed").AddError(err)
 		}
 	}
 
@@ -941,16 +942,16 @@ func (s *Service) writeWSMessage(conn *websocket.Conn, val reflect.Value, t refl
 
 	data, err := s.marshal(out)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("marshaling websocket message failed").AddError(err)
 	}
 
 	err = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("setting websocket write deadline failed").AddError(err)
 	}
 	err = conn.WriteMessage(websocket.TextMessage, data)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("writing websocket message failed").AddError(err)
 	}
 	return nil
 }
@@ -974,13 +975,21 @@ func (s *Service) startMessageWriter(ctx context.Context, conn *websocket.Conn, 
 
 			err := s.writeWSMessage(conn, val, outPtr)
 			if err != nil {
-				s.closeWS(conn, websocket.CloseInternalServerErr, apperror.Wrap(err))
+				s.closeWS(conn, websocket.CloseInternalServerErr, apperror.NewError("writing stream message failed").AddError(err))
 				return
 			}
 		}
 	}()
 	return write
 }
+
+// Windows socket error codes, which do not map to the portable syscall constants.
+const (
+	errWSAEConnAborted syscall.Errno = 10053
+	errWSAEConnReset   syscall.Errno = 10054
+	errWSAEShutdown    syscall.Errno = 10058
+	errWSAEConnRefused syscall.Errno = 10061
+)
 
 // isExpectedCloseError checks if an error is an expected websocket close error
 // that should not be logged as it indicates normal client disconnection
@@ -998,21 +1007,14 @@ func isExpectedCloseError(err error) bool {
 	}
 
 	// Check for network errors that occur during normal disconnection
-	errStr := strings.ToLower(err.Error())
-	patterns := []string{
-		"wsasend:",                        // Windows socket send error
-		"wsarecv:",                        // Windows socket receive error
-		"broken pipe",                     // Unix connection broken
-		"connection reset",                // Connection reset by peer
-		"connection aborted",              // Connection aborted
-		"connection refused",              // Connection refused
-		"going away",                      // Client going away
-		"use of closed",                   // Use of closed network connection
-		"tls: failed to send closenotify", // TLS close notification failure
+	if errors.Is(err, net.ErrClosed) {
+		return true
 	}
 
-	for _, pattern := range patterns {
-		if strings.Contains(errStr, pattern) {
+	if errno, ok := errors.AsType[syscall.Errno](err); ok {
+		switch errno {
+		case syscall.EPIPE, syscall.ECONNRESET, syscall.ECONNABORTED, syscall.ECONNREFUSED,
+			errWSAEConnAborted, errWSAEConnReset, errWSAEShutdown, errWSAEConnRefused:
 			return true
 		}
 	}
