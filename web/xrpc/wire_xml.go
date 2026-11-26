@@ -106,7 +106,8 @@ func writeIDAttr(b *bytes.Buffer, id rpcID) error {
 		return nil
 	}
 	b.WriteString(` id="`)
-	if err := xml.EscapeText(b, []byte(id.text)); err != nil {
+	err := xml.EscapeText(b, []byte(id.text))
+	if err != nil {
 		return err
 	}
 	b.WriteByte('"')
@@ -117,7 +118,8 @@ func writeAttr(b *bytes.Buffer, name, value string) error {
 	b.WriteByte(' ')
 	b.WriteString(name)
 	b.WriteString(`="`)
-	if err := xml.EscapeText(b, []byte(value)); err != nil {
+	err := xml.EscapeText(b, []byte(value))
+	if err != nil {
 		return err
 	}
 	b.WriteByte('"')
@@ -131,22 +133,26 @@ func (w xmlWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
 	}
 	for _, r := range replies {
 		b.WriteString("<response")
-		if err := writeIDAttr(&b, r.id); err != nil {
+		err := writeIDAttr(&b, r.id)
+		if err != nil {
 			return nil, err
 		}
 		b.WriteByte('>')
 		if r.err != nil {
 			b.WriteString("<error")
-			if err := writeAttr(&b, "code", strconv.Itoa(r.err.Code)); err != nil {
+			err := writeAttr(&b, "code", strconv.Itoa(r.err.Code))
+			if err != nil {
 				return nil, err
 			}
-			if err := writeAttr(&b, "message", r.err.Message); err != nil {
+			err = writeAttr(&b, "message", r.err.Message)
+			if err != nil {
 				return nil, err
 			}
 			b.WriteByte('>')
 			if r.err.Data != nil {
 				b.WriteString("<data>")
-				if err := w.c.writeXMLFields(&b, r.err.Data.ProtoReflect(), 0); err != nil {
+				err := w.c.writeXMLFields(&b, r.err.Data.ProtoReflect(), 0)
+				if err != nil {
 					return nil, err
 				}
 				b.WriteString("</data>")
@@ -155,7 +161,8 @@ func (w xmlWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
 		} else {
 			b.WriteString("<result>")
 			if r.result != nil {
-				if err := w.c.writeXMLFields(&b, r.result.ProtoReflect(), 0); err != nil {
+				err := w.c.writeXMLFields(&b, r.result.ProtoReflect(), 0)
+				if err != nil {
 					return nil, err
 				}
 			}
@@ -172,16 +179,19 @@ func (w xmlWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
 func (w xmlWire) encodeRequest(id rpcID, method string, params proto.Message) ([]byte, error) {
 	var b bytes.Buffer
 	b.WriteString("<request")
-	if err := writeIDAttr(&b, id); err != nil {
+	err := writeIDAttr(&b, id)
+	if err != nil {
 		return nil, err
 	}
-	if err := writeAttr(&b, "method", method); err != nil {
+	err = writeAttr(&b, "method", method)
+	if err != nil {
 		return nil, err
 	}
 	b.WriteByte('>')
 	if params != nil {
 		b.WriteString("<params>")
-		if err := w.c.writeXMLFields(&b, params.ProtoReflect(), 0); err != nil {
+		err := w.c.writeXMLFields(&b, params.ProtoReflect(), 0)
+		if err != nil {
 			return nil, err
 		}
 		b.WriteString("</params>")
@@ -193,17 +203,20 @@ func (w xmlWire) encodeRequest(id rpcID, method string, params proto.Message) ([
 func (w xmlWire) encodeEvent(method string, id rpcID, data proto.Message) ([]byte, error) {
 	var b bytes.Buffer
 	b.WriteString("<request")
-	if err := writeAttr(&b, "method", method); err != nil {
+	err := writeAttr(&b, "method", method)
+	if err != nil {
 		return nil, err
 	}
 	b.WriteString("><params")
-	if err := writeAttr(&b, "id", id.text); err != nil {
+	err = writeAttr(&b, "id", id.text)
+	if err != nil {
 		return nil, err
 	}
 	b.WriteByte('>')
 	if data != nil {
 		b.WriteString("<data>")
-		if err := w.c.writeXMLFields(&b, data.ProtoReflect(), 0); err != nil {
+		err := w.c.writeXMLFields(&b, data.ProtoReflect(), 0)
+		if err != nil {
 			return nil, err
 		}
 		b.WriteString("</data>")

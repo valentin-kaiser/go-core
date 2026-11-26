@@ -97,7 +97,8 @@ func (c codec) xmlName(fd protoreflect.FieldDescriptor) string {
 func lookupField(md protoreflect.MessageDescriptor, key string) protoreflect.FieldDescriptor {
 	fields := md.Fields()
 	num := strings.TrimPrefix(key, "_")
-	if n, err := strconv.ParseInt(num, 10, 32); err == nil {
+	n, err := strconv.ParseInt(num, 10, 32)
+	if err == nil {
 		return fields.ByNumber(protoreflect.FieldNumber(n))
 	}
 	if fd := fields.ByJSONName(key); fd != nil {
@@ -178,7 +179,8 @@ func parseScalar(fd protoreflect.FieldDescriptor, s string) (protoreflect.Value,
 		b, err := decodeBase64(s)
 		return protoreflect.ValueOfBytes(b), err
 	case protoreflect.EnumKind:
-		if n, err := strconv.ParseInt(s, 10, 32); err == nil {
+		n, err := strconv.ParseInt(s, 10, 32)
+		if err == nil {
 			return protoreflect.ValueOfEnum(protoreflect.EnumNumber(n)), nil
 		}
 		ev := fd.Enum().Values().ByName(protoreflect.Name(s))
@@ -192,7 +194,8 @@ func parseScalar(fd protoreflect.FieldDescriptor, s string) (protoreflect.Value,
 
 func decodeBase64(s string) ([]byte, error) {
 	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
-		if b, err := enc.DecodeString(s); err == nil {
+		b, err := enc.DecodeString(s)
+		if err == nil {
 			return b, nil
 		}
 	}
@@ -205,7 +208,8 @@ func marshalWKT(m protoreflect.Message) ([]byte, error) {
 		return nil, err
 	}
 	var buf bytes.Buffer
-	if err := json.Compact(&buf, raw); err != nil {
+	err = json.Compact(&buf, raw)
+	if err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -263,7 +267,8 @@ func (c codec) appendJSONField(b []byte, fd protoreflect.FieldDescriptor, v prot
 			if i > 0 {
 				b = append(b, ',')
 			}
-			if b, err = c.appendJSONValue(b, fd, l.Get(i), depth); err != nil {
+			b, err = c.appendJSONValue(b, fd, l.Get(i), depth)
+			if err != nil {
 				return nil, err
 			}
 		}
@@ -277,7 +282,8 @@ func (c codec) appendJSONField(b []byte, fd protoreflect.FieldDescriptor, v prot
 			}
 			b = appendString(b, k.String())
 			b = append(b, ':')
-			if b, err = c.appendJSONValue(b, fd.MapValue(), mp.Get(k), depth); err != nil {
+			b, err = c.appendJSONValue(b, fd.MapValue(), mp.Get(k), depth)
+			if err != nil {
 				return nil, err
 			}
 		}
@@ -341,7 +347,8 @@ func (c codec) readJSON(data []byte, m protoreflect.Message, depth int) error {
 	}
 
 	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(data, &obj); err != nil {
+	err := json.Unmarshal(data, &obj)
+	if err != nil {
 		return err
 	}
 	for key, raw := range obj {
@@ -349,7 +356,8 @@ func (c codec) readJSON(data []byte, m protoreflect.Message, depth int) error {
 		if fd == nil || isNull(raw) {
 			continue
 		}
-		if err := c.readJSONField(m, fd, raw, depth); err != nil {
+		err := c.readJSONField(m, fd, raw, depth)
+		if err != nil {
 			return apperror.NewErrorf("field %q", key).AddError(err)
 		}
 	}
@@ -360,7 +368,8 @@ func (c codec) readJSONField(m protoreflect.Message, fd protoreflect.FieldDescri
 	switch {
 	case fd.IsList():
 		var items []json.RawMessage
-		if err := json.Unmarshal(raw, &items); err != nil {
+		err := json.Unmarshal(raw, &items)
+		if err != nil {
 			return err
 		}
 		list := m.Mutable(fd).List()
@@ -374,7 +383,8 @@ func (c codec) readJSONField(m protoreflect.Message, fd protoreflect.FieldDescri
 		return nil
 	case fd.IsMap():
 		var items map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &items); err != nil {
+		err := json.Unmarshal(raw, &items)
+		if err != nil {
 			return err
 		}
 		mp := m.Mutable(fd).Map()
@@ -433,8 +443,11 @@ func (c codec) readJSONValue(fd protoreflect.FieldDescriptor, raw []byte, cur pr
 	case '"':
 		if s, ok := simpleString(raw); ok {
 			text = s
-		} else if err := json.Unmarshal(raw, &text); err != nil {
-			return protoreflect.Value{}, err
+		} else {
+			err := json.Unmarshal(raw, &text)
+			if err != nil {
+				return protoreflect.Value{}, err
+			}
 		}
 	case '{', '[':
 		return protoreflect.Value{}, apperror.NewError("unexpected object or array")
@@ -497,12 +510,13 @@ func parseXML(data []byte) (*xmlNode, error) {
 					n.attrs[a.Name.Local] = a.Value
 				}
 			}
-			if len(stack) > 0 {
+			switch {
+			case len(stack) > 0:
 				p := stack[len(stack)-1]
 				p.kids = append(p.kids, n)
-			} else if root != nil {
+			case root != nil:
 				return nil, apperror.NewError("multiple root elements")
-			} else {
+			default:
 				root = n
 			}
 			stack = append(stack, n)
@@ -545,7 +559,8 @@ func (c codec) writeXMLFields(b *bytes.Buffer, m protoreflect.Message, depth int
 			mp := f.v.Map()
 			for _, k := range sortedMapKeys(mp) {
 				key := k.String()
-				if err = c.writeXMLElem(b, name, &key, f.fd.MapValue(), mp.Get(k), depth); err != nil {
+				err = c.writeXMLElem(b, name, &key, f.fd.MapValue(), mp.Get(k), depth)
+				if err != nil {
 					break
 				}
 			}
@@ -567,7 +582,8 @@ func (c codec) writeXMLElem(b *bytes.Buffer, name string, key *string, fd protor
 			return apperror.NewError("map key contains characters not representable in XML")
 		}
 		b.WriteString(` k="`)
-		if err := xml.EscapeText(b, []byte(*key)); err != nil {
+		err := xml.EscapeText(b, []byte(*key))
+		if err != nil {
 			return err
 		}
 		b.WriteByte('"')
@@ -583,11 +599,15 @@ func (c codec) writeXMLElem(b *bytes.Buffer, name string, key *string, fd protor
 	}
 	b.WriteByte('>')
 	if fd.Message() != nil {
-		if err := c.writeXMLFields(b, v.Message(), depth+1); err != nil {
+		err := c.writeXMLFields(b, v.Message(), depth+1)
+		if err != nil {
 			return err
 		}
-	} else if err := xml.EscapeText(b, []byte(text)); err != nil {
-		return err
+	} else {
+		err := xml.EscapeText(b, []byte(text))
+		if err != nil {
+			return err
+		}
 	}
 	b.WriteString("</")
 	b.WriteString(name)
@@ -624,7 +644,8 @@ func (c codec) readXMLFields(n *xmlNode, m protoreflect.Message, depth int) erro
 		if fd == nil {
 			continue
 		}
-		if err := c.readXMLField(m, fd, k, depth); err != nil {
+		err := c.readXMLField(m, fd, k, depth)
+		if err != nil {
 			return apperror.NewErrorf("field %q", k.name).AddError(err)
 		}
 	}

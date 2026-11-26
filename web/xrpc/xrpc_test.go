@@ -34,20 +34,20 @@ const fdpName = ".google.protobuf.FieldDescriptorProto"
 var testFile = func() protoreflect.FileDescriptor {
 	m := func(name, in, out string, cs, ss bool) *descriptorpb.MethodDescriptorProto {
 		return &descriptorpb.MethodDescriptorProto{
-			Name:            proto.String(name),
-			InputType:       proto.String(in),
-			OutputType:      proto.String(out),
-			ClientStreaming: proto.Bool(cs),
-			ServerStreaming: proto.Bool(ss),
+			Name:            new(name),
+			InputType:       new(in),
+			OutputType:      new(out),
+			ClientStreaming: new(cs),
+			ServerStreaming: new(ss),
 		}
 	}
 	fd, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{
-		Name:       proto.String("test/v1/test.proto"),
-		Package:    proto.String("test.v1"),
-		Syntax:     proto.String("proto3"),
+		Name:       new("test/v1/test.proto"),
+		Package:    new("test.v1"),
+		Syntax:     new("proto3"),
 		Dependency: []string{"google/protobuf/descriptor.proto", "google/protobuf/empty.proto"},
 		Service: []*descriptorpb.ServiceDescriptorProto{{
-			Name: proto.String("Test"),
+			Name: new("Test"),
 			Method: []*descriptorpb.MethodDescriptorProto{
 				m("Echo", fdpName, fdpName, false, false),
 				m("Fail", ".google.protobuf.Empty", ".google.protobuf.Empty", false, false),
@@ -80,7 +80,7 @@ func (testServer) Fail(context.Context, *emptypb.Empty) (*emptypb.Empty, error) 
 
 func (testServer) Repeat(_ context.Context, in *fdp, out chan<- *fdp) error {
 	for i := int32(0); i < in.GetNumber(); i++ {
-		out <- &fdp{Name: in.Name, Number: proto.Int32(i)}
+		out <- &fdp{Name: in.Name, Number: new(i)}
 	}
 	if in.GetName() == "fail" {
 		return status.Error(5, "stream failed")
@@ -93,12 +93,12 @@ func (testServer) Collect(_ context.Context, in <-chan *fdp) (*fdp, error) {
 	for m := range in {
 		names = append(names, m.GetName())
 	}
-	return &fdp{Name: proto.String(strings.Join(names, ","))}, nil
+	return &fdp{Name: new(strings.Join(names, ","))}, nil
 }
 
 func (testServer) Chat(_ context.Context, in <-chan *fdp, out chan<- *fdp) error {
 	for m := range in {
-		out <- &fdp{Name: proto.String("echo:" + m.GetName())}
+		out <- &fdp{Name: new("echo:" + m.GetName())}
 	}
 	return nil
 }
@@ -117,11 +117,16 @@ func newServer(t *testing.T, svc *xrpc.Service) *httptest.Server {
 
 func post(t *testing.T, url, contentType, body string) (int, string) {
 	t.Helper()
-	resp, err := http.Post(url, contentType, strings.NewReader(body))
+	resp, err := http.Post(url, contentType, strings.NewReader(body)) //nolint:gosec // url always points at a local httptest server
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		err := resp.Body.Close()
+		if err != nil {
+			t.Errorf("closing response body failed: %v", err)
+		}
+	}()
 	b, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatal(err)
@@ -310,7 +315,12 @@ func TestFieldNamesHeader(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
+		defer func() {
+			err := resp.Body.Close()
+			if err != nil {
+				t.Errorf("closing response body failed: %v", err)
+			}
+		}()
 		b, _ := io.ReadAll(resp.Body)
 		return string(b), resp.Header.Get("Vary")
 	}
@@ -350,13 +360,25 @@ func TestFieldNamesQueryOnWebSocket(t *testing.T) {
 		t.Helper()
 		ts := newServer(t, svc)
 		dialer := websocket.Dialer{Subprotocols: []string{"xrpc.json"}}
-		conn, _, err := dialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http")+query, header)
+		conn, resp, err := dialer.Dial("ws"+strings.TrimPrefix(ts.URL, "http")+query, header)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer conn.Close()
+		defer func() {
+			err := resp.Body.Close()
+			if err != nil {
+				t.Errorf("closing handshake response body failed: %v", err)
+			}
+		}()
+		defer func() {
+			err := conn.Close()
+			if err != nil {
+				t.Errorf("closing connection failed: %v", err)
+			}
+		}()
 		req := `{"jsonrpc":"2.0","method":"Test.Repeat","params":{"1":"r","3":1},"id":1}`
-		if err := conn.WriteMessage(websocket.TextMessage, []byte(req)); err != nil {
+		err = conn.WriteMessage(websocket.TextMessage, []byte(req))
+		if err != nil {
 			t.Fatal(err)
 		}
 		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
@@ -480,14 +502,15 @@ func TestClientUnary(t *testing.T) {
 	for name, c := range clients(t, ts) {
 		t.Run(name, func(t *testing.T) {
 			out := &fdp{}
-			if err := c.Call(timeout(t), "test.v1.Test/Echo", &fdp{Name: proto.String("héllo <&>"), Number: proto.Int32(9)}, out); err != nil {
+			err := c.Call(timeout(t), "test.v1.Test/Echo", &fdp{Name: new("héllo <&>"), Number: proto.Int32(9)}, out)
+			if err != nil {
 				t.Fatal(err)
 			}
 			if out.GetName() != "héllo <&>" || out.GetNumber() != 9 {
 				t.Errorf("unexpected response %v", out)
 			}
 
-			err := c.Call(timeout(t), "test.v1.Test/Fail", &emptypb.Empty{}, &emptypb.Empty{})
+			err = c.Call(timeout(t), "test.v1.Test/Fail", &emptypb.Empty{}, &emptypb.Empty{})
 			if err == nil || !strings.Contains(err.Error(), "boom") {
 				t.Errorf("expected boom error, got %v", err)
 			}
@@ -513,7 +536,7 @@ func TestClientStreams(t *testing.T) {
 	for name, c := range clients(t, ts) {
 		t.Run(name+"/server", func(t *testing.T) {
 			out := make(chan *fdp, 8)
-			err := xrpc.ServerStream(timeout(t), c, "test.v1.Test/Repeat", &fdp{Name: proto.String("r"), Number: proto.Int32(3)}, out, newFDP)
+			err := xrpc.ServerStream(timeout(t), c, "test.v1.Test/Repeat", &fdp{Name: new("r"), Number: proto.Int32(3)}, out, newFDP)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -528,7 +551,7 @@ func TestClientStreams(t *testing.T) {
 
 		t.Run(name+"/server error", func(t *testing.T) {
 			out := make(chan *fdp, 8)
-			err := xrpc.ServerStream(timeout(t), c, "test.v1.Test/Repeat", &fdp{Name: proto.String("fail"), Number: proto.Int32(1)}, out, newFDP)
+			err := xrpc.ServerStream(timeout(t), c, "test.v1.Test/Repeat", &fdp{Name: new("fail"), Number: proto.Int32(1)}, out, newFDP)
 			if err == nil || !strings.Contains(err.Error(), "stream failed") {
 				t.Errorf("expected stream error, got %v", err)
 			}
@@ -539,11 +562,12 @@ func TestClientStreams(t *testing.T) {
 			go func() {
 				defer close(in)
 				for _, n := range []string{"a", "b", "c"} {
-					in <- &fdp{Name: proto.String(n)}
+					in <- &fdp{Name: new(n)}
 				}
 			}()
 			out := &fdp{}
-			if err := xrpc.ClientStream(timeout(t), c, "test.v1.Test/Collect", in, out); err != nil {
+			err := xrpc.ClientStream(timeout(t), c, "test.v1.Test/Collect", in, out)
+			if err != nil {
 				t.Fatal(err)
 			}
 			if out.GetName() != "a,b,c" {
@@ -558,13 +582,14 @@ func TestClientStreams(t *testing.T) {
 			go func() { errc <- xrpc.BidiStream(timeout(t), c, "test.v1.Test/Chat", in, out, newFDP) }()
 
 			for _, n := range []string{"x", "y"} {
-				in <- &fdp{Name: proto.String(n)}
+				in <- &fdp{Name: new(n)}
 				if got := (<-out).GetName(); got != "echo:"+n {
 					t.Errorf("got %s", got)
 				}
 			}
 			close(in)
-			if err := <-errc; err != nil {
+			err := <-errc
+			if err != nil {
 				t.Fatal(err)
 			}
 			if _, ok := <-out; ok {
@@ -584,7 +609,7 @@ func TestStreamCancel(t *testing.T) {
 			errc := make(chan error, 1)
 			go func() { errc <- xrpc.BidiStream(ctx, c, "test.v1.Test/Chat", in, out, func() *fdp { return &fdp{} }) }()
 
-			in <- &fdp{Name: proto.String("x")}
+			in <- &fdp{Name: new("x")}
 			<-out
 			cancel()
 
@@ -605,12 +630,10 @@ func TestConcurrentWebSocketStreams(t *testing.T) {
 	c := clients(t, ts)["json"]
 
 	var wg sync.WaitGroup
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 8 {
+		wg.Go(func() {
 			out := make(chan *fdp, 16)
-			err := xrpc.ServerStream(timeout(t), c, "test.v1.Test/Repeat", &fdp{Name: proto.String("r"), Number: proto.Int32(10)}, out, func() *fdp { return &fdp{} })
+			err := xrpc.ServerStream(timeout(t), c, "test.v1.Test/Repeat", &fdp{Name: new("r"), Number: proto.Int32(10)}, out, func() *fdp { return &fdp{} })
 			if err != nil {
 				t.Error(err)
 				return
@@ -622,7 +645,7 @@ func TestConcurrentWebSocketStreams(t *testing.T) {
 			if n != 10 {
 				t.Errorf("got %d messages", n)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }
@@ -635,7 +658,8 @@ func TestGRPCInterceptor(t *testing.T) {
 			return h(ctx, req)
 		}))
 	ts := newServer(t, svc)
-	if err := clients(t, ts)["grpc"].Call(timeout(t), "test.v1.Test/Echo", &fdp{}, &fdp{}); err != nil {
+	err := clients(t, ts)["grpc"].Call(timeout(t), "test.v1.Test/Echo", &fdp{}, &fdp{})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if !called {
@@ -656,16 +680,16 @@ func TestPaths(t *testing.T) {
 
 var otherFile = func() protoreflect.FileDescriptor {
 	fd, err := protodesc.NewFile(&descriptorpb.FileDescriptorProto{
-		Name:       proto.String("other/v1/other.proto"),
-		Package:    proto.String("other.v1"),
-		Syntax:     proto.String("proto3"),
+		Name:       new("other/v1/other.proto"),
+		Package:    new("other.v1"),
+		Syntax:     new("proto3"),
 		Dependency: []string{"google/protobuf/descriptor.proto"},
 		Service: []*descriptorpb.ServiceDescriptorProto{{
-			Name: proto.String("Test"),
+			Name: new("Test"),
 			Method: []*descriptorpb.MethodDescriptorProto{{
-				Name:       proto.String("Echo"),
-				InputType:  proto.String(fdpName),
-				OutputType: proto.String(fdpName),
+				Name:       new("Echo"),
+				InputType:  new(fdpName),
+				OutputType: new(fdpName),
 			}},
 		}},
 	}, protoregistry.GlobalFiles)
@@ -680,7 +704,7 @@ type otherServer struct{}
 func (otherServer) Descriptor() protoreflect.FileDescriptor { return otherFile }
 
 func (otherServer) Echo(_ context.Context, in *fdp) (*fdp, error) {
-	return &fdp{Name: proto.String("other:" + in.GetName())}, nil
+	return &fdp{Name: new("other:" + in.GetName())}, nil
 }
 
 func TestSameShortServiceName(t *testing.T) {
@@ -706,12 +730,18 @@ func TestGRPCReflection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() {
+		err := conn.Close()
+		if err != nil {
+			t.Errorf("closing connection failed: %v", err)
+		}
+	}()
 	stream, err := rpb.NewServerReflectionClient(conn).ServerReflectionInfo(timeout(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := stream.Send(&rpb.ServerReflectionRequest{MessageRequest: &rpb.ServerReflectionRequest_ListServices{}}); err != nil {
+	err = stream.Send(&rpb.ServerReflectionRequest{MessageRequest: &rpb.ServerReflectionRequest_ListServices{}})
+	if err != nil {
 		t.Fatal(err)
 	}
 	resp, err := stream.Recv()

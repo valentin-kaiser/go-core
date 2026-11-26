@@ -100,19 +100,23 @@ func grpcPath(method string) string {
 	if strings.Contains(method, "/") {
 		return "/" + strings.TrimPrefix(method, "/")
 	}
-	if i := strings.LastIndexByte(method, '.'); i >= 0 {
-		return "/" + method[:i] + "/" + method[i+1:]
+	if before, after, ok := strings.CutLast(method, "."); ok {
+		return "/" + before + "/" + after
 	}
 	return "/" + method
 }
 
 func (c *Client) grpcContext(ctx context.Context) context.Context {
+	var pairs []string
 	for k, vs := range c.header {
 		for _, v := range vs {
-			ctx = metadata.AppendToOutgoingContext(ctx, strings.ToLower(k), v)
+			pairs = append(pairs, strings.ToLower(k), v)
 		}
 	}
-	return ctx
+	if len(pairs) == 0 {
+		return ctx
+	}
+	return metadata.AppendToOutgoingContext(ctx, pairs...)
 }
 
 // Call performs a unary call.
@@ -150,7 +154,7 @@ func (c *Client) Call(ctx context.Context, method string, in, out proto.Message)
 	if err != nil {
 		return apperror.NewError("request failed").AddError(err)
 	}
-	defer func() { _ = resp.Body.Close() }()
+	defer apperror.Catch(func() error { return resp.Body.Close() }, "closing response body failed")
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, defaultMaxBody))
 	if err != nil {
@@ -213,10 +217,12 @@ func (c *Client) streamGRPC(ctx context.Context, method string, k kind, first pr
 	}
 
 	if first != nil {
-		if err := cs.SendMsg(first); err != nil {
+		err := cs.SendMsg(first)
+		if err != nil {
 			return err
 		}
-		if err := cs.CloseSend(); err != nil {
+		err = cs.CloseSend()
+		if err != nil {
 			return err
 		}
 	}
@@ -225,10 +231,11 @@ func (c *Client) streamGRPC(ctx context.Context, method string, k kind, first pr
 			for {
 				msg, ok := next(ctx)
 				if !ok {
-					_ = cs.CloseSend()
+					apperror.Catch(cs.CloseSend, "closing client stream failed")
 					return
 				}
-				if err := cs.SendMsg(msg); err != nil {
+				err := cs.SendMsg(msg)
+				if err != nil {
 					return // the error surfaces on RecvMsg
 				}
 			}
@@ -240,13 +247,15 @@ func (c *Client) streamGRPC(ctx context.Context, method string, k kind, first pr
 	}
 	for {
 		msg := newOut()
-		if err := cs.RecvMsg(msg); err != nil {
+		err := cs.RecvMsg(msg)
+		if err != nil {
 			if errors.Is(err, io.EOF) {
 				return nil
 			}
 			return err
 		}
-		if err := deliver(msg); err != nil {
+		err = deliver(msg)
+		if err != nil {
 			return err
 		}
 	}
@@ -286,7 +295,10 @@ func (c *Client) dial(ctx context.Context) (*websocket.Conn, wire, error) {
 		header.Set("User-Agent", c.userAgent)
 	}
 
-	conn, _, err := d.DialContext(ctx, u.String(), header)
+	conn, resp, err := d.DialContext(ctx, u.String(), header)
+	if resp != nil {
+		defer apperror.Catch(func() error { return resp.Body.Close() }, "closing handshake response body failed")
+	}
 	if err != nil {
 		return nil, nil, apperror.NewError("websocket dial failed").AddError(err)
 	}
@@ -298,11 +310,12 @@ func (c *Client) streamWS(ctx context.Context, method string, first proto.Messag
 	if err != nil {
 		return err
 	}
-	defer func() { _ = conn.Close() }()
+	closeConn := closeOnce(conn)
+	defer apperror.Catch(closeConn, "closing websocket connection failed")
 
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	defer context.AfterFunc(ctx, func() { _ = conn.Close() })()
+	defer context.AfterFunc(ctx, func() { apperror.Catch(closeConn, "closing websocket connection failed") })()
 
 	var wmu sync.Mutex
 	write := func(data []byte) error {
@@ -316,7 +329,8 @@ func (c *Client) streamWS(ctx context.Context, method string, first proto.Messag
 	if err != nil {
 		return apperror.NewError("failed to encode request").AddError(err)
 	}
-	if err := write(req); err != nil {
+	err = write(req)
+	if err != nil {
 		return err
 	}
 
@@ -327,8 +341,13 @@ func (c *Client) streamWS(ctx context.Context, method string, first proto.Messag
 				msg, ok := next(ctx)
 				if !ok {
 					if ctx.Err() == nil {
-						if data, err := w.encodeEvent(methodClose, id, nil); err == nil {
-							_ = write(data)
+						data, err := w.encodeEvent(methodClose, id, nil)
+						if err != nil {
+							return
+						}
+						err = write(data)
+						if err != nil {
+							return // the error surfaces on read
 						}
 					}
 					return
@@ -339,7 +358,8 @@ func (c *Client) streamWS(ctx context.Context, method string, first proto.Messag
 					cancel()
 					return
 				}
-				if err := write(data); err != nil {
+				err = write(data)
+				if err != nil {
 					return // the error surfaces on read
 				}
 			}
@@ -380,10 +400,12 @@ func (c *Client) streamWS(ctx context.Context, method string, first proto.Messag
 				return err
 			}
 			msg := newOut()
-			if err := bindData(msg); err != nil {
+			err = bindData(msg)
+			if err != nil {
 				return err
 			}
-			if err := deliver(msg); err != nil {
+			err = deliver(msg)
+			if err != nil {
 				return err
 			}
 		}
@@ -440,4 +462,15 @@ func BidiStream[In, Out proto.Message](ctx context.Context, c *Client, method st
 	}
 	defer close(out)
 	return c.stream(ctx, method, kindBidi, nil, chanNext(in), func() proto.Message { return newOut() }, chanDeliver(ctx, out), nil)
+}
+
+// closeOnce wraps c so that closing it repeatedly is safe: the first call closes
+// and later calls (e.g. close on cancellation plus a deferred close) are no-ops.
+func closeOnce(c io.Closer) func() error {
+	var once sync.Once
+	return func() error {
+		var err error
+		once.Do(func() { err = c.Close() })
+		return err
+	}
 }

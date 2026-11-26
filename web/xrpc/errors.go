@@ -47,8 +47,7 @@ func (e *Error) WithData(data proto.Message) *Error {
 func (e *Error) Error() string { return e.Message }
 
 func toError(err error) *Error {
-	var xe *Error
-	if errors.As(err, &xe) {
+	if xe, ok := errors.AsType[*Error](err); ok {
 		return xe
 	}
 	if st, ok := status.FromError(err); ok && st.Code() != codes.OK {

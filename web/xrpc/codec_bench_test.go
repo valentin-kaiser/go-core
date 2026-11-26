@@ -15,7 +15,8 @@ func BenchmarkCodecMarshalJSON(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := c.marshalJSON(src); err != nil {
+		_, err := c.marshalJSON(src)
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -31,7 +32,8 @@ func BenchmarkCodecUnmarshalJSON(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := c.unmarshalJSON(data, dynamicpb.NewMessage(md)); err != nil {
+		err := c.unmarshalJSON(data, dynamicpb.NewMessage(md))
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -43,7 +45,8 @@ func BenchmarkProtoMarshal(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := proto.Marshal(src); err != nil {
+		_, err := proto.Marshal(src)
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -58,7 +61,8 @@ func BenchmarkCodecXMLRoundTrip(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		var buf bytes.Buffer
 		buf.WriteString("<x>")
-		if err := c.writeXMLFields(&buf, src.ProtoReflect(), 0); err != nil {
+		err := c.writeXMLFields(&buf, src.ProtoReflect(), 0)
+		if err != nil {
 			b.Fatal(err)
 		}
 		buf.WriteString("</x>")
@@ -66,7 +70,8 @@ func BenchmarkCodecXMLRoundTrip(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if err := c.readXMLFields(root, dynamicpb.NewMessage(md), 0); err != nil {
+		err = c.readXMLFields(root, dynamicpb.NewMessage(md), 0)
+		if err != nil {
 			b.Fatal(err)
 		}
 	}

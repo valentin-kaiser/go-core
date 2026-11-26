@@ -24,9 +24,9 @@ const (
 )
 
 var (
-	contextType = reflect.TypeOf((*context.Context)(nil)).Elem()
-	errorType   = reflect.TypeOf((*error)(nil)).Elem()
-	messageType = reflect.TypeOf((*proto.Message)(nil)).Elem()
+	contextType = reflect.TypeFor[context.Context]()
+	errorType   = reflect.TypeFor[error]()
+	messageType = reflect.TypeFor[proto.Message]()
 )
 
 type recvFunc func() (proto.Message, error)
@@ -52,7 +52,7 @@ func newMessage(t reflect.Type) proto.Message {
 
 // messageOf returns the pointer-to-message type matching desc, or an error.
 func messageOf(t reflect.Type, desc protoreflect.MessageDescriptor) (reflect.Type, error) {
-	if t.Kind() != reflect.Ptr || !t.Implements(messageType) {
+	if t.Kind() != reflect.Pointer || !t.Implements(messageType) {
 		return nil, apperror.NewErrorf("%s is not a protobuf message pointer", t)
 	}
 	if got := newMessage(t).ProtoReflect().Descriptor().FullName(); got != desc.FullName() {
@@ -83,7 +83,8 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 		if t.NumIn() != 2 || t.NumOut() != 2 || t.Out(1) != errorType {
 			return nil, apperror.NewError("unary method must be func(context.Context, *In) (*Out, error)")
 		}
-		if m.in, err = messageOf(t.In(1), md.Input()); err != nil {
+		m.in, err = messageOf(t.In(1), md.Input())
+		if err != nil {
 			return nil, err
 		}
 		m.out, err = messageOf(t.Out(0), md.Output())
@@ -92,7 +93,8 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 		if t.NumIn() != 3 || t.NumOut() != 1 || t.Out(0) != errorType {
 			return nil, apperror.NewError("server streaming method must be func(context.Context, *In, chan<- *Out) error")
 		}
-		if m.in, err = messageOf(t.In(1), md.Input()); err != nil {
+		m.in, err = messageOf(t.In(1), md.Input())
+		if err != nil {
 			return nil, err
 		}
 		m.out, err = chanOf(t.In(2), reflect.SendDir, md.Output())
@@ -101,7 +103,8 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 		if t.NumIn() != 2 || t.NumOut() != 2 || t.Out(1) != errorType {
 			return nil, apperror.NewError("client streaming method must be func(context.Context, <-chan *In) (*Out, error)")
 		}
-		if m.in, err = chanOf(t.In(1), reflect.RecvDir, md.Input()); err != nil {
+		m.in, err = chanOf(t.In(1), reflect.RecvDir, md.Input())
+		if err != nil {
 			return nil, err
 		}
 		m.out, err = messageOf(t.Out(0), md.Output())
@@ -110,7 +113,8 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 		if t.NumIn() != 3 || t.NumOut() != 1 || t.Out(0) != errorType {
 			return nil, apperror.NewError("bidirectional streaming method must be func(context.Context, <-chan *In, chan<- *Out) error")
 		}
-		if m.in, err = chanOf(t.In(1), reflect.RecvDir, md.Input()); err != nil {
+		m.in, err = chanOf(t.In(1), reflect.RecvDir, md.Input())
+		if err != nil {
 			return nil, err
 		}
 		m.out, err = chanOf(t.In(2), reflect.SendDir, md.Output())
@@ -135,7 +139,7 @@ func (m *method) call(args []reflect.Value) (res proto.Message, err error) {
 	if len(outs) == 2 && !outs[0].IsNil() {
 		return outs[0].Interface().(proto.Message), nil //nolint:forcetypeassert // validated at registration
 	}
-	return nil, nil
+	return nil, nil //nolint:nilnil // a nil message means the handler has no response body
 }
 
 func closeSafe(ch reflect.Value) {
@@ -228,7 +232,9 @@ func (m *method) invoke(ctx context.Context, first proto.Message, recv recvFunc,
 			if sendErr != nil || v.IsNil() {
 				continue // keep draining so the handler never blocks
 			}
-			if err := send(v.Interface().(proto.Message)); err != nil { //nolint:forcetypeassert // validated at registration
+			msg := v.Interface().(proto.Message) //nolint:forcetypeassert // validated at registration
+			err := send(msg)
+			if err != nil {
 				sendErr = err
 				cancel()
 			}
