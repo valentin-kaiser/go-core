@@ -16,6 +16,16 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const (
+	defaultTimeout   = 30 * time.Second
+	defaultUserAgent = "jrpc-client/1.0"
+
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+	schemeWS    = "ws"
+	schemeWSS   = "wss"
+)
+
 // Client provides a client implementation for making JSON-RPC calls over HTTP and WebSocket.
 // It handles request serialization, HTTP/WebSocket communication, and response deserialization
 // using Protocol Buffer JSON format.
@@ -63,9 +73,9 @@ func NewClient(opts ...ClientOption) *Client {
 	client := &Client{
 		mutex: &sync.RWMutex{},
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
+			Timeout: defaultTimeout,
 		},
-		userAgent: "jrpc-client/1.0",
+		userAgent: defaultUserAgent,
 		marshalOpts: protojson.MarshalOptions{
 			EmitUnpopulated: true,
 			UseEnumNumbers:  true,
@@ -173,8 +183,8 @@ func (c *Client) Call(ctx context.Context, u *url.URL, req, resp proto.Message, 
 		return apperror.NewError("creating HTTP request failed").AddError(err)
 	}
 
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set(headerContentType, mediaTypeJSON)
+	httpReq.Header.Set(headerAccept, mediaTypeJSON)
 
 	// Add custom headers if provided
 	for key, values := range header {
@@ -185,7 +195,7 @@ func (c *Client) Call(ctx context.Context, u *url.URL, req, resp proto.Message, 
 
 	c.mutex.RLock()
 	if c.userAgent != "" {
-		httpReq.Header.Set("User-Agent", c.userAgent)
+		httpReq.Header.Set(headerUserAgent, c.userAgent)
 	}
 
 	// Make HTTP request
@@ -498,10 +508,10 @@ func (c *Client) dialWebSocket(u *url.URL) (*websocket.Conn, *http.Response, err
 
 	// Convert HTTP(S) scheme to WS(S)
 	switch dialURL.Scheme {
-	case "http":
-		dialURL.Scheme = "ws"
-	case "https":
-		dialURL.Scheme = "wss"
+	case schemeHTTP:
+		dialURL.Scheme = schemeWS
+	case schemeHTTPS:
+		dialURL.Scheme = schemeWSS
 	}
 
 	dialer := websocket.Dialer{
@@ -512,7 +522,7 @@ func (c *Client) dialWebSocket(u *url.URL) (*websocket.Conn, *http.Response, err
 	// Set User-Agent header for WebSocket handshake
 	headers := http.Header{}
 	if c.userAgent != "" {
-		headers.Set("User-Agent", c.userAgent)
+		headers.Set(headerUserAgent, c.userAgent)
 	}
 
 	conn, resp, err := dialer.Dial(dialURL.String(), headers)
