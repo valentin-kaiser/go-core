@@ -5,6 +5,7 @@ import (
 	"encoding/xml"
 	"strconv"
 
+	"github.com/valentin-kaiser/go-core/apperror"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -108,7 +109,7 @@ func writeIDAttr(b *bytes.Buffer, id rpcID) error {
 	b.WriteString(` id="`)
 	err := xml.EscapeText(b, []byte(id.text))
 	if err != nil {
-		return err
+		return apperror.NewError("escaping id attribute failed").AddError(err)
 	}
 	b.WriteByte('"')
 	return nil
@@ -120,7 +121,7 @@ func writeAttr(b *bytes.Buffer, name, value string) error {
 	b.WriteString(`="`)
 	err := xml.EscapeText(b, []byte(value))
 	if err != nil {
-		return err
+		return apperror.NewError("escaping attribute value failed").AddError(err)
 	}
 	b.WriteByte('"')
 	return nil
@@ -135,25 +136,25 @@ func (w xmlWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
 		b.WriteString("<response")
 		err := writeIDAttr(&b, r.id)
 		if err != nil {
-			return nil, err
+			return nil, apperror.NewError("writing response id failed").AddError(err)
 		}
 		b.WriteByte('>')
 		if r.err != nil {
 			b.WriteString("<error")
 			err := writeAttr(&b, "code", strconv.Itoa(r.err.Code))
 			if err != nil {
-				return nil, err
+				return nil, apperror.NewError("writing error code failed").AddError(err)
 			}
 			err = writeAttr(&b, "message", r.err.Message)
 			if err != nil {
-				return nil, err
+				return nil, apperror.NewError("writing error message failed").AddError(err)
 			}
 			b.WriteByte('>')
 			if r.err.Data != nil {
 				b.WriteString("<data>")
 				err := w.c.writeXMLFields(&b, r.err.Data.ProtoReflect(), 0)
 				if err != nil {
-					return nil, err
+					return nil, apperror.NewError("encoding error data failed").AddError(err)
 				}
 				b.WriteString("</data>")
 			}
@@ -163,7 +164,7 @@ func (w xmlWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
 			if r.result != nil {
 				err := w.c.writeXMLFields(&b, r.result.ProtoReflect(), 0)
 				if err != nil {
-					return nil, err
+					return nil, apperror.NewError("encoding result failed").AddError(err)
 				}
 			}
 			b.WriteString("</result>")
@@ -181,18 +182,18 @@ func (w xmlWire) encodeRequest(id rpcID, method string, params proto.Message) ([
 	b.WriteString("<request")
 	err := writeIDAttr(&b, id)
 	if err != nil {
-		return nil, err
+		return nil, apperror.NewError("writing request id failed").AddError(err)
 	}
 	err = writeAttr(&b, "method", method)
 	if err != nil {
-		return nil, err
+		return nil, apperror.NewError("writing request method failed").AddError(err)
 	}
 	b.WriteByte('>')
 	if params != nil {
 		b.WriteString("<params>")
 		err := w.c.writeXMLFields(&b, params.ProtoReflect(), 0)
 		if err != nil {
-			return nil, err
+			return nil, apperror.NewError("encoding request params failed").AddError(err)
 		}
 		b.WriteString("</params>")
 	}
@@ -205,19 +206,19 @@ func (w xmlWire) encodeEvent(method string, id rpcID, data proto.Message) ([]byt
 	b.WriteString("<request")
 	err := writeAttr(&b, "method", method)
 	if err != nil {
-		return nil, err
+		return nil, apperror.NewError("writing event method failed").AddError(err)
 	}
 	b.WriteString("><params")
 	err = writeAttr(&b, "id", id.text)
 	if err != nil {
-		return nil, err
+		return nil, apperror.NewError("writing event id failed").AddError(err)
 	}
 	b.WriteByte('>')
 	if data != nil {
 		b.WriteString("<data>")
 		err := w.c.writeXMLFields(&b, data.ProtoReflect(), 0)
 		if err != nil {
-			return nil, err
+			return nil, apperror.NewError("encoding event data failed").AddError(err)
 		}
 		b.WriteString("</data>")
 	}
