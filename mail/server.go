@@ -86,6 +86,7 @@ type Session interface {
 // Conn represents an SMTP connection
 type Conn struct {
 	net.Conn
+
 	scanner       *bufio.Scanner
 	writer        *bufio.Writer
 	hostname      string
@@ -123,7 +124,7 @@ type smtpServer struct {
 	config           ServerConfig
 	manager          *Manager
 	handlers         []NotificationHandler
-	running          int32
+	running          atomic.Int32
 	mutex            sync.RWMutex
 	handlerSemaphore chan struct{}      // Semaphore to limit concurrent handlers
 	handlerQueue     chan handlerTask   // Queue for pending handler tasks
@@ -174,7 +175,7 @@ func NewSMTPServer(config ServerConfig, manager *Manager) Server {
 
 // Start starts the SMTP server
 func (s *smtpServer) Start(_ context.Context) error {
-	if !atomic.CompareAndSwapInt32(&s.running, 0, 1) {
+	if !s.running.CompareAndSwap(0, 1) {
 		return apperror.NewError("SMTP server is already running")
 	}
 	// Start server in goroutine
@@ -195,13 +196,13 @@ func (s *smtpServer) Start(_ context.Context) error {
 			}
 		}
 
-		atomic.StoreInt32(&s.running, 0)
+		s.running.Store(0)
 	}()
 
 	// Check if server started successfully by attempting to connect
 	go func() {
 		maxAttempts := 10
-		for i := 0; i < maxAttempts; i++ {
+		for range maxAttempts {
 			time.Sleep(10 * time.Millisecond)
 
 			// Try to connect to the server
@@ -239,7 +240,7 @@ func (s *smtpServer) Start(_ context.Context) error {
 
 // Stop stops the SMTP server
 func (s *smtpServer) Stop(ctx context.Context) error {
-	if !atomic.CompareAndSwapInt32(&s.running, 1, 0) {
+	if !s.running.CompareAndSwap(1, 0) {
 		return apperror.NewError("SMTP server is not running")
 	}
 
@@ -288,7 +289,7 @@ func (s *smtpServer) AddHandler(handler NotificationHandler) {
 
 // IsRunning returns true if the server is running
 func (s *smtpServer) IsRunning() bool {
-	return atomic.LoadInt32(&s.running) == 1
+	return s.running.Load() == 1
 }
 
 // loadTLSConfig loads or generates TLS configuration
@@ -605,7 +606,8 @@ func (s *session) Rcpt(to string, _ *RcptOptions) error {
 
 // Data handles the email data
 func (s *session) Data(r io.Reader) error {
-	if err := s.checkData(); err != nil {
+	err := s.checkData()
+	if err != nil {
 		return err
 	}
 
@@ -621,7 +623,8 @@ func (s *session) Data(r io.Reader) error {
 // checkData makes the checks that come before a message is accepted: HELO and authentication
 func (s *session) checkData() error {
 	// Validate HELO first if needed
-	if err := s.validateHeloIfNeeded(); err != nil {
+	err := s.validateHeloIfNeeded()
+	if err != nil {
 		return err
 	}
 
@@ -709,11 +712,9 @@ func (s *smtpServer) Serve(listener net.Listener) error {
 			}
 		}
 
-		s.protocolWg.Add(1)
-		go func() {
-			defer s.protocolWg.Done()
+		s.protocolWg.Go(func() {
 			s.handleConnection(conn)
-		}()
+		})
 	}
 }
 
@@ -1198,9 +1199,11 @@ func (s *smtpServer) handleData(conn *Conn, current Session) {
 	}
 
 	var err error
-	if sess, ok := current.(*session); ok {
+	sess, ok := current.(*session)
+	if ok {
 		// The message is complete in memory already; do not copy it through a reader again
-		if err = sess.checkData(); err == nil {
+		err = sess.checkData()
+		if err == nil {
 			err = sess.receive(data)
 		}
 	} else {

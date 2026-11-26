@@ -4,6 +4,7 @@ import (
 	"context"
 	"html/template"
 	"io"
+	"maps"
 	"mime/multipart"
 	"strings"
 	"time"
@@ -36,7 +37,7 @@ type Message struct {
 	// TemplateContent is the direct template content to use (alternative to Template)
 	TemplateContent string `json:"template_content,omitempty"`
 	// TemplateData is the data to pass to the template
-	TemplateData interface{} `json:"template_data,omitempty"`
+	TemplateData any `json:"template_data,omitempty"`
 	// TemplateFuncs contains template functions specific to this message (optional)
 	TemplateFuncs template.FuncMap `json:"-"`
 	// Attachments is a list of file attachments
@@ -119,10 +120,10 @@ type TemplateData struct {
 	Subject string `json:"subject"`
 
 	// Data is the custom data for the template
-	Data interface{} `json:"data"`
+	Data any `json:"data"`
 
 	// Metadata contains additional metadata
-	Metadata map[string]interface{} `json:"metadata,omitempty"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 // MessageBuilder provides a fluent interface for building messages
@@ -208,21 +209,21 @@ func (b *MessageBuilder) HTMLBody(html string) *MessageBuilder {
 }
 
 // Template sets the template name and data
-func (b *MessageBuilder) Template(name string, data interface{}) *MessageBuilder {
+func (b *MessageBuilder) Template(name string, data any) *MessageBuilder {
 	b.message.Template = name
 	b.message.TemplateData = data
 	return b
 }
 
 // TemplateContent sets the template content directly and data
-func (b *MessageBuilder) TemplateContent(content string, data interface{}) *MessageBuilder {
+func (b *MessageBuilder) TemplateContent(content string, data any) *MessageBuilder {
 	b.message.TemplateContent = content
 	b.message.TemplateData = data
 	return b
 }
 
 // WithTemplateFunc adds a template function for this message
-func (b *MessageBuilder) WithTemplateFunc(key string, fn interface{}) *MessageBuilder {
+func (b *MessageBuilder) WithTemplateFunc(key string, fn any) *MessageBuilder {
 	if b.Error != nil {
 		return b
 	}
@@ -241,9 +242,7 @@ func (b *MessageBuilder) WithTemplateFuncs(funcs template.FuncMap) *MessageBuild
 	if b.message.TemplateFuncs == nil {
 		b.message.TemplateFuncs = make(template.FuncMap)
 	}
-	for key, fn := range funcs {
-		b.message.TemplateFuncs[key] = fn
-	}
+	maps.Copy(b.message.TemplateFuncs, funcs)
 	return b
 }
 

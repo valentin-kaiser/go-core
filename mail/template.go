@@ -7,6 +7,7 @@ import (
 	"html"
 	"html/template"
 	"io/fs"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -102,7 +103,7 @@ func (tm *TemplateManager) WithFileServer(templatesPath string) *TemplateManager
 }
 
 // WithTemplateFunc adds a template function to the manager
-func (tm *TemplateManager) WithTemplateFunc(key string, fn interface{}) *TemplateManager {
+func (tm *TemplateManager) WithTemplateFunc(key string, fn any) *TemplateManager {
 	if tm.Error != nil {
 		return tm
 	}
@@ -146,7 +147,7 @@ func (tm *TemplateManager) LoadTemplate(name string) (*template.Template, error)
 }
 
 // RenderTemplate renders a template with the given data and optional custom functions
-func (tm *TemplateManager) RenderTemplate(name string, data interface{}, funcs ...template.FuncMap) (string, error) {
+func (tm *TemplateManager) RenderTemplate(name string, data any, funcs ...template.FuncMap) (string, error) {
 	if tm.Error != nil {
 		return "", tm.Error
 	}
@@ -179,7 +180,7 @@ func (tm *TemplateManager) RenderTemplate(name string, data interface{}, funcs .
 
 			_, err = os.Stat(absCustom)
 			if err == nil {
-				content, err := os.ReadFile(absCustom)
+				content, err := os.ReadFile(absCustom) //nolint:gosec // absCustom was verified to be inside TemplatesPath above
 				if err != nil {
 					return nil, apperror.NewError("failed to read template file from TemplatesPath").AddError(err)
 				}
@@ -213,17 +214,13 @@ func (tm *TemplateManager) RenderTemplate(name string, data interface{}, funcs .
 	// Thread-safe access to global functions
 	tm.mutex.RLock()
 	if tm.funcs != nil {
-		for key, fn := range tm.funcs {
-			funcMap[key] = fn
-		}
+		maps.Copy(funcMap, tm.funcs)
 	}
 	tm.mutex.RUnlock()
 
 	// Apply custom functions (later ones override earlier ones)
 	for _, customFunc := range funcs {
-		for key, fn := range customFunc {
-			funcMap[key] = fn
-		}
+		maps.Copy(funcMap, customFunc)
 	}
 
 	// Parse and execute template
@@ -242,7 +239,7 @@ func (tm *TemplateManager) RenderTemplate(name string, data interface{}, funcs .
 }
 
 // RenderTemplateContent renders template content directly with the given data and optional custom functions
-func (tm *TemplateManager) RenderTemplateContent(content string, data interface{}, funcs ...template.FuncMap) (string, error) {
+func (tm *TemplateManager) RenderTemplateContent(content string, data any, funcs ...template.FuncMap) (string, error) {
 	if tm.Error != nil {
 		return "", tm.Error
 	}
@@ -257,17 +254,13 @@ func (tm *TemplateManager) RenderTemplateContent(content string, data interface{
 	// Thread-safe access to global functions
 	tm.mutex.RLock()
 	if tm.funcs != nil {
-		for key, fn := range tm.funcs {
-			funcMap[key] = fn
-		}
+		maps.Copy(funcMap, tm.funcs)
 	}
 	tm.mutex.RUnlock()
 
 	// Apply custom functions (later ones override earlier ones)
 	for _, customFunc := range funcs {
-		for key, fn := range customFunc {
-			funcMap[key] = fn
-		}
+		maps.Copy(funcMap, customFunc)
 	}
 
 	// Parse and execute template
@@ -356,6 +349,12 @@ func (tm *TemplateManager) loadTemplatesFromPath(templatesPath string) error {
 		return apperror.NewError("templates path does not exist").AddError(err)
 	}
 
+	root, err := os.OpenRoot(templatesPath)
+	if err != nil {
+		return apperror.NewError("opening templates path failed").AddError(err)
+	}
+	defer apperror.Catch(root.Close, "closing templates path failed")
+
 	return filepath.Walk(templatesPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -372,7 +371,8 @@ func (tm *TemplateManager) loadTemplatesFromPath(templatesPath string) error {
 		}
 
 		// Load template content
-		content, err := os.ReadFile(filepath.Clean(path))
+		// Reading through the root keeps symlinks from leading out of the templates path.
+		content, err := root.ReadFile(relPath)
 		if err != nil {
 			return apperror.NewError("failed to read template file").AddError(err)
 		}
@@ -471,6 +471,7 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 	return tm
 }
 
+// DefaultFuncs returns the template functions that are available to every template.
 func DefaultFuncs() template.FuncMap {
 	return template.FuncMap{
 		// Math functions
@@ -515,17 +516,17 @@ func DefaultFuncs() template.FuncMap {
 		"join":      strings.Join,
 		"split":     strings.Split,
 		// Utility functions
-		"default": func(defaultValue, value interface{}) interface{} {
+		"default": func(defaultValue, value any) any {
 			if value == nil || value == "" {
 				return defaultValue
 			}
 			return value
 		},
-		"dict": func(values ...interface{}) map[string]interface{} {
+		"dict": func(values ...any) map[string]any {
 			if len(values)%2 != 0 {
 				return nil
 			}
-			dict := make(map[string]interface{})
+			dict := make(map[string]any)
 			for i := 0; i < len(values); i += 2 {
 				key, ok := values[i].(string)
 				if !ok {
@@ -537,7 +538,7 @@ func DefaultFuncs() template.FuncMap {
 		},
 		// Time functions
 		"now": time.Now,
-		"date": func(format string, date interface{}) string {
+		"date": func(format string, date any) string {
 			// Handle different date types and formats
 			switch v := date.(type) {
 			case time.Time:
@@ -571,27 +572,27 @@ func DefaultFuncs() template.FuncMap {
 			return time.Unix(t, int64(nsec))
 		},
 		// JSON functions
-		"unmarshal": func(object string) (interface{}, error) {
-			var data map[string]interface{}
+		"unmarshal": func(object string) (any, error) {
+			var data map[string]any
 			err := json.Unmarshal([]byte(object), &data)
 			return data, err
 		},
-		"marshal": func(v interface{}) (string, error) {
+		"marshal": func(v any) (string, error) {
 			bytes, err := json.Marshal(v)
 			return string(bytes), err
 		},
-		"marshalIndent": func(v interface{}, prefix, indent string) (string, error) {
+		"marshalIndent": func(v any, prefix, indent string) (string, error) {
 			bytes, err := json.MarshalIndent(v, prefix, indent)
 			return string(bytes), err
 		},
 		// Debugging functions
-		"debug": func(v interface{}) template.HTML {
+		"debug": func(v any) template.HTML {
 			bytes, err := json.MarshalIndent(v, "", "  ")
 			if err != nil {
-				return template.HTML(fmt.Sprintf("error: %v", err))
+				return template.HTML(html.EscapeString(fmt.Sprintf("error: %v", err))) //nolint:gosec // the text is escaped
 			}
 			escaped := html.EscapeString(string(bytes))
-			return template.HTML(fmt.Sprintf("<pre>%s</pre>", escaped))
+			return template.HTML(fmt.Sprintf("<pre>%s</pre>", escaped)) //nolint:gosec // escaped was passed through html.EscapeString
 		},
 		"print":  fmt.Sprint,
 		"printf": fmt.Sprintf,

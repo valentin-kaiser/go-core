@@ -895,8 +895,8 @@ func generateMessageID() (string, error) {
 func handleAddressList(v []string) []string {
 	res := []string{}
 	for _, a := range v {
-		w := strings.Split(a, ",")
-		for _, addr := range w {
+		w := strings.SplitSeq(a, ",")
+		for addr := range w {
 			decodedAddr, err := (&mime.WordDecoder{}).DecodeHeader(strings.TrimSpace(addr))
 			if err == nil {
 				res = append(res, decodedAddr)

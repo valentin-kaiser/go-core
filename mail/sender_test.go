@@ -205,7 +205,8 @@ func TestSMTPSender_WithTemplate(t *testing.T) {
 	// Create a simple template
 	templateContent := `<html><body><h1>{{.Subject}}</h1><p>{{.Body}}</p></body></html>`
 	templatePath := tempDir + "/test.html"
-	if err := os.WriteFile(templatePath, []byte(templateContent), 0600); err != nil {
+	err := os.WriteFile(templatePath, []byte(templateContent), 0600)
+	if err != nil {
 		t.Fatalf("Failed to create template: %v", err)
 	}
 
@@ -242,10 +243,10 @@ func TestSMTPSender_WithTemplate(t *testing.T) {
 	defer cancel()
 
 	// This will fail due to network, but template processing should work
-	err := sender.Send(ctx, message)
+	sendErr := sender.Send(ctx, message)
+	t.Logf("send result: %v", sendErr)
 	// We just want to ensure no template processing errors occur
 	// Network errors are expected in tests
-	_ = err
 }
 
 func TestSMTPSender_AuthMethods(t *testing.T) {
@@ -438,7 +439,7 @@ func TestSMTPSender_SendWithTemplateContent(t *testing.T) {
 	sender := mail.NewSMTPSender(config, tm)
 
 	templateContent := "<h1>Hello {{.Name}}</h1><p>Welcome to {{.Company}}!</p><p>Your order #{{.OrderID}} has been confirmed.</p>"
-	templateData := map[string]interface{}{
+	templateData := map[string]any{
 		"Name":    "Jane Doe",
 		"Company": "ACME Corp",
 		"OrderID": "12345",
@@ -466,7 +467,8 @@ func TestSMTPSender_SendWithTemplateContent(t *testing.T) {
 
 	// The actual send will fail due to fake SMTP server, but the template processing should work
 	ctx := context.Background()
-	err = sender.Send(ctx, message)
+	sendErr := sender.Send(ctx, message)
+	t.Logf("send result: %v", sendErr)
 
 	// We expect an error here due to fake SMTP server, but we want to check that
 	// the template was processed and HTMLBody was set
