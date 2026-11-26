@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -25,7 +26,8 @@ const (
 
 // redactDSN hides the password of a DSN so it does not end up in a backup file
 func redactDSN(dsn string) string {
-	if u, err := url.Parse(dsn); err == nil && u.Scheme != "" && u.User != nil {
+	u, err := url.Parse(dsn)
+	if err == nil && u.Scheme != "" && u.User != nil {
 		if _, ok := u.User.Password(); ok {
 			u.User = url.UserPassword(u.User.Username(), "xxxxx")
 			return u.String()
@@ -71,7 +73,7 @@ func appendMySQLString(dst []byte, s string) []byte {
 }
 
 // appendMySQLValue appends a value scanned from a MySQL result as a SQL literal
-func appendMySQLValue(dst []byte, val interface{}) []byte {
+func appendMySQLValue(dst []byte, val any) []byte {
 	switch v := val.(type) {
 	case nil:
 		return append(dst, "NULL"...)
@@ -130,7 +132,7 @@ func appendPostgresBytea(dst []byte, b []byte) []byte {
 }
 
 // appendPostgresValue appends a value scanned from a PostgreSQL result as a SQL literal
-func appendPostgresValue(dst []byte, val interface{}) []byte {
+func appendPostgresValue(dst []byte, val any) []byte {
 	switch v := val.(type) {
 	case nil:
 		return append(dst, "NULL"...)
@@ -155,9 +157,9 @@ func appendPostgresValue(dst []byte, val interface{}) []byte {
 
 // dumpTable writes the rows as batched INSERT statements. prefix is the "INSERT INTO ... VALUES"
 // text without the newline, suffix what follows the last row of a statement, including the semicolon.
-func dumpTable(w *bufio.Writer, rows *sql.Rows, columns int, prefix, suffix string, appendValue func([]byte, interface{}) []byte) error {
-	values := make([]interface{}, columns)
-	pointers := make([]interface{}, columns)
+func dumpTable(w *bufio.Writer, rows *sql.Rows, columns int, prefix, suffix string, appendValue func([]byte, any) []byte) error {
+	values := make([]any, columns)
+	pointers := make([]any, columns)
 	for i := range values {
 		pointers[i] = &values[i]
 	}
@@ -165,7 +167,8 @@ func dumpTable(w *bufio.Writer, rows *sql.Rows, columns int, prefix, suffix stri
 	var row []byte
 	inBatch, batchBytes := 0, 0
 	for rows.Next() {
-		if err := rows.Scan(pointers...); err != nil {
+		err := rows.Scan(pointers...)
+		if err != nil {
 			return apperror.NewErrorf("failed to scan row").AddError(err)
 		}
 
@@ -178,9 +181,8 @@ func dumpTable(w *bufio.Writer, rows *sql.Rows, columns int, prefix, suffix stri
 		}
 		row = append(row, ')')
 
-		var err error
-		switch {
-		case inBatch == 0:
+		switch inBatch {
+		case 0:
 			_, err = w.WriteString(prefix)
 			if err == nil {
 				err = w.WriteByte('\n')
@@ -198,18 +200,21 @@ func dumpTable(w *bufio.Writer, rows *sql.Rows, columns int, prefix, suffix stri
 		inBatch++
 		batchBytes += len(row)
 		if inBatch >= dumpBatchRows || batchBytes >= dumpBatchBytes {
-			if _, err := w.WriteString(suffix + "\n"); err != nil {
+			_, err := w.WriteString(suffix + "\n")
+			if err != nil {
 				return apperror.NewErrorf("failed to write statement terminator").AddError(err)
 			}
 			inBatch, batchBytes = 0, 0
 		}
 	}
-	if err := rows.Err(); err != nil {
+	err := rows.Err()
+	if err != nil {
 		return apperror.NewErrorf("failed to read rows").AddError(err)
 	}
 
 	if inBatch > 0 {
-		if _, err := w.WriteString(suffix + "\n"); err != nil {
+		_, err := w.WriteString(suffix + "\n")
+		if err != nil {
 			return apperror.NewErrorf("failed to write statement terminator").AddError(err)
 		}
 	}
@@ -231,17 +236,19 @@ func quotedColumns(columns []string, driver Driver) (string, error) {
 
 // backupMySQL writes an SQL dump of the whole MySQL/MariaDB database
 func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
-	file, err := os.Create(path)
+	file, err := os.Create(filepath.Clean(path))
 	if err != nil {
 		return apperror.NewErrorf("failed to create backup file").AddError(err)
 	}
 	// Writes are buffered: a dump has one small write per row otherwise
 	w := bufio.NewWriterSize(file, 256*1024)
 	defer func() {
-		if flushErr := w.Flush(); err == nil && flushErr != nil {
+		flushErr := w.Flush()
+		if err == nil && flushErr != nil {
 			err = apperror.NewErrorf("failed to write backup file").AddError(flushErr)
 		}
-		if closeErr := file.Close(); err == nil && closeErr != nil {
+		closeErr := file.Close()
+		if err == nil && closeErr != nil {
 			err = apperror.NewErrorf("failed to close backup file").AddError(closeErr)
 		}
 	}()
@@ -251,7 +258,8 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 	if err != nil {
 		return apperror.NewErrorf("failed to write backup header").AddError(err)
 	}
-	if _, err = w.WriteString("SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS = 0;\n\n"); err != nil {
+	_, err = w.WriteString("SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS = 0;\n\n")
+	if err != nil {
 		return apperror.NewErrorf("failed to write charset settings").AddError(err)
 	}
 
@@ -262,7 +270,8 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 	var tables []string
 	for rows.Next() {
 		var table string
-		if err := rows.Scan(&table); err != nil {
+		err := rows.Scan(&table)
+		if err != nil {
 			_ = rows.Close()
 			return apperror.NewErrorf("failed to scan table name").AddError(err)
 		}
@@ -282,11 +291,12 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 			d.logger.Warn().Err(err).Msgf("failed to get schema for table %s", table)
 			continue
 		}
-		if _, err = fmt.Fprintf(w, "\n-- Table structure for %s\nDROP TABLE IF EXISTS %s;\n%s;\n\n", table, quotedTable, createStmt); err != nil {
+		_, err = fmt.Fprintf(w, "\n-- Table structure for %s\nDROP TABLE IF EXISTS %s;\n%s;\n\n", table, quotedTable, createStmt)
+		if err != nil {
 			return apperror.NewErrorf("failed to write table schema").AddError(err)
 		}
 
-		dataRows, err := dbInstance.Query("SELECT * FROM " + quotedTable)
+		dataRows, err := dbInstance.Query("SELECT * FROM " + quotedTable) //nolint:gosec,unqueryvet // quotedTable is escaped by quoteIdentifier; a dump needs every column
 		if err != nil {
 			d.logger.Warn().Err(err).Msgf("failed to read data from table %s", table)
 			continue
@@ -302,16 +312,19 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 				_ = dataRows.Close()
 				return err
 			}
-			if _, err = fmt.Fprintf(w, "-- Data for table %s\n", table); err != nil {
+			_, err = fmt.Fprintf(w, "-- Data for table %s\n", table)
+			if err != nil {
 				_ = dataRows.Close()
 				return apperror.NewErrorf("failed to write data header").AddError(err)
 			}
 			prefix := "INSERT INTO " + quotedTable + " (" + cols + ") VALUES"
-			if err := dumpTable(w, dataRows, len(columns), prefix, ";", appendMySQLValue); err != nil {
+			err = dumpTable(w, dataRows, len(columns), prefix, ";", appendMySQLValue)
+			if err != nil {
 				_ = dataRows.Close()
 				return err
 			}
-			if _, err = w.WriteString("\n"); err != nil {
+			_, err = w.WriteString("\n")
+			if err != nil {
 				_ = dataRows.Close()
 				return apperror.NewErrorf("failed to write newline").AddError(err)
 			}
@@ -319,7 +332,8 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 		_ = dataRows.Close()
 	}
 
-	if _, err = w.WriteString("SET FOREIGN_KEY_CHECKS = 1;\n"); err != nil {
+	_, err = w.WriteString("SET FOREIGN_KEY_CHECKS = 1;\n")
+	if err != nil {
 		return apperror.NewErrorf("failed to write footer").AddError(err)
 	}
 
@@ -329,16 +343,18 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 
 // backupPostgres writes an SQL dump of the tables of a schema of a PostgreSQL database
 func (d *Database[Q]) backupPostgres(dbInstance *sql.DB, path string, schema string) (err error) {
-	file, err := os.Create(path)
+	file, err := os.Create(filepath.Clean(path))
 	if err != nil {
 		return apperror.NewErrorf("failed to create backup file").AddError(err)
 	}
 	w := bufio.NewWriterSize(file, 256*1024)
 	defer func() {
-		if flushErr := w.Flush(); err == nil && flushErr != nil {
+		flushErr := w.Flush()
+		if err == nil && flushErr != nil {
 			err = apperror.NewErrorf("failed to write backup file").AddError(flushErr)
 		}
-		if closeErr := file.Close(); err == nil && closeErr != nil {
+		closeErr := file.Close()
+		if err == nil && closeErr != nil {
 			err = apperror.NewErrorf("failed to close backup file").AddError(closeErr)
 		}
 	}()
@@ -366,7 +382,8 @@ func (d *Database[Q]) backupPostgres(dbInstance *sql.DB, path string, schema str
 	var tables []string
 	for rows.Next() {
 		var table string
-		if err := rows.Scan(&table); err != nil {
+		err := rows.Scan(&table)
+		if err != nil {
 			_ = rows.Close()
 			return apperror.NewErrorf("failed to scan table name").AddError(err)
 		}
@@ -391,7 +408,8 @@ func (d *Database[Q]) backupPostgres(dbInstance *sql.DB, path string, schema str
 			d.logger.Warn().Err(err).Msgf("failed to get schema for table %s", table)
 			continue
 		}
-		if _, err = fmt.Fprintf(w, "\n-- Table: %s\n%s\n\n", table, createStmt); err != nil {
+		_, err = fmt.Fprintf(w, "\n-- Table: %s\n%s\n\n", table, createStmt)
+		if err != nil {
 			return apperror.NewErrorf("failed to write table schema").AddError(err)
 		}
 
@@ -400,7 +418,7 @@ func (d *Database[Q]) backupPostgres(dbInstance *sql.DB, path string, schema str
 			return apperror.NewErrorf("invalid table name").AddError(err)
 		}
 
-		dataRows, err := dbInstance.Query("SELECT * FROM " + quotedSchema + "." + quotedTable)
+		dataRows, err := dbInstance.Query("SELECT * FROM " + quotedSchema + "." + quotedTable) //nolint:gosec,unqueryvet // both identifiers are escaped by quoteIdentifier; a dump needs every column
 		if err != nil {
 			d.logger.Warn().Err(err).Msgf("failed to read data from table %s", table)
 			continue
@@ -416,19 +434,22 @@ func (d *Database[Q]) backupPostgres(dbInstance *sql.DB, path string, schema str
 				_ = dataRows.Close()
 				return err
 			}
-			if _, err = fmt.Fprintf(w, "-- Data for table: %s\n", table); err != nil {
+			_, err = fmt.Fprintf(w, "-- Data for table: %s\n", table)
+			if err != nil {
 				_ = dataRows.Close()
 				return apperror.NewErrorf("failed to write data header").AddError(err)
 			}
 			prefix := "INSERT INTO " + quotedSchema + "." + quotedTable + " (" + cols + ") VALUES"
 			// Rows that exist already are kept: one duplicate would otherwise abort the whole restore
-			if err := dumpTable(w, dataRows, len(columns), prefix, " ON CONFLICT DO NOTHING;", appendPostgresValue); err != nil {
+			err = dumpTable(w, dataRows, len(columns), prefix, " ON CONFLICT DO NOTHING;", appendPostgresValue)
+			if err != nil {
 				_ = dataRows.Close()
 				return err
 			}
 		}
 		_ = dataRows.Close()
-		if _, err = w.WriteString("\n"); err != nil {
+		_, err = w.WriteString("\n")
+		if err != nil {
 			return apperror.NewErrorf("failed to write newline").AddError(err)
 		}
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/valentin-kaiser/go-core/apperror"
 )
@@ -43,7 +44,8 @@ func forEachStatement(r io.Reader, fn func(stmt string) error) error {
 			stmt = append(stmt, bytes.TrimSuffix(line, []byte("\n"))...)
 			stmt = append(stmt, '\n')
 			if trimmed[len(trimmed)-1] == ';' {
-				if ferr := fn(string(stmt)); ferr != nil {
+				ferr := fn(string(stmt))
+				if ferr != nil {
 					return ferr
 				}
 				stmt = stmt[:0]
@@ -57,24 +59,29 @@ func forEachStatement(r io.Reader, fn func(stmt string) error) error {
 	}
 }
 
+// backupFileMode is the mode of restored and copied database files.
+const backupFileMode os.FileMode = 0o640
+
 // copyFile copies a file without reading it into memory
-func copyFile(src, dst string, perm os.FileMode) error {
-	in, err := os.Open(src)
+func copyFile(src, dst string) error {
+	in, err := os.Open(filepath.Clean(src))
 	if err != nil {
 		return apperror.Wrap(err)
 	}
 	defer func() { _ = in.Close() }()
 
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, perm)
+	out, err := os.OpenFile(filepath.Clean(dst), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, backupFileMode)
 	if err != nil {
 		return apperror.Wrap(err)
 	}
 
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return apperror.Wrap(err)
+	_, err = io.Copy(out, in)
+	if err != nil {
+		closeErr := out.Close()
+		return apperror.Wrap(errors.Join(err, closeErr))
 	}
-	if err := out.Close(); err != nil {
+	err = out.Close()
+	if err != nil {
 		return apperror.Wrap(err)
 	}
 	return nil

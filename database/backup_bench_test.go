@@ -20,7 +20,8 @@ func BenchmarkBackupSQLite(b *testing.B) {
 	db.AwaitConnection()
 
 	err := db.Execute(func(sqlDB *sql.DB) error {
-		if _, err := sqlDB.Exec("CREATE TABLE t (id INTEGER PRIMARY KEY, payload TEXT)"); err != nil {
+		_, err := sqlDB.Exec("CREATE TABLE t (id INTEGER PRIMARY KEY, payload TEXT)")
+		if err != nil {
 			return err
 		}
 		tx, err := sqlDB.Begin()
@@ -31,8 +32,9 @@ func BenchmarkBackupSQLite(b *testing.B) {
 		for i := range payload {
 			payload[i] = 'x'
 		}
-		for i := 0; i < 30000; i++ {
-			if _, err := tx.Exec("INSERT INTO t (payload) VALUES (?)", string(payload)); err != nil {
+		for range 30000 {
+			_, err := tx.Exec("INSERT INTO t (payload) VALUES (?)", string(payload))
+			if err != nil {
 				_ = tx.Rollback()
 				return err
 			}
@@ -49,7 +51,8 @@ func BenchmarkBackupSQLite(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := db.Backup(target, ""); err != nil {
+		err := db.Backup(target, "")
+		if err != nil {
 			b.Fatal(err)
 		}
 	}

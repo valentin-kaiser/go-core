@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -103,7 +104,7 @@ func (c *connection) PrepareContext(ctx context.Context, query string) (d.Stmt, 
 // ExecContext executes a query with context and middleware support
 func (c *connection) ExecContext(ctx context.Context, query string, args []d.NamedValue) (d.Result, error) {
 	for _, mw := range c.middlewares {
-		ctx = mw.BeforeExec(ctx, query, args)
+		ctx = mw.BeforeExec(ctx, query, args) //nolint:fatcontext // each middleware extends the context of the previous one
 	}
 
 	var result d.Result
@@ -122,7 +123,7 @@ func (c *connection) ExecContext(ctx context.Context, query string, args []d.Nam
 	if err != nil {
 		return nil, err
 	}
-	defer stmt.Close()
+	defer apperror.Catch(stmt.Close, "closing statement failed")
 
 	stmtExecCtx, ok := stmt.(d.StmtExecContext)
 	if !ok {
@@ -135,7 +136,7 @@ func (c *connection) ExecContext(ctx context.Context, query string, args []d.Nam
 // QueryContext executes a query with context and middleware support
 func (c *connection) QueryContext(ctx context.Context, query string, args []d.NamedValue) (d.Rows, error) {
 	for _, mw := range c.middlewares {
-		ctx = mw.BeforeQuery(ctx, query, args)
+		ctx = mw.BeforeQuery(ctx, query, args) //nolint:fatcontext // each middleware extends the context of the previous one
 	}
 
 	var rows d.Rows
@@ -154,7 +155,7 @@ func (c *connection) QueryContext(ctx context.Context, query string, args []d.Na
 	if err != nil {
 		return nil, err
 	}
-	defer stmt.Close()
+	defer apperror.Catch(stmt.Close, "closing statement failed")
 
 	stmtQueryCtx, ok := stmt.(d.StmtQueryContext)
 	if !ok {
@@ -211,7 +212,7 @@ func (s *statement) Query(args []d.Value) (d.Rows, error) {
 // ExecContext executes a statement with context
 func (s *statement) ExecContext(ctx context.Context, args []d.NamedValue) (d.Result, error) {
 	for _, mw := range s.middlewares {
-		ctx = mw.BeforeExec(ctx, s.query, args)
+		ctx = mw.BeforeExec(ctx, s.query, args) //nolint:fatcontext // each middleware extends the context of the previous one
 	}
 
 	var result d.Result
@@ -232,7 +233,7 @@ func (s *statement) ExecContext(ctx context.Context, args []d.NamedValue) (d.Res
 // QueryContext executes a query with context
 func (s *statement) QueryContext(ctx context.Context, args []d.NamedValue) (d.Rows, error) {
 	for _, mw := range s.middlewares {
-		ctx = mw.BeforeQuery(ctx, s.query, args)
+		ctx = mw.BeforeQuery(ctx, s.query, args) //nolint:fatcontext // each middleware extends the context of the previous one
 	}
 
 	var rows d.Rows
@@ -271,6 +272,7 @@ func (m *LoggingMiddleware) SetEnabled(enabled bool) *LoggingMiddleware {
 	return m
 }
 
+// SetTrace enables or disables the caller field of the log events at runtime.
 func (m *LoggingMiddleware) SetTrace(enabled bool) *LoggingMiddleware {
 	m.trace.Store(enabled)
 	return m
@@ -285,7 +287,7 @@ func (m *LoggingMiddleware) IsEnabled() bool {
 type startTimeKey struct{}
 
 // BeforeExec remembers when the statement started, if logging is enabled
-func (m *LoggingMiddleware) BeforeExec(ctx context.Context, query string, args []d.NamedValue) context.Context {
+func (m *LoggingMiddleware) BeforeExec(ctx context.Context, _ string, _ []d.NamedValue) context.Context {
 	// The start time is only used for log fields; skip it when no event would be written
 	if !m.enabled.Load() || !logging.IsEnabled(m.logger, logging.ErrorLevel) {
 		return ctx
@@ -346,7 +348,7 @@ func (m *LoggingMiddleware) AfterExec(ctx context.Context, query string, args []
 }
 
 // BeforeQuery remembers when the query started, if logging is enabled
-func (m *LoggingMiddleware) BeforeQuery(ctx context.Context, query string, args []d.NamedValue) context.Context {
+func (m *LoggingMiddleware) BeforeQuery(ctx context.Context, _ string, _ []d.NamedValue) context.Context {
 	// The start time is only used for log fields; skip it when no event would be written
 	if !m.enabled.Load() || !logging.IsEnabled(m.logger, logging.ErrorLevel) {
 		return ctx
@@ -401,16 +403,16 @@ func (m *LoggingMiddleware) AfterQuery(ctx context.Context, query string, args [
 }
 
 // BeginTx is a no-op implementation to satisfy the Middleware interface
-func (m *LoggingMiddleware) BeginTx(ctx context.Context, opts d.TxOptions) (d.Tx, error) {
+func (m *LoggingMiddleware) BeginTx(_ context.Context, _ d.TxOptions) (d.Tx, error) {
 	return nil, d.ErrSkip
 }
 
 // convertNamedValuesToInterface converts driver.NamedValue slice to a more readable format
-func convertNamedValuesToInterface(args []d.NamedValue) []interface{} {
+func convertNamedValuesToInterface(args []d.NamedValue) []any {
 	if len(args) == 0 {
 		return nil
 	}
-	result := make([]interface{}, len(args))
+	result := make([]any, len(args))
 	for i, arg := range args {
 		result[i] = arg.Value
 	}
@@ -442,7 +444,10 @@ func wrap(driverName string, middlewares []Middleware) string {
 	if err != nil {
 		return driverName
 	}
-	db.Close()
+	err = db.Close()
+	if err != nil {
+		return driverName
+	}
 
 	originalDriver := db.Driver()
 
@@ -474,7 +479,7 @@ func computeMiddlewareHash(middlewares []Middleware) string {
 		// Include the pointer address to distinguish between different instances
 		// of the same middleware type with different configurations
 		ptr := reflect.ValueOf(mw).Pointer()
-		h.Write([]byte(fmt.Sprintf("%d", ptr)))
+		h.Write([]byte(strconv.FormatUint(uint64(ptr), 10)))
 	}
 	// Return first 8 characters of the hex hash for brevity
 	return hex.EncodeToString(h.Sum(nil))[:8]

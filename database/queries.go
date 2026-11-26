@@ -10,10 +10,10 @@ import (
 
 // DBTX is the interface a sqlc generated constructor takes. Both *sql.DB and *sql.Tx implement it.
 type DBTX interface {
-	ExecContext(context.Context, string, ...interface{}) (sql.Result, error)
-	PrepareContext(context.Context, string) (*sql.Stmt, error)
-	QueryContext(context.Context, string, ...interface{}) (*sql.Rows, error)
-	QueryRowContext(context.Context, string, ...interface{}) *sql.Row
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	PrepareContext(ctx context.Context, query string) (*sql.Stmt, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
 }
 
 // queriesArg is the connection converted to the parameter type of a reflected constructor.
@@ -53,7 +53,7 @@ func (d *Database[Q]) newQueries(conn DBTX) (*Q, error) {
 		return nil, apperror.NewErrorf("queries constructor must return exactly one value")
 	}
 
-	queries, ok := results[0].Interface().(*Q)
+	queries, ok := reflect.TypeAssert[*Q](results[0])
 	if !ok {
 		return nil, apperror.NewErrorf("queries constructor returned unexpected type")
 	}

@@ -18,7 +18,8 @@ func TestReconnectClosesReplacedPool(t *testing.T) {
 	db.AwaitConnection()
 
 	old := db.Get()
-	if err := old.Ping(); err != nil {
+	err := old.Ping()
+	if err != nil {
 		t.Fatalf("ping before reconnect: %v", err)
 	}
 
@@ -31,11 +32,13 @@ func TestReconnectClosesReplacedPool(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	if err := old.Ping(); err == nil {
+	err = old.Ping()
+	if err == nil {
 		t.Fatal("the replaced pool is still open after reconnect")
 	}
 	db.AwaitConnection()
-	if err := db.Get().Ping(); err != nil {
+	err = db.Get().Ping()
+	if err != nil {
 		t.Fatalf("new pool is not usable: %v", err)
 	}
 }
