@@ -34,7 +34,7 @@ const (
 // Message fields are child elements named _<field number>.
 type xmlWire struct{ c codec }
 
-func (xmlWire) protocol() Protocol  { return ProtocolXML }
+func (xmlWire) protocol() Protocol { return ProtocolXML }
 
 func (xmlWire) contentType() string { return mediaTypeXML }
 

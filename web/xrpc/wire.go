@@ -95,7 +95,7 @@ func newWire(p Protocol, c codec) wire {
 
 type jsonWire struct{ c codec }
 
-func (jsonWire) protocol() Protocol  { return ProtocolJSON }
+func (jsonWire) protocol() Protocol { return ProtocolJSON }
 
 func (jsonWire) contentType() string { return mediaTypeJSON }
 
