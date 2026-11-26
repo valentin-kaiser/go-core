@@ -5,9 +5,6 @@ import (
 	"net/http"
 )
 
-// ContextKey is the type used for context keys in this package. Using a distinct type helps avoid collisions with other context keys in the application.
-type ContextKey string
-
 const (
 	languageContextKeyName = "Language"
 	requestContextKeyName  = "Request"
@@ -23,6 +20,9 @@ var (
 	// when no direct Language is found in the context.
 	RequestKey any = ContextKey(requestContextKeyName)
 )
+
+// ContextKey is the type used for context keys in this package. Using a distinct type helps avoid collisions with other context keys in the application.
+type ContextKey string
 
 // WithLanguage returns a new context that carries the given Language.
 // Downstream code can retrieve it with [LanguageFromContext].
