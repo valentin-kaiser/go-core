@@ -12,7 +12,7 @@ func TestMiddleware_German(t *testing.T) {
 	b := newTestBundle(t)
 
 	var captured string
-	handler := i18n.Middleware(b)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := i18n.Middleware(b)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		captured = b.TCTX(r.Context(), "greeting")
 	}))
 
@@ -29,7 +29,7 @@ func TestMiddleware_English(t *testing.T) {
 	b := newTestBundle(t)
 
 	var captured string
-	handler := i18n.Middleware(b)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := i18n.Middleware(b)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		captured = b.TCTX(r.Context(), "greeting")
 	}))
 
@@ -46,7 +46,7 @@ func TestMiddleware_NoAcceptLanguage(t *testing.T) {
 	b := newTestBundle(t)
 
 	var captured string
-	handler := i18n.Middleware(b)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := i18n.Middleware(b)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		captured = b.TCTX(r.Context(), "greeting")
 	}))
 
@@ -62,7 +62,7 @@ func TestMiddleware_UnsupportedFallback(t *testing.T) {
 	b := newTestBundle(t)
 
 	var captured string
-	handler := i18n.Middleware(b)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := i18n.Middleware(b)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		captured = b.TCTX(r.Context(), "greeting")
 	}))
 
@@ -81,7 +81,7 @@ func TestMiddleware_LanguageFromContext(t *testing.T) {
 
 	var lang i18n.Language
 	var ok bool
-	handler := i18n.Middleware(b)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := i18n.Middleware(b)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		lang, ok = i18n.LanguageFromContext(r.Context())
 	}))
 
@@ -102,7 +102,7 @@ func TestMiddleware_RequestFromContext(t *testing.T) {
 
 	var req *http.Request
 	var ok bool
-	handler := i18n.Middleware(b)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := i18n.Middleware(b)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		req, ok = i18n.RequestFromContext(r.Context())
 	}))
 
@@ -125,10 +125,10 @@ func TestGlobalMiddleware(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer i18n.Init()
+	defer resetBundle(t)
 
 	var captured string
-	handler := i18n.GlobalMiddleware()(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := i18n.GlobalMiddleware()(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		captured = i18n.TCTX(r.Context(), "greeting")
 	}))
 
@@ -145,7 +145,7 @@ func TestMiddleware_QualityWeightOrdering(t *testing.T) {
 	b := newTestBundle(t)
 
 	var captured string
-	handler := i18n.Middleware(b)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := i18n.Middleware(b)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		captured = b.TCTX(r.Context(), "greeting")
 	}))
 

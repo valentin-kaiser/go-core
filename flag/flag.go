@@ -206,13 +206,13 @@ func Arguments() []string {
 
 // Register registers a new flag with the given name, value and usage
 // It panics if the flag is already registered or if the value is not a pointer
-func Register(name string, value interface{}, usage string) {
+func Register(name string, value any, usage string) {
 	if pflag.Lookup(name) != nil {
 		panic(fmt.Sprintf("flag %s already registered", name))
 	}
 
 	val := reflect.ValueOf(value)
-	if val.Kind() != reflect.Ptr {
+	if val.Kind() != reflect.Pointer {
 		panic(fmt.Sprintf("flag %s must be a pointer", name))
 	}
 
@@ -257,13 +257,13 @@ func Register(name string, value interface{}, usage string) {
 // Override allows changing an existing flag's variable, default value and description
 // It panics if the flag is not already registered or if the value is not a pointer
 // Note: The flag must not have been parsed yet for this to work properly
-func Override(name string, value interface{}, usage string) {
+func Override(name string, value any, usage string) {
 	if pflag.Lookup(name) == nil {
 		panic(fmt.Sprintf("flag %s is not registered", name))
 	}
 
 	val := reflect.ValueOf(value)
-	if val.Kind() != reflect.Ptr {
+	if val.Kind() != reflect.Pointer {
 		panic(fmt.Sprintf("flag %s value must be a pointer", name))
 	}
 

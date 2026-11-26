@@ -39,7 +39,7 @@ func BenchmarkOverheadQueryNoop(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = db.Query(func(q *TestQueries) error { return nil })
+		_ = db.Query(func(_ *TestQueries) error { return nil })
 	}
 }
 
@@ -49,7 +49,7 @@ func BenchmarkOverheadQueryNoopParallel(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_ = db.Query(func(q *TestQueries) error { return nil })
+			_ = db.Query(func(_ *TestQueries) error { return nil })
 		}
 	})
 }
@@ -59,7 +59,7 @@ func BenchmarkOverheadTransactionNoop(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = db.Transaction(func(tx *sql.Tx) error { return nil })
+		_ = db.Transaction(func(_ *sql.Tx) error { return nil })
 	}
 }
 
@@ -68,7 +68,7 @@ func BenchmarkOverheadQueryTransactionNoop(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = db.QueryTransaction(func(q *TestQueries) error { return nil })
+		_ = db.QueryTransaction(func(_ *TestQueries) error { return nil })
 	}
 }
 
@@ -87,7 +87,7 @@ func BenchmarkOverheadQueryTypedNoop(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = db.Query(func(q *TestQueries) error { return nil })
+		_ = db.Query(func(_ *TestQueries) error { return nil })
 	}
 }
 
@@ -96,6 +96,6 @@ func BenchmarkOverheadQueryTransactionTypedNoop(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = db.QueryTransaction(func(q *TestQueries) error { return nil })
+		_ = db.QueryTransaction(func(_ *TestQueries) error { return nil })
 	}
 }

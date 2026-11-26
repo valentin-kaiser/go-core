@@ -213,7 +213,7 @@ func DefaultConfig() *Config {
 func (c *ClientConfig) TLSConfig() *tls.Config {
 	return &tls.Config{
 		ServerName:         c.Host,
-		InsecureSkipVerify: c.SkipCertificateVerification,
+		InsecureSkipVerify: c.SkipCertificateVerification, //nolint:gosec // opt-in via configuration
 		MinVersion:         tls.VersionTLS12,
 	}
 }

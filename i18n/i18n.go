@@ -87,6 +87,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"maps"
 	"path"
 	"strings"
 	"sync"
@@ -188,9 +189,7 @@ func WithMap(lang Language, translations map[string]string) Option {
 			b.translations[lang] = make(map[string]string)
 			b.matcher.Store(nil)
 		}
-		for k, v := range translations {
-			b.translations[lang][k] = v
-		}
+		maps.Copy(b.translations[lang], translations)
 		return nil
 	}
 }
@@ -302,9 +301,7 @@ func (b *Bundle) Register(lang Language, translations map[string]string) {
 		b.translations[lang] = make(map[string]string)
 		b.matcher.Store(nil)
 	}
-	for k, v := range translations {
-		b.translations[lang][k] = v
-	}
+	maps.Copy(b.translations[lang], translations)
 }
 
 // RegisterJSON adds translations for a language from raw JSON bytes at runtime.
@@ -312,11 +309,13 @@ func (b *Bundle) Register(lang Language, translations map[string]string) {
 // internally (e.g. {"page": {"title": "Home"}} becomes "page.title").
 func (b *Bundle) RegisterJSON(lang Language, data []byte) error {
 	raw := make(map[string]any)
-	if err := json.Unmarshal(data, &raw); err != nil {
+	err := json.Unmarshal(data, &raw)
+	if err != nil {
 		return fmt.Errorf("i18n: failed to parse JSON for language %q: %w", lang, err)
 	}
 	m := make(map[string]string)
-	if err := flattenJSON("", raw, m); err != nil {
+	err = flattenJSON("", raw, m)
+	if err != nil {
 		return fmt.Errorf("i18n: failed to flatten JSON for language %q: %w", lang, err)
 	}
 	b.Register(lang, m)
@@ -358,11 +357,13 @@ func (b *Bundle) HasLanguage(lang Language) bool {
 // Returns an error if the JSON cannot be parsed.
 func (b *Bundle) loadJSON(lang Language, data []byte) error {
 	raw := make(map[string]any)
-	if err := json.Unmarshal(data, &raw); err != nil {
+	err := json.Unmarshal(data, &raw)
+	if err != nil {
 		return err
 	}
 	m := make(map[string]string)
-	if err := flattenJSON("", raw, m); err != nil {
+	err = flattenJSON("", raw, m)
+	if err != nil {
 		return err
 	}
 	b.mu.Lock()
@@ -371,9 +372,7 @@ func (b *Bundle) loadJSON(lang Language, data []byte) error {
 		b.translations[lang] = make(map[string]string)
 		b.matcher.Store(nil)
 	}
-	for k, v := range m {
-		b.translations[lang][k] = v
-	}
+	maps.Copy(b.translations[lang], m)
 	return nil
 }
 
@@ -390,7 +389,8 @@ func flattenJSON(prefix string, raw map[string]any, out map[string]string) error
 		}
 		switch val := v.(type) {
 		case map[string]any:
-			if err := flattenJSON(key, val, out); err != nil {
+			err := flattenJSON(key, val, out)
+			if err != nil {
 				return err
 			}
 		case string:

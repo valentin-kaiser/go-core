@@ -132,7 +132,8 @@ type Client struct {
 // The caller owns the returned client and must invoke Close to release the
 // underlying resources.
 func New(ctx context.Context, cfg Config) (*Client, error) {
-	if err := cfg.Validate(); err != nil {
+	err := cfg.Validate()
+	if err != nil {
 		return nil, apperror.Wrap(err)
 	}
 
@@ -167,7 +168,8 @@ func (c *Client) Close() error {
 	if c == nil || c.raw == nil {
 		return nil
 	}
-	if err := c.raw.Close(); err != nil {
+	err := c.raw.Close()
+	if err != nil {
 		return apperror.NewError("closing etcd client failed").AddError(err)
 	}
 	return nil

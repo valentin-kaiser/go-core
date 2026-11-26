@@ -24,13 +24,13 @@ func TestConcurrentDebugFlag(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 1000; i++ {
+		for i := range 1000 {
 			logging.Debug(i%2 == 0)
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			a.Trace().Msg("x")
 			a.Info().Msg("x")
 		}
@@ -39,7 +39,7 @@ func TestConcurrentDebugFlag(t *testing.T) {
 }
 
 // The level is changed while another goroutine logs and derives package adapters.
-func TestConcurrentSetLevel(t *testing.T) {
+func TestConcurrentSetLevel(_ *testing.T) {
 	a := logging.NewZerologAdapterWithLogger(zerolog.New(io.Discard)).SetLevel(logging.InfoLevel)
 	s := logging.NewStandardAdapter().SetLevel(logging.InfoLevel)
 
@@ -47,21 +47,21 @@ func TestConcurrentSetLevel(t *testing.T) {
 	wg.Add(3)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			a.SetLevel(logging.DebugLevel)
 			s.SetLevel(logging.ErrorLevel)
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			a.Info().Msg("x")
 			_ = a.WithPackage("p").GetLevel()
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 1000; i++ {
+		for range 1000 {
 			_ = s.GetLevel()
 			_ = s.Enabled()
 		}
@@ -123,7 +123,7 @@ func TestCallerFieldPointsAtCaller(t *testing.T) {
 	logpkg.Info().Msg("zerolog")
 	logging.SetGlobalAdapter(st)
 	logpkg.Info().Msg("standard")
-	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(buf.String()), "\n") {
 		if !strings.Contains(line, "race_test.go") {
 			t.Errorf("caller does not point at the test file: %s", line)
 		}
@@ -132,7 +132,7 @@ func TestCallerFieldPointsAtCaller(t *testing.T) {
 
 // The typed setters must produce the same JSON as the generic Interface path they replace.
 func TestFieldOutputMatchesInterface(t *testing.T) {
-	values := []interface{}{
+	values := []any{
 		"text with \"quotes\"", 1, int8(-2), int16(3), int32(-4), int64(5),
 		uint(6), uint8(7), uint16(8), uint32(9), uint64(10),
 		float32(1.5), 2.25, true, time.Second, time.Unix(1700000000, 123456789).UTC(), []byte("ab"),

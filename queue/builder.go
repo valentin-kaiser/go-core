@@ -32,7 +32,7 @@ func (jb *JobBuilder) WithID(id string) *JobBuilder {
 }
 
 // WithPayload sets the job payload
-func (jb *JobBuilder) WithPayload(payload map[string]interface{}) *JobBuilder {
+func (jb *JobBuilder) WithPayload(payload map[string]any) *JobBuilder {
 	data, err := json.Marshal(payload)
 	if err == nil {
 		jb.job.Payload = data

@@ -105,8 +105,8 @@ var (
 	mutex = &sync.RWMutex{}
 	cm    = &manager{
 		name:     "config",
-		defaults: make(map[string]interface{}),
-		values:   make(map[string]interface{}),
+		defaults: make(map[string]any),
+		values:   make(map[string]any),
 		flags:    make(map[string]*pflag.Flag),
 	}
 )
@@ -122,19 +122,19 @@ type manager struct {
 	name         string
 	config       Config
 	prefix       string
-	defaults     map[string]interface{}
-	values       map[string]interface{}
+	defaults     map[string]any
+	values       map[string]any
 	flags        map[string]*pflag.Flag
 	onChange     []func(o Config, n Config) error
 	base         Source
 	overlays     []Source
 	watchCancels []func()
-	watchCtx     context.Context
+	watchCtx     context.Context //nolint:containedctx // the lifetime of the watchers is bound to the manager, not to a call
 	watchCancel  context.CancelFunc
 }
 
 // Manager returns the singleton configuration manager instance
-func Manager() *manager {
+func Manager() *manager { //nolint:revive // the manager type is intentionally only reachable through Manager
 	mutex.Lock()
 	defer mutex.Unlock()
 	return cm
@@ -189,7 +189,7 @@ func (m *manager) Register(c Config) error {
 		return apperror.NewError("the configuration provided is nil")
 	}
 
-	if reflect.TypeOf(c).Kind() != reflect.Ptr || reflect.TypeOf(c).Elem().Kind() != reflect.Struct {
+	if reflect.TypeOf(c).Kind() != reflect.Pointer || reflect.TypeOf(c).Elem().Kind() != reflect.Struct {
 		return apperror.NewErrorf("the configuration provided is not a pointer to a struct, got %T", c)
 	}
 
@@ -232,7 +232,8 @@ type configBox struct {
 // the source is loaded again. Read always reloads from the sources; values
 // are never cached across calls.
 func Read() error {
-	if err := cm.ensureBase(); err != nil {
+	err := cm.ensureBase()
+	if err != nil {
 		return err
 	}
 
@@ -247,11 +248,12 @@ func Write(change Config) error {
 		return apperror.NewError("the configuration provided is nil")
 	}
 
-	if err := cm.ensureBase(); err != nil {
+	err := cm.ensureBase()
+	if err != nil {
 		return err
 	}
 
-	err := change.Validate()
+	err = change.Validate()
 	if err != nil {
 		return apperror.Wrap(err)
 	}
@@ -306,8 +308,8 @@ func Reset() {
 
 	cm = &manager{
 		name:     "config",
-		defaults: make(map[string]interface{}),
-		values:   make(map[string]interface{}),
+		defaults: make(map[string]any),
+		values:   make(map[string]any),
 		flags:    make(map[string]*pflag.Flag),
 	}
 }
@@ -327,10 +329,10 @@ func Changed(o, n any) bool {
 	ov := reflect.ValueOf(o)
 	nv := reflect.ValueOf(n)
 
-	if ov.Kind() == reflect.Ptr && !ov.IsNil() {
+	if ov.Kind() == reflect.Pointer && !ov.IsNil() {
 		ov = ov.Elem()
 	}
-	if nv.Kind() == reflect.Ptr && !nv.IsNil() {
+	if nv.Kind() == reflect.Pointer && !nv.IsNil() {
 		nv = nv.Elem()
 	}
 
@@ -405,7 +407,7 @@ func (m *manager) loadSources(ctx context.Context) error {
 		}
 	}
 
-	overlayValues := make([]map[string]interface{}, 0, len(overlays))
+	overlayValues := make([]map[string]any, 0, len(overlays))
 	for _, o := range overlays {
 		ov, err := o.Load(ctx)
 		if err != nil {
@@ -417,7 +419,7 @@ func (m *manager) loadSources(ctx context.Context) error {
 		overlayValues = append(overlayValues, ov)
 	}
 
-	merged := mergeValues(append([]map[string]interface{}{baseValues}, overlayValues...)...)
+	merged := mergeValues(append([]map[string]any{baseValues}, overlayValues...)...)
 
 	mutex.Lock()
 	m.values = merged
@@ -428,7 +430,8 @@ func (m *manager) loadSources(ctx context.Context) error {
 // reload re-loads the configuration from all sources and applies it through
 // the validate/set/OnChange pipeline.
 func (m *manager) reload(ctx context.Context) error {
-	if err := m.loadSources(ctx); err != nil {
+	err := m.loadSources(ctx)
+	if err != nil {
 		return err
 	}
 
@@ -436,12 +439,12 @@ func (m *manager) reload(ctx context.Context) error {
 		return apperror.NewError("no configuration registered")
 	}
 
-	change, ok := reflect.New(reflect.TypeOf(m.config).Elem()).Interface().(Config)
+	change, ok := reflect.TypeAssert[Config](reflect.New(reflect.TypeOf(m.config).Elem()))
 	if !ok {
 		return apperror.NewErrorf("creating new instance of %T failed", m.config)
 	}
 
-	err := m.unmarshal(change)
+	err = m.unmarshal(change)
 	if err != nil {
 		return apperror.NewErrorf("unmarshalling configuration data in %T failed", m.config).AddError(err)
 	}
@@ -457,7 +460,8 @@ func (m *manager) reload(ctx context.Context) error {
 	handlers := append([]func(Config, Config) error(nil), m.onChange...)
 	mutex.RUnlock()
 	for _, f := range handlers {
-		if err := f(o, change); err != nil {
+		err := f(o, change)
+		if err != nil {
 			return apperror.Wrap(err)
 		}
 	}
@@ -470,7 +474,8 @@ func (m *manager) reload(ctx context.Context) error {
 func (m *manager) startWatch(ctx context.Context) error {
 	m.stopWatch()
 
-	if err := m.ensureBase(); err != nil {
+	err := m.ensureBase()
+	if err != nil {
 		return err
 	}
 
@@ -482,8 +487,9 @@ func (m *manager) startWatch(ctx context.Context) error {
 	sources := append([]Source{m.base}, m.overlays...)
 	mutex.Unlock()
 
-	callback := func(_ map[string]interface{}) {
-		if err := m.reload(watchCtx); err != nil {
+	callback := func(_ map[string]any) {
+		err := m.reload(watchCtx)
+		if err != nil {
 			// Reload errors during watch are non-fatal; swallow to keep the
 			// watch loop alive. Users wanting visibility should register an
 			// OnChange handler that logs.

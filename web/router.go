@@ -1,9 +1,11 @@
 package web
 
 import (
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -101,9 +103,7 @@ type routeState struct {
 // Must be called with the mutex held after any of them changed.
 func (router *Router) publish() {
 	limits := make(map[string]*limitStore, len(router.limits))
-	for pattern, store := range router.limits {
-		limits[pattern] = store
-	}
+	maps.Copy(limits, router.limits)
 	router.state.Store(&routeState{
 		limits:           limits,
 		mux:              router.mux,
@@ -357,20 +357,11 @@ func (router *Router) corsFor(path string) (func(http.ResponseWriter, *http.Requ
 	return router.cors[matched], true
 }
 
-// wrap applies all registered middlewares to the given handler
-// It sorts the middlewares by their order and applies them LIFO (last in, first out)
-func (router *Router) wrap(handler http.Handler) http.Handler {
-	router.mutex.RLock()
-	sorted := router.sorted
-	router.mutex.RUnlock()
-	return router.wrapWith(sorted, handler)
-}
-
 // wrapWith applies the given middlewares, which sort has already ordered, to the handler
 func (router *Router) wrapWith(sorted [][]Middleware, handler http.Handler) http.Handler {
 	for _, middlewares := range sorted {
-		for i := len(middlewares) - 1; i >= 0; i-- {
-			handler = middlewares[i](handler)
+		for _, middleware := range slices.Backward(middlewares) {
+			handler = middleware(handler)
 		}
 	}
 
@@ -480,7 +471,7 @@ func (router *Router) canonicalRedirect(w http.ResponseWriter, r *http.Request) 
 		}
 
 		logger.Trace().Fields(logging.F("host", host), logging.F("domain", router.canonicalDomain), logging.F("port", port), logging.F("protocol", protocol)).Msg("redirecting to canonical domain")
-		http.Redirect(w, r, protocol+"://"+router.canonicalDomain+port+r.RequestURI, http.StatusMovedPermanently)
+		http.Redirect(w, r, protocol+"://"+router.canonicalDomain+port+r.RequestURI, http.StatusMovedPermanently) //nolint:gosec // target host is the configured canonical domain, only the request path is user-controlled
 		return true
 	}
 	return false
@@ -513,9 +504,7 @@ func (router *Router) honeypot(w http.ResponseWriter, r *http.Request) {
 		// Requests read the blacklist without a lock, so add to a copy and publish it
 		router.mutex.Lock()
 		blacklist := make(map[string]*net.IPNet, len(router.blacklist)+1)
-		for k, v := range router.blacklist {
-			blacklist[k] = v
-		}
+		maps.Copy(blacklist, router.blacklist)
 		blacklist[network.String()] = network
 		router.blacklist = blacklist
 		router.publish()

@@ -93,9 +93,9 @@ type Job struct {
 	Progress    float64           `json:"progress"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
-	CompletedAt time.Time         `json:"completed_at,omitempty"`
-	ScheduleAt  time.Time         `json:"schedule_at,omitempty"`
-	RetryAt     time.Time         `json:"retry_at,omitempty"`
+	CompletedAt time.Time         `json:"completed_at"`
+	ScheduleAt  time.Time         `json:"schedule_at"`
+	RetryAt     time.Time         `json:"retry_at"`
 	Timeout     time.Duration     `json:"timeout"`
 	Payload     json.RawMessage   `json:"payload,omitempty"`
 	Results     json.RawMessage   `json:"results,omitempty"`
@@ -132,7 +132,7 @@ type Batch struct {
 	Completed   int               `json:"completed"`
 	Failed      int               `json:"failed"`
 	CreatedAt   time.Time         `json:"created_at"`
-	CompletedAt time.Time         `json:"completed_at,omitempty"`
+	CompletedAt time.Time         `json:"completed_at"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
 }
 
@@ -326,12 +326,12 @@ func (jc *JobContext) ReportProgress(progress float64) {
 }
 
 // GetPayload gets a value from the job payload
-func (jc *JobContext) GetPayload(key string) (interface{}, bool) {
+func (jc *JobContext) GetPayload(key string) (any, bool) {
 	if jc.Job.Payload == nil {
 		return nil, false
 	}
 
-	var payload map[string]interface{}
+	var payload map[string]any
 	err := json.Unmarshal(jc.Job.Payload, &payload)
 	if err != nil {
 		return nil, false

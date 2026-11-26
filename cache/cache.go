@@ -81,10 +81,10 @@ import (
 // Cache defines the interface for cache implementations
 type Cache interface {
 	// Get retrieves a value from the cache and deserializes it into the provided destination
-	Get(ctx context.Context, key string, dest interface{}) (bool, error)
+	Get(ctx context.Context, key string, dest any) (bool, error)
 
 	// Set stores a value in the cache with the specified TTL
-	Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error
+	Set(ctx context.Context, key string, value any, ttl time.Duration) error
 
 	// Delete removes a value from the cache
 	Delete(ctx context.Context, key string) error
@@ -96,10 +96,10 @@ type Cache interface {
 	Clear(ctx context.Context) error
 
 	// GetMulti retrieves multiple values from the cache
-	GetMulti(ctx context.Context, keys []string) (map[string]interface{}, error)
+	GetMulti(ctx context.Context, keys []string) (map[string]any, error)
 
 	// SetMulti stores multiple values in the cache
-	SetMulti(ctx context.Context, items map[string]interface{}, ttl time.Duration) error
+	SetMulti(ctx context.Context, items map[string]any, ttl time.Duration) error
 
 	// DeleteMulti removes multiple values from the cache
 	DeleteMulti(ctx context.Context, keys []string) error
@@ -130,13 +130,13 @@ type Stats struct {
 	Memory      int64     `json:"memory_bytes"`
 	Errors      int64     `json:"errors"`
 	LastError   string    `json:"last_error,omitempty"`
-	LastErrorAt time.Time `json:"last_error_at,omitempty"`
+	LastErrorAt time.Time `json:"last_error_at"`
 }
 
 // Item represents a cache item with metadata
 type Item struct {
 	Key       string        `json:"key"`
-	Value     interface{}   `json:"value"`
+	Value     any           `json:"value"`
 	ExpiresAt time.Time     `json:"expires_at"`
 	CreatedAt time.Time     `json:"created_at"`
 	UpdatedAt time.Time     `json:"updated_at"`
@@ -191,12 +191,12 @@ func (e EventType) String() string {
 
 // Event represents a cache event
 type Event struct {
-	Type      EventType   `json:"type"`
-	Key       string      `json:"key"`
-	Value     interface{} `json:"value,omitempty"`
-	Timestamp time.Time   `json:"timestamp"`
-	Namespace string      `json:"namespace,omitempty"`
-	Error     error       `json:"error,omitempty"`
+	Type      EventType `json:"type"`
+	Key       string    `json:"key"`
+	Value     any       `json:"value,omitempty"`
+	Timestamp time.Time `json:"timestamp"`
+	Namespace string    `json:"namespace,omitempty"`
+	Error     error     `json:"error,omitempty"`
 }
 
 // EventHandler is a function that handles cache events
@@ -228,20 +228,20 @@ func (c *Config) Changed(n *Config) bool {
 
 // Serializer defines the interface for value serialization
 type Serializer interface {
-	Serialize(value interface{}) ([]byte, error)
-	Deserialize(data []byte, dest interface{}) error
+	Serialize(value any) ([]byte, error)
+	Deserialize(data []byte, dest any) error
 }
 
 // JSONSerializer implements JSON serialization
 type JSONSerializer struct{}
 
 // Serialize serializes a value to JSON
-func (s *JSONSerializer) Serialize(value interface{}) ([]byte, error) {
+func (s *JSONSerializer) Serialize(value any) ([]byte, error) {
 	return json.Marshal(value)
 }
 
 // Deserialize deserializes JSON data into the destination
-func (s *JSONSerializer) Deserialize(data []byte, dest interface{}) error {
+func (s *JSONSerializer) Deserialize(data []byte, dest any) error {
 	return json.Unmarshal(data, dest)
 }
 
@@ -250,9 +250,9 @@ func (s *JSONSerializer) Deserialize(data []byte, dest interface{}) error {
 type InMemorySerializer interface {
 	Serializer
 	// Keep returns what the cache stores for the value
-	Keep(value interface{}) (interface{}, error)
+	Keep(value any) (any, error)
 	// Restore copies a stored value into dest, which is a pointer
-	Restore(kept interface{}, dest interface{}) error
+	Restore(kept any, dest any) error
 }
 
 // NativeSerializer keeps values in memory as Go values instead of JSON, which makes reads of a
@@ -266,11 +266,11 @@ type InMemorySerializer interface {
 type NativeSerializer struct{ JSONSerializer }
 
 // Keep stores the value; a pointer is stored as the value it points to
-func (s *NativeSerializer) Keep(value interface{}) (interface{}, error) {
+func (s *NativeSerializer) Keep(value any) (any, error) {
 	rv := reflect.ValueOf(value)
-	if rv.Kind() == reflect.Ptr {
+	if rv.Kind() == reflect.Pointer {
 		if rv.IsNil() {
-			return nil, nil
+			return nil, nil //nolint:nilnil // a nil pointer is stored as nil without an error
 		}
 		return rv.Elem().Interface(), nil
 	}
@@ -278,9 +278,9 @@ func (s *NativeSerializer) Keep(value interface{}) (interface{}, error) {
 }
 
 // Restore assigns the stored value to dest. When the types do not match it falls back to a JSON round trip.
-func (s *NativeSerializer) Restore(kept interface{}, dest interface{}) error {
+func (s *NativeSerializer) Restore(kept any, dest any) error {
 	dv := reflect.ValueOf(dest)
-	if dv.Kind() != reflect.Ptr || dv.IsNil() {
+	if dv.Kind() != reflect.Pointer || dv.IsNil() {
 		return errors.New("destination must be a non-nil pointer")
 	}
 	dv = dv.Elem()
@@ -304,7 +304,7 @@ func (s *NativeSerializer) Restore(kept interface{}, dest interface{}) error {
 type NoOpSerializer struct{}
 
 // Serialize returns the value as-is if it's []byte, otherwise returns an error
-func (s *NoOpSerializer) Serialize(value interface{}) ([]byte, error) {
+func (s *NoOpSerializer) Serialize(value any) ([]byte, error) {
 	if data, ok := value.([]byte); ok {
 		return data, nil
 	}
@@ -315,7 +315,7 @@ func (s *NoOpSerializer) Serialize(value interface{}) ([]byte, error) {
 }
 
 // Deserialize copies the data to the destination if it's *[]byte or *string
-func (s *NoOpSerializer) Deserialize(data []byte, dest interface{}) error {
+func (s *NoOpSerializer) Deserialize(data []byte, dest any) error {
 	switch v := dest.(type) {
 	case *[]byte:
 		*v = make([]byte, len(data))
@@ -416,7 +416,7 @@ func (bc *BaseCache) updateStats(fn func(*Stats)) {
 }
 
 // emitEvent emits a cache event if events are enabled
-func (bc *BaseCache) emitEvent(eventType EventType, key string, value interface{}, err error) {
+func (bc *BaseCache) emitEvent(eventType EventType, key string, value any, err error) {
 	if !bc.config.EnableEvents || bc.config.EventHandler == nil {
 		return
 	}

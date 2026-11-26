@@ -80,7 +80,7 @@ func TestXX(t *testing.T) {
 
 func TestMd5(t *testing.T) {
 	testCases := []struct {
-		input    interface{}
+		input    any
 		expected string
 	}{
 		{"", "d41d8cd98f00b204e9800998ecf8427e"},
@@ -401,7 +401,7 @@ func TestXXHashEdgeCases(t *testing.T) {
 func TestMd5EdgeCases(t *testing.T) {
 	tests := []struct {
 		name  string
-		input interface{}
+		input any
 	}{
 		{"nil", nil},
 		{"empty string", ""},
@@ -513,7 +513,8 @@ func TestReadOrSavePassphraseFileOperations(t *testing.T) {
 			length:   16,
 			setup: func(path string) error {
 				dir := filepath.Dir(path)
-				if err := os.MkdirAll(dir, 0750); err != nil {
+				err := os.MkdirAll(dir, 0750)
+				if err != nil {
 					return err
 				}
 				// Remove all permissions on Unix-like systems
@@ -528,7 +529,8 @@ func TestReadOrSavePassphraseFileOperations(t *testing.T) {
 			filePath := filepath.Join(tempDir, tt.filename)
 
 			if tt.setup != nil {
-				if err := tt.setup(filePath); err != nil {
+				err := tt.setup(filePath)
+				if err != nil {
 					t.Fatalf("Setup failed: %v", err)
 				}
 			}
@@ -552,7 +554,8 @@ func TestReadOrSavePassphraseFileOperations(t *testing.T) {
 			if strings.Contains(tt.filename, "readonly") {
 				dir := filepath.Dir(filePath)
 				// Restore permissions before cleanup
-				if err := os.Chmod(dir, 0600); err != nil {
+				err := os.Chmod(dir, 0600)
+				if err != nil {
 					t.Logf("Failed to restore permissions: %v", err)
 				}
 			}
@@ -784,7 +787,8 @@ func BenchmarkMd5(b *testing.B) {
 
 func BenchmarkGetRandomBytes(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		if _, err := security.GetRandomBytes(32); err != nil {
+		_, err := security.GetRandomBytes(32)
+		if err != nil {
 			b.Logf("Failed to get random bytes: %v", err)
 		}
 	}
@@ -792,7 +796,8 @@ func BenchmarkGetRandomBytes(b *testing.B) {
 
 func BenchmarkGenerateRandomPassword(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		if _, err := security.GenerateRandomPassword(16); err != nil {
+		_, err := security.GenerateRandomPassword(16)
+		if err != nil {
 			b.Logf("Failed to generate password: %v", err)
 		}
 	}

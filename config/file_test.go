@@ -29,10 +29,12 @@ func TestFileSourceWatchReloadsOnWrite(t *testing.T) {
 
 	dir := t.TempDir()
 	cfg := &fileTestConfig{Name: "v1", Port: 1}
-	if err := config.Manager().WithName("file-watch-test").WithPath(dir).Register(cfg); err != nil {
+	err := config.Manager().WithName("file-watch-test").WithPath(dir).Register(cfg)
+	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if err := config.Read(); err != nil {
+	err = config.Read()
+	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
 
@@ -47,7 +49,8 @@ func TestFileSourceWatchReloadsOnWrite(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := config.StartWatch(ctx); err != nil {
+	err = config.StartWatch(ctx)
+	if err != nil {
 		t.Fatalf("StartWatch: %v", err)
 	}
 	defer config.StopWatch()
@@ -56,7 +59,8 @@ func TestFileSourceWatchReloadsOnWrite(t *testing.T) {
 	// content directly to the same path.
 	path := filepath.Join(dir, "file-watch-test.yaml")
 	data := []byte("name: v2\nport: 2\n")
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	err = os.WriteFile(path, data, 0600)
+	if err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
 
@@ -80,10 +84,12 @@ func TestFileSourceWatchReloadsOnRenameOverwrite(t *testing.T) {
 
 	dir := t.TempDir()
 	cfg := &fileTestConfig{Name: "v1", Port: 1}
-	if err := config.Manager().WithName("file-watch-test-rename").WithPath(dir).Register(cfg); err != nil {
+	err := config.Manager().WithName("file-watch-test-rename").WithPath(dir).Register(cfg)
+	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if err := config.Read(); err != nil {
+	err = config.Read()
+	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
 
@@ -98,7 +104,8 @@ func TestFileSourceWatchReloadsOnRenameOverwrite(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := config.StartWatch(ctx); err != nil {
+	err = config.StartWatch(ctx)
+	if err != nil {
 		t.Fatalf("StartWatch: %v", err)
 	}
 	defer config.StopWatch()
@@ -107,10 +114,12 @@ func TestFileSourceWatchReloadsOnRenameOverwrite(t *testing.T) {
 	// renaming it over the original.
 	path := filepath.Join(dir, "file-watch-test-rename.yaml")
 	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, []byte("name: v3\nport: 3\n"), 0600); err != nil {
+	err = os.WriteFile(tmp, []byte("name: v3\nport: 3\n"), 0600)
+	if err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	if err := os.Rename(tmp, path); err != nil {
+	err = os.Rename(tmp, path)
+	if err != nil {
 		t.Fatalf("Rename: %v", err)
 	}
 

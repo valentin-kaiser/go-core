@@ -204,22 +204,22 @@ type Parser interface {
 
 // ParsedVersion represents the parsed components of a version string
 type ParsedVersion struct {
-	Original string                 `json:"original"`
-	Format   Format                 `json:"format"`
-	Major    int                    `json:"major,omitempty"`
-	Minor    int                    `json:"minor,omitempty"`
-	Patch    int                    `json:"patch,omitempty"`
-	Micro    int                    `json:"micro,omitempty"`
-	Year     int                    `json:"year,omitempty"`
-	Month    int                    `json:"month,omitempty"`
-	Day      int                    `json:"day,omitempty"`
-	Week     int                    `json:"week,omitempty"`
-	Extra    map[string]interface{} `json:"extra,omitempty"`
+	Original string         `json:"original"`
+	Format   Format         `json:"format"`
+	Major    int            `json:"major,omitempty"`
+	Minor    int            `json:"minor,omitempty"`
+	Patch    int            `json:"patch,omitempty"`
+	Micro    int            `json:"micro,omitempty"`
+	Year     int            `json:"year,omitempty"`
+	Month    int            `json:"month,omitempty"`
+	Day      int            `json:"day,omitempty"`
+	Week     int            `json:"week,omitempty"`
+	Extra    map[string]any `json:"extra,omitempty"`
 }
 
 // String returns the version string without the "v" prefix
 func (pv *ParsedVersion) String() string {
-	version := strings.SplitN(pv.Original, "-", 2)[0]
+	version, _, _ := strings.Cut(pv.Original, "-")
 	return strings.TrimPrefix(version, "v")
 }
 
@@ -290,7 +290,8 @@ func parsedTag(tag string) *tagInfo {
 
 	info := &tagInfo{tag: tag, format: DetectFormat(tag)}
 	if parser := GetParser(info.format); parser != nil {
-		if pv, err := parser.Parse(tag); err == nil {
+		pv, err := parser.Parse(tag)
+		if err == nil {
 			info.parsed = pv
 		}
 	}
@@ -366,7 +367,7 @@ func Patch() int {
 
 // String returns the version tag as a string without the "v" prefix.
 func String() string {
-	version := strings.SplitN(GitTag, "-", 2)[0]
+	version, _, _ := strings.Cut(GitTag, "-")
 	return strings.TrimPrefix(version, "v")
 }
 
@@ -479,13 +480,13 @@ func CompareVersions(tag1, tag2 string) (int, error) {
 }
 
 // GetVersionComponents returns the version components as a map for any supported format
-func GetVersionComponents(tag string) (map[string]interface{}, error) {
+func GetVersionComponents(tag string) (map[string]any, error) {
 	pv, err := ParseVersion(tag)
 	if err != nil {
 		return nil, err
 	}
 
-	components := make(map[string]interface{})
+	components := make(map[string]any)
 	components["format"] = pv.Format.String()
 	components["original"] = pv.Original
 
@@ -1026,7 +1027,7 @@ func (v *Release) CompareVersions(c *Release) (int, error) {
 }
 
 // GetVersionComponents returns the parsed version components
-func (v *Release) GetVersionComponents() (map[string]interface{}, error) {
+func (v *Release) GetVersionComponents() (map[string]any, error) {
 	if v.ParsedVersion != nil {
 		return GetVersionComponents(v.GitTag)
 	}

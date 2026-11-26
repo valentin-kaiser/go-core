@@ -62,17 +62,15 @@ const defaultRegisterTTL = 15 * time.Second
 // A zero ttl falls back to the package default (15 seconds). The minimum
 // effective TTL accepted by etcd is one second; smaller values are raised.
 func (c *Client) Register(ctx context.Context, info Descriptor, ttl time.Duration) (*Registration, error) {
-	if err := info.Validate(); err != nil {
+	err := info.Validate()
+	if err != nil {
 		return nil, apperror.Wrap(err)
 	}
 
 	if ttl <= 0 {
 		ttl = defaultRegisterTTL
 	}
-	seconds := int64(ttl / time.Second)
-	if seconds < 1 {
-		seconds = 1
-	}
+	seconds := max(int64(ttl/time.Second), 1)
 
 	leaseResp, err := c.raw.Grant(ctx, seconds)
 	if err != nil {
@@ -85,17 +83,17 @@ func (c *Client) Register(ctx context.Context, info Descriptor, ttl time.Duratio
 	}
 
 	key := c.key("services", info.Name, info.ID)
-	if _, err := c.raw.Put(ctx, key, string(payload), clientv3.WithLease(leaseResp.ID)); err != nil {
-		_, _ = c.raw.Revoke(context.Background(), leaseResp.ID)
-		return nil, apperror.NewError("writing service registration failed").AddError(err)
+	_, err = c.raw.Put(ctx, key, string(payload), clientv3.WithLease(leaseResp.ID))
+	if err != nil {
+		return nil, c.abortRegistration(ctx, leaseResp.ID, apperror.NewError("writing service registration failed").AddError(err))
 	}
 
-	keepAliveCtx, cancel := context.WithCancel(context.Background())
+	// The keep-alive must outlive the caller context: its cancellation is handled below by deregistering.
+	keepAliveCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	ka, err := c.raw.KeepAlive(keepAliveCtx, leaseResp.ID)
 	if err != nil {
 		cancel()
-		_, _ = c.raw.Revoke(context.Background(), leaseResp.ID)
-		return nil, apperror.NewError("starting etcd keep-alive failed").AddError(err)
+		return nil, c.abortRegistration(ctx, leaseResp.ID, apperror.NewError("starting etcd keep-alive failed").AddError(err))
 	}
 
 	reg := &Registration{
@@ -115,7 +113,7 @@ func (c *Client) Register(ctx context.Context, info Descriptor, ttl time.Duratio
 				return
 			case <-ctx.Done():
 				// Parent context cancelled - terminate registration.
-				_ = reg.Deregister(context.Background())
+				apperror.Catch(func() error { return reg.Deregister(context.WithoutCancel(ctx)) }, "deregistering service after context cancellation failed")
 				return
 			case _, ok := <-ka:
 				if !ok {
@@ -126,6 +124,16 @@ func (c *Client) Register(ctx context.Context, info Descriptor, ttl time.Duratio
 	}()
 
 	return reg, nil
+}
+
+// abortRegistration revokes the lease of a registration that did not complete and
+// returns cause, extended by the revoke error if revoking failed as well.
+func (c *Client) abortRegistration(ctx context.Context, leaseID clientv3.LeaseID, cause apperror.Error) error {
+	_, err := c.raw.Revoke(context.WithoutCancel(ctx), leaseID)
+	if err != nil {
+		return cause.AddError(err)
+	}
+	return cause
 }
 
 // Info returns the service info backing this registration.

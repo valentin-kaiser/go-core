@@ -48,13 +48,14 @@ func (s *Service) grpcServer() *grpc.Server {
 
 func (s *Service) serveGRPC(w http.ResponseWriter, r *http.Request) {
 	ctx := withProtocol(WithHTTPContext(r.Context(), w, r), ProtocolGRPC)
-	s.grpcServer().ServeHTTP(w, r.WithContext(ctx))
+	s.grpcServer().ServeHTTP(w, r.WithContext(ctx)) //nolint:contextcheck // grpc derives each stream context from the request passed here
 }
 
 func unaryHandler(m *method) func(any, context.Context, func(any) error, grpc.UnaryServerInterceptor) (any, error) {
 	return func(_ any, ctx context.Context, dec func(any) error, interceptor grpc.UnaryServerInterceptor) (any, error) {
 		in := m.newIn()
-		if err := dec(in); err != nil {
+		err := dec(in)
+		if err != nil {
 			return nil, err
 		}
 
@@ -81,14 +82,16 @@ func streamHandler(m *method) grpc.StreamHandler {
 		var first proto.Message
 		if m.kind == kindServerStream {
 			first = m.newIn()
-			if err := stream.RecvMsg(first); err != nil {
+			err := stream.RecvMsg(first)
+			if err != nil {
 				return err
 			}
 		}
 
 		recv := func() (proto.Message, error) {
 			in := m.newIn()
-			if err := stream.RecvMsg(in); err != nil {
+			err := stream.RecvMsg(in)
+			if err != nil {
 				return nil, err
 			}
 			return in, nil

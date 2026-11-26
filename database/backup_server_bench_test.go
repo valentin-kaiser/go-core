@@ -19,7 +19,8 @@ func fillDumpTable(b *testing.B, db *database.Database[TestQueries], create stri
 	b.Helper()
 	err := db.Execute(func(c *sql.DB) error {
 		for _, s := range []string{"DROP TABLE IF EXISTS dump_bench", create} {
-			if _, err := c.Exec(s); err != nil {
+			_, err := c.Exec(s)
+			if err != nil {
 				return err
 			}
 		}
@@ -27,14 +28,15 @@ func fillDumpTable(b *testing.B, db *database.Database[TestQueries], create stri
 		if err != nil {
 			return err
 		}
-		stmt, err := tx.Prepare("INSERT INTO dump_bench VALUES (" + placeholder(0) + ")")
+		stmt, err := tx.Prepare("INSERT INTO dump_bench VALUES (" + placeholder(0) + ")") //nolint:gosec // placeholder is generated from constants
 		if err != nil {
 			return err
 		}
 		when := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 		text := strings.Repeat("some text with 'quotes' and a \\ backslash", 3)
-		for i := 0; i < dumpBenchRows; i++ {
-			if _, err := stmt.Exec(i, fmt.Sprintf("%s%d", text, i), []byte{1, 2, 3, byte(i)}, float64(i)/7, when); err != nil {
+		for i := range dumpBenchRows {
+			_, err := stmt.Exec(i, fmt.Sprintf("%s%d", text, i), []byte{1, 2, 3, byte(i)}, float64(i)/7, when)
+			if err != nil {
 				_ = tx.Rollback()
 				return err
 			}
@@ -56,11 +58,13 @@ func benchBackupRestore(b *testing.B, db *database.Database[TestQueries], schema
 	b.Run("Backup", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			if err := db.Backup(path, schema); err != nil {
+			err := db.Backup(path, schema)
+			if err != nil {
 				b.Fatal(err)
 			}
 		}
-		if info, err := os.Stat(path); err == nil {
+		info, err := os.Stat(path)
+		if err == nil {
 			b.SetBytes(info.Size())
 		}
 	})
@@ -68,11 +72,13 @@ func benchBackupRestore(b *testing.B, db *database.Database[TestQueries], schema
 	b.Run("Restore", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			if err := db.Restore(path); err != nil {
+			err := db.Restore(path)
+			if err != nil {
 				b.Fatal(err)
 			}
 		}
-		if info, err := os.Stat(path); err == nil {
+		info, err := os.Stat(path)
+		if err == nil {
 			b.SetBytes(info.Size())
 		}
 	})

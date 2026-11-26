@@ -35,7 +35,7 @@ func setupRedisTest(t *testing.T) *cache.RedisCache {
 	}
 
 	config := cache.DefaultConfig()
-	config.Namespace = fmt.Sprintf("test:%s:%d:%d", t.Name(), time.Now().UnixNano(), rand.Int63())
+	config.Namespace = fmt.Sprintf("test:%s:%d:%d", t.Name(), time.Now().UnixNano(), rand.Int63()) //nolint:gosec // unique test namespace, not security relevant
 
 	c := cache.NewRedisCacheWithConfig(client, config)
 
@@ -147,7 +147,7 @@ func TestRedisCache_MultiOperations(t *testing.T) {
 	ctx := t.Context()
 
 	// Test SetMulti
-	items := map[string]interface{}{
+	items := map[string]any{
 		"user:1": TestUser{ID: 1, Name: "Alice", Email: "alice@example.com"},
 		"user:2": TestUser{ID: 2, Name: "Bob", Email: "bob@example.com"},
 		"user:3": TestUser{ID: 3, Name: "Charlie", Email: "charlie@example.com"},
@@ -172,7 +172,7 @@ func TestRedisCache_MultiOperations(t *testing.T) {
 	// Verify results
 	for key, data := range results {
 		// For JSON serializer, data comes back as map[string]interface{}
-		userMap, ok := data.(map[string]interface{})
+		userMap, ok := data.(map[string]any)
 		if !ok {
 			t.Fatalf("Expected data to be map[string]interface{} for key %s, got %T", key, data)
 		}
@@ -398,7 +398,7 @@ func TestRedisCache_Pipeline(t *testing.T) {
 	ctx := t.Context()
 
 	// Test pipeline operations
-	items := map[string]interface{}{
+	items := map[string]any{
 		"pipe:1": "value1",
 		"pipe:2": "value2",
 		"pipe:3": "value3",

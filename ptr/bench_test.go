@@ -11,7 +11,7 @@ var sinkInt *int
 func BenchmarkPoint(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		sinkInt = ptr.Point(i)
+		sinkInt = new(i)
 	}
 }
 

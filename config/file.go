@@ -34,7 +34,7 @@ func (s *fileSource) configFile() string {
 
 // Load implements Source. It returns ErrNotFound when the YAML file does not
 // exist on disk so that the manager can bootstrap defaults.
-func (s *fileSource) Load(_ context.Context) (map[string]interface{}, error) {
+func (s *fileSource) Load(_ context.Context) (map[string]any, error) {
 	if s.name == "" || s.path == "" {
 		return nil, apperror.NewError("config name and path must be set")
 	}
@@ -47,13 +47,13 @@ func (s *fileSource) Load(_ context.Context) (map[string]interface{}, error) {
 		return nil, apperror.NewError("reading configuration file failed").AddError(err)
 	}
 
-	var yamlData map[string]interface{}
+	var yamlData map[string]any
 	err = yaml.Unmarshal(data, &yamlData)
 	if err != nil {
 		return nil, apperror.NewError("unmarshalling configuration file failed").AddError(err)
 	}
 
-	values := make(map[string]interface{})
+	values := make(map[string]any)
 	flattenYAML(yamlData, "", values)
 	return values, nil
 }
@@ -102,7 +102,7 @@ func (s *fileSource) Save(_ context.Context, c Config) error {
 // watched so the subscription survives editors that save by renaming a
 // temporary file over the original, which would otherwise drop a watch held
 // on the old file handle/inode.
-func (s *fileSource) Watch(ctx context.Context, onChange func(map[string]interface{})) (func(), error) {
+func (s *fileSource) Watch(ctx context.Context, onChange func(map[string]any)) (func(), error) {
 	if s.name == "" || s.path == "" {
 		return nil, apperror.NewError("config name and path must be set")
 	}
@@ -113,7 +113,8 @@ func (s *fileSource) Watch(ctx context.Context, onChange func(map[string]interfa
 	}
 
 	dir := filepath.Dir(s.configFile())
-	if err := watcher.Add(dir); err != nil {
+	err = watcher.Add(dir)
+	if err != nil {
 		_ = watcher.Close()
 		return nil, apperror.NewErrorf("watching configuration directory %q failed", dir).AddError(err)
 	}
@@ -167,20 +168,20 @@ func (s *fileSource) Watch(ctx context.Context, onChange func(map[string]interfa
 
 // flattenYAML walks a YAML-decoded map and flattens nested maps into dotted
 // lower-case keys writing them into out.
-func flattenYAML(data map[string]interface{}, prefix string, out map[string]interface{}) {
+func flattenYAML(data map[string]any, prefix string, out map[string]any) {
 	for key, value := range data {
 		fullKey := key
 		if prefix != "" {
 			fullKey = prefix + "." + key
 		}
 
-		if nested, ok := value.(map[string]interface{}); ok {
+		if nested, ok := value.(map[string]any); ok {
 			flattenYAML(nested, fullKey, out)
 			continue
 		}
 
-		if nestedInterface, ok := value.(map[interface{}]interface{}); ok {
-			nestedString := make(map[string]interface{})
+		if nestedInterface, ok := value.(map[any]any); ok {
+			nestedString := make(map[string]any)
 			for k, v := range nestedInterface {
 				if keyStr, ok := k.(string); ok {
 					nestedString[keyStr] = v

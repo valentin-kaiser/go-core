@@ -57,7 +57,8 @@ func (c *Client) Discover(ctx context.Context, name string) ([]Descriptor, error
 	out := make([]Descriptor, 0, len(resp.Kvs))
 	for _, kv := range resp.Kvs {
 		var info Descriptor
-		if err := json.Unmarshal(kv.Value, &info); err != nil {
+		err := json.Unmarshal(kv.Value, &info)
+		if err != nil {
 			continue
 		}
 		out = append(out, info)
@@ -106,7 +107,8 @@ func emit(ev *clientv3.Event, handler func(ServiceEvent)) {
 	switch ev.Type {
 	case mvccpb.PUT:
 		var info Descriptor
-		if err := json.Unmarshal(ev.Kv.Value, &info); err != nil {
+		err := json.Unmarshal(ev.Kv.Value, &info)
+		if err != nil {
 			return
 		}
 		t := ServiceAdded
@@ -117,7 +119,8 @@ func emit(ev *clientv3.Event, handler func(ServiceEvent)) {
 	case mvccpb.DELETE:
 		var info Descriptor
 		if ev.PrevKv != nil {
-			if err := json.Unmarshal(ev.PrevKv.Value, &info); err == nil {
+			err := json.Unmarshal(ev.PrevKv.Value, &info)
+			if err == nil {
 				handler(ServiceEvent{Type: ServiceRemoved, Info: info})
 				return
 			}

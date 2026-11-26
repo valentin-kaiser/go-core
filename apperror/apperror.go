@@ -34,7 +34,9 @@ package apperror
 import (
 	"context"
 	"fmt"
+	"maps"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,7 +62,7 @@ var (
 	// WithDetails is a flag to control whether additional details should be included in the error output
 	WithDetails = false
 	// FormatDetails is a function that formats additional details for the error
-	FormatDetails = func(details map[string]interface{}) string {
+	FormatDetails = func(details map[string]any) string {
 		if len(details) == 0 {
 			return ""
 		}
@@ -69,7 +71,7 @@ var (
 			if sb.Len() > 0 {
 				sb.WriteString(", ")
 			}
-			sb.WriteString(fmt.Sprintf("%s: %v", key, value))
+			fmt.Fprintf(&sb, "%s: %v", key, value)
 		}
 		return sb.String()
 	}
@@ -91,7 +93,7 @@ var (
 type Error struct {
 	Trace   []string
 	Errors  []error
-	Context map[string]interface{} // Additional context for the error
+	Context map[string]any // Additional context for the error
 	Message string
 }
 
@@ -107,7 +109,7 @@ func NewError(msg string) Error {
 
 // NewErrorf creates a new Error instance with the formatted message
 // If the error is already of type Error you should use Wrap instead
-func NewErrorf(format string, a ...interface{}) Error {
+func NewErrorf(format string, a ...any) Error {
 	e := Error{
 		Message: fmt.Sprintf(format, a...),
 	}
@@ -116,7 +118,7 @@ func NewErrorf(format string, a ...interface{}) Error {
 }
 
 // NewErrorT creates a new Error instance with the translated and formatted message
-func NewErrorT(ctx context.Context, key string, a ...interface{}) Error {
+func NewErrorT(ctx context.Context, key string, a ...any) Error {
 	e := Error{
 		Message: i18n.TfCTX(ctx, key, a...),
 	}
@@ -156,9 +158,9 @@ func (e Error) AddErrors(errs []error) Error {
 // AddDetail adds a key-value pair to the error context
 // This can be used to provide additional information about the error
 // For example, you can add user IDs, request IDs, or any other relevant data
-func (e Error) AddDetail(key string, value interface{}) Error {
+func (e Error) AddDetail(key string, value any) Error {
 	if e.Context == nil {
-		e.Context = make(map[string]interface{})
+		e.Context = make(map[string]any)
 	}
 	e.Context[key] = value
 	return e
@@ -166,19 +168,17 @@ func (e Error) AddDetail(key string, value interface{}) Error {
 
 // AddDetails adds multiple key-value pairs to the error context
 // This can be used to provide additional information about the error
-func (e Error) AddDetails(details map[string]interface{}) Error {
+func (e Error) AddDetails(details map[string]any) Error {
 	if e.Context == nil {
-		e.Context = make(map[string]interface{})
+		e.Context = make(map[string]any)
 	}
-	for key, value := range details {
-		e.Context[key] = value
-	}
+	maps.Copy(e.Context, details)
 	return e
 }
 
 // GetDetail retrieves a value from the error context by key
 // If the key does not exist, it returns nil
-func (e Error) GetDetail(key string) interface{} {
+func (e Error) GetDetail(key string) any {
 	if e.Context == nil {
 		return nil
 	}
@@ -191,7 +191,7 @@ func (e Error) GetDetail(key string) interface{} {
 
 // GetContext returns the context map of the error
 // This can be used to retrieve additional information that was added to the error
-func (e Error) GetContext() map[string]interface{} {
+func (e Error) GetContext() map[string]any {
 	if e.Context == nil {
 		return nil
 	}
@@ -228,11 +228,11 @@ func (e Error) Unwrap() error {
 // If debug mode is enabled, it includes the stack trace and additional errors
 func (e Error) Error() string {
 	if flag.Debug && len(e.Trace) > 0 {
-		trace := ""
-		for i := len(e.Trace) - 1; i >= 0; i-- {
-			trace += e.Trace[i]
+		var trace strings.Builder
+		for i, v := range slices.Backward(e.Trace) {
+			trace.WriteString(v)
 			if i > 0 {
-				trace += TraceDelimiter
+				trace.WriteString(TraceDelimiter)
 			}
 		}
 
@@ -254,13 +254,13 @@ func (e Error) Error() string {
 
 		switch {
 		case errors == "" && details != "":
-			return fmt.Sprintf("%s | %s", trace, details)
+			return fmt.Sprintf("%s | %s", trace.String(), details)
 		case errors != "" && details == "":
-			return fmt.Sprintf(FullFormat, trace, e.Message, errors)
+			return fmt.Sprintf(FullFormat, trace.String(), e.Message, errors)
 		case errors != "" && details != "":
-			return fmt.Sprintf(FullFormat, trace, e.Message, errors) + " " + details
+			return fmt.Sprintf(FullFormat, trace.String(), e.Message, errors) + " " + details
 		default:
-			return fmt.Sprintf(ErrorTraceFormat, trace, e.Message)
+			return fmt.Sprintf(ErrorTraceFormat, trace.String(), e.Message)
 		}
 	}
 
@@ -359,33 +359,29 @@ func HandleCustom(err error, msg string, handler func(error, string)) {
 }
 
 // Catch is a utility function to handle error checks for example in deferred functions
-// It takes an error and a message, and if the error is not nil,
-// it formats the message and panics with the error details.
+// It calls f and passes a non-nil error together with the message to CatchHandler,
+// which only logs by default. Use Handle if an error should panic.
 // defer apperror.Catch(funcWithError(), "an error occurred")
 func Catch(f func() error, msg string) {
-	if ErrorHandler != nil {
-		err := f()
-		if err != nil {
-			ErrorHandler(err, msg)
-		}
+	err := f()
+	if err != nil && CatchHandler != nil {
+		CatchHandler(err, msg)
 	}
 }
 
 // CatchCustom is a utility function to handle deferred error checks with a custom handler
 // It takes a function that returns an error, a message, and a custom handler.
 func CatchCustom(f func() error, msg string, handler func(error, string)) {
+	err := f()
+	if err == nil {
+		return
+	}
 	if handler != nil {
-		err := f()
-		if err != nil {
-			handler(err, msg)
-			return
-		}
+		handler(err, msg)
+		return
 	}
 	if ErrorHandler != nil {
-		err := f()
-		if err != nil {
-			ErrorHandler(err, msg)
-		}
+		ErrorHandler(err, msg)
 	}
 }
 

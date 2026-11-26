@@ -9,7 +9,7 @@ import (
 func TestSizeOf(t *testing.T) {
 	testCases := []struct {
 		name     string
-		value    interface{}
+		value    any
 		expected int64
 		hasError bool
 	}{
@@ -51,7 +51,7 @@ func TestSizeOfComplexStructure(t *testing.T) {
 		Name     string
 		Age      int
 		Tags     []string
-		Metadata map[string]interface{}
+		Metadata map[string]any
 		Nested   struct {
 			Value string
 		}
@@ -61,7 +61,7 @@ func TestSizeOfComplexStructure(t *testing.T) {
 		Name: "test",
 		Age:  30,
 		Tags: []string{"tag1", "tag2"},
-		Metadata: map[string]interface{}{
+		Metadata: map[string]any{
 			"key1": "value1",
 			"key2": 123,
 		},
@@ -113,7 +113,7 @@ func TestToByteString(t *testing.T) {
 func TestInterfaceIsNullPointer(t *testing.T) {
 	testCases := []struct {
 		name     string
-		value    interface{}
+		value    any
 		expected bool
 	}{
 		{"nil", nil, true},

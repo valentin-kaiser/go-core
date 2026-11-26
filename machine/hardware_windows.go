@@ -81,11 +81,11 @@ func collectFromAll(collectors []func() []string) []string {
 
 // parseWmicValue extracts value from wmic output with given prefix
 func parseWmicValue(output, prefix string) (string, error) {
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(output, "\n")
+	for line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, prefix) {
-			value := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		if after, ok := strings.CutPrefix(line, prefix); ok {
+			value := strings.TrimSpace(after)
 			switch value {
 			case "", "To be filled by O.E.M.":
 				continue
@@ -100,11 +100,11 @@ func parseWmicValue(output, prefix string) (string, error) {
 // parseWmicMultipleValues extracts all values from wmic output with given prefix
 func parseWmicMultipleValues(output, prefix string) []string {
 	var values []string
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(output, "\n")
+	for line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, prefix) {
-			value := strings.TrimSpace(strings.TrimPrefix(line, prefix))
+		if after, ok := strings.CutPrefix(line, prefix); ok {
+			value := strings.TrimSpace(after)
 			switch value {
 			case "", "To be filled by O.E.M.":
 				// Skip empty or placeholder values
@@ -118,7 +118,7 @@ func parseWmicMultipleValues(output, prefix string) []string {
 
 // runPowerShellSingle executes a PowerShell command and returns the trimmed single-line result.
 func runPowerShellSingle(query string) (string, error) {
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", query)
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", query) //nolint:gosec // query is always a constant literal from this package
 	output, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -135,7 +135,7 @@ func runPowerShellSingle(query string) (string, error) {
 // runPowerShellMultiple executes a PowerShell command that returns multiple values joined by comma,
 // then splits and filters the result.
 func runPowerShellMultiple(query string) ([]string, error) {
-	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", query)
+	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", query) //nolint:gosec // query is always a constant literal from this package
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, err
@@ -145,7 +145,7 @@ func runPowerShellMultiple(query string) ([]string, error) {
 		return nil, fmt.Errorf("powershell returned no values for query: %s", query)
 	}
 	var values []string
-	for _, v := range strings.Split(raw, ",") {
+	for v := range strings.SplitSeq(raw, ",") {
 		v = strings.TrimSpace(v)
 		if v != "" && v != "To be filled by O.E.M." {
 			values = append(values, v)
@@ -157,8 +157,10 @@ func runPowerShellMultiple(query string) ([]string, error) {
 // getWindowsCPUID retrieves CPU processor ID using wmic, falling back to PowerShell Get-CimInstance.
 func getWindowsCPUID() (string, error) {
 	cmd := exec.Command("wmic", "cpu", "get", "ProcessorId", "/value")
-	if output, err := cmd.Output(); err == nil {
-		if val, err := parseWmicValue(string(output), "ProcessorId="); err == nil {
+	output, err := cmd.Output()
+	if err == nil {
+		val, err := parseWmicValue(string(output), "ProcessorId=")
+		if err == nil {
 			return val, nil
 		}
 	}
@@ -168,8 +170,10 @@ func getWindowsCPUID() (string, error) {
 // getWindowsMotherboardSerial retrieves motherboard serial number using wmic, falling back to PowerShell Get-CimInstance.
 func getWindowsMotherboardSerial() (string, error) {
 	cmd := exec.Command("wmic", "baseboard", "get", "SerialNumber", "/value")
-	if output, err := cmd.Output(); err == nil {
-		if val, err := parseWmicValue(string(output), "SerialNumber="); err == nil {
+	output, err := cmd.Output()
+	if err == nil {
+		val, err := parseWmicValue(string(output), "SerialNumber=")
+		if err == nil {
 			return val, nil
 		}
 	}
@@ -180,8 +184,9 @@ func getWindowsMotherboardSerial() (string, error) {
 func getWindowsSystemUUID() (string, error) {
 	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SOFTWARE\Microsoft\Cryptography`, registry.QUERY_VALUE)
 	if err == nil {
-		defer k.Close()
-		if val, _, err := k.GetStringValue("MachineGuid"); err == nil && val != "" {
+		defer apperror.Catch(k.Close, "closing registry key failed")
+		val, _, err := k.GetStringValue("MachineGuid")
+		if err == nil && val != "" {
 			return val, nil
 		}
 	}
@@ -212,7 +217,8 @@ func getWindowsMACAddresses() ([]string, error) {
 // getWindowsDiskSerials retrieves disk serial numbers using wmic, falling back to PowerShell Get-CimInstance.
 func getWindowsDiskSerials() ([]string, error) {
 	cmd := exec.Command("wmic", "diskdrive", "get", "SerialNumber", "/value")
-	if output, err := cmd.Output(); err == nil {
+	output, err := cmd.Output()
+	if err == nil {
 		if vals := parseWmicMultipleValues(string(output), "SerialNumber="); len(vals) > 0 {
 			return vals, nil
 		}

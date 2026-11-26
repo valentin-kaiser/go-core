@@ -30,7 +30,8 @@ func TestConfigSourceSaveAndLoad(t *testing.T) {
 	defer cancel()
 
 	cfg := &cfgConfig{Name: "alpha", Port: 4242}
-	if err := src.Save(ctx, cfg); err != nil {
+	err := src.Save(ctx, cfg)
+	if err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 
@@ -64,18 +65,18 @@ func TestConfigSourceWatchEmitsChanges(t *testing.T) {
 	cli := newTestClient(t)
 	src := cli.ConfigSource("watched")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
-	if err := src.Save(ctx, &cfgConfig{Name: "v1", Port: 1}); err != nil {
+	err := src.Save(ctx, &cfgConfig{Name: "v1", Port: 1})
+	if err != nil {
 		t.Fatalf("seed Save: %v", err)
 	}
 
 	var mu sync.Mutex
-	var got map[string]interface{}
+	var got map[string]any
 	done := make(chan struct{}, 4)
 
-	cancelWatch, err := src.Watch(ctx, func(values map[string]interface{}) {
+	cancelWatch, err := src.Watch(ctx, func(values map[string]any) {
 		mu.Lock()
 		got = values
 		mu.Unlock()
@@ -96,7 +97,8 @@ func TestConfigSourceWatchEmitsChanges(t *testing.T) {
 	// Give the watch a moment to subscribe before triggering an update.
 	time.Sleep(200 * time.Millisecond)
 
-	if err := src.Save(ctx, &cfgConfig{Name: "v2", Port: 2}); err != nil {
+	err = src.Save(ctx, &cfgConfig{Name: "v2", Port: 2})
+	if err != nil {
 		t.Fatalf("Save v2: %v", err)
 	}
 

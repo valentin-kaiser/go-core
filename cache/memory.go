@@ -160,7 +160,7 @@ func (mc *MemoryCache) WithEventHandler(handler EventHandler) *MemoryCache {
 }
 
 // Get retrieves a value from the cache
-func (mc *MemoryCache) Get(_ context.Context, key string, dest interface{}) (bool, error) {
+func (mc *MemoryCache) Get(_ context.Context, key string, dest any) (bool, error) {
 	formattedKey := mc.formatKey(key)
 	sh := mc.shardFor(formattedKey)
 
@@ -221,12 +221,12 @@ func (mc *MemoryCache) Get(_ context.Context, key string, dest interface{}) (boo
 }
 
 // Set stores a value in the cache
-func (mc *MemoryCache) Set(_ context.Context, key string, value interface{}, ttl time.Duration) error {
+func (mc *MemoryCache) Set(_ context.Context, key string, value any, ttl time.Duration) error {
 	formattedKey := mc.formatKey(key)
 	effectiveTTL := mc.calculateTTL(ttl)
 
 	// Serialize the value
-	var stored interface{}
+	var stored any
 	var dataSize int64
 	var err error
 	if mc.native != nil {
@@ -407,11 +407,11 @@ func (mc *MemoryCache) Clear(_ context.Context) error {
 }
 
 // GetMulti retrieves multiple values from the cache
-func (mc *MemoryCache) GetMulti(ctx context.Context, keys []string) (map[string]interface{}, error) {
-	result := make(map[string]interface{}, len(keys))
+func (mc *MemoryCache) GetMulti(ctx context.Context, keys []string) (map[string]any, error) {
+	result := make(map[string]any, len(keys))
 
 	for _, key := range keys {
-		var value interface{}
+		var value any
 		found, err := mc.Get(ctx, key, &value)
 		if err != nil {
 			return nil, err
@@ -425,7 +425,7 @@ func (mc *MemoryCache) GetMulti(ctx context.Context, keys []string) (map[string]
 }
 
 // SetMulti stores multiple values in the cache
-func (mc *MemoryCache) SetMulti(ctx context.Context, items map[string]interface{}, ttl time.Duration) error {
+func (mc *MemoryCache) SetMulti(ctx context.Context, items map[string]any, ttl time.Duration) error {
 	for key, value := range items {
 		err := mc.Set(ctx, key, value, ttl)
 		if err != nil {
@@ -538,8 +538,8 @@ func (mc *MemoryCache) GetSize() int64 {
 
 // GetMemoryUsage returns the current memory usage in bytes
 func (mc *MemoryCache) GetMemoryUsage() int64 {
-	mc.BaseCache.mutex.RLock()
-	defer mc.BaseCache.mutex.RUnlock()
+	mc.mutex.RLock()
+	defer mc.mutex.RUnlock()
 	return mc.stats.Memory
 }
 
@@ -603,9 +603,7 @@ func (mc *MemoryCache) evictLRU(sh *memShard) {
 
 // startCleanup starts the background cleanup goroutine
 func (mc *MemoryCache) startCleanup() {
-	mc.cleanupWg.Add(1)
-	go func() {
-		defer mc.cleanupWg.Done()
+	mc.cleanupWg.Go(func() {
 		ticker := time.NewTicker(mc.config.CleanupInterval)
 		defer ticker.Stop()
 
@@ -617,7 +615,7 @@ func (mc *MemoryCache) startCleanup() {
 				mc.cleanupExpired()
 			}
 		}
-	}()
+	})
 }
 
 // cleanupExpired removes expired items from the cache, one shard at a time

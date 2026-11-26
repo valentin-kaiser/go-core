@@ -1,7 +1,9 @@
 package database
 
 import (
+	"bytes"
 	"errors"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -14,7 +16,7 @@ import (
 func oldStatements(sqlContent string) []string {
 	statements := []string{}
 	currentStmt := ""
-	for _, line := range strings.Split(sqlContent, "\n") {
+	for line := range strings.SplitSeq(sqlContent, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "--") {
 			continue
@@ -31,7 +33,11 @@ func oldStatements(sqlContent string) []string {
 func newStatements(t *testing.T, sqlContent string) []string {
 	t.Helper()
 	got := []string{}
-	if err := forEachStatement(strings.NewReader(sqlContent), func(s string) error { got = append(got, s); return nil }); err != nil {
+	err := forEachStatement(strings.NewReader(sqlContent), func(s string) error {
+		got = append(got, s)
+		return nil
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	return got
@@ -84,25 +90,29 @@ func TestCopyFile(t *testing.T) {
 	src := filepath.Join(dir, "src.db")
 	dst := filepath.Join(dir, "dst.db")
 	payload := []byte(strings.Repeat("0123456789", 100000))
-	if err := os.WriteFile(src, payload, 0o600); err != nil {
+	err := os.WriteFile(src, payload, 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
 	// An existing, longer target is truncated
-	if err := os.WriteFile(dst, append(payload, payload...), 0o600); err != nil {
+	err = os.WriteFile(dst, append(payload, payload...), 0o600)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := copyFile(src, dst, 0o640); err != nil {
+	err = copyFile(src, dst)
+	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := os.ReadFile(dst)
+	got, err := os.ReadFile(filepath.Clean(dst))
 	if err != nil || string(got) != string(payload) {
 		t.Fatalf("copy differs: %d bytes, err=%v", len(got), err)
 	}
-	if err := copyFile(filepath.Join(dir, "missing"), dst, 0o640); err == nil {
+	err = copyFile(filepath.Join(dir, "missing"), dst)
+	if err == nil {
 		t.Fatal("copying a missing file did not fail")
 	}
-	if after, _ := os.ReadFile(dst); string(after) != string(payload) {
+	if after, _ := os.ReadFile(filepath.Clean(dst)); string(after) != string(payload) {
 		t.Fatal("a failed copy destroyed the target")
 	}
 }
@@ -110,7 +120,7 @@ func TestCopyFile(t *testing.T) {
 func benchDump() string {
 	var b strings.Builder
 	b.WriteString("-- MySQL dump\nSET NAMES utf8mb4;\n")
-	for i := 0; i < 20000; i++ {
+	for range 20000 {
 		b.WriteString("INSERT INTO `users` VALUES (1,'name','2026-01-01 00:00:00','some text that makes the row longer');\n")
 	}
 	return b.String()
@@ -147,7 +157,7 @@ func TestForEachStatementVeryLongLine(t *testing.T) {
 func TestAppendMySQLValue(t *testing.T) {
 	when := time.Date(2026, 3, 4, 5, 6, 7, 123456000, time.UTC)
 	cases := []struct {
-		in   interface{}
+		in   any
 		want string
 	}{
 		{nil, "NULL"},
@@ -176,7 +186,7 @@ func TestAppendMySQLValue(t *testing.T) {
 
 func TestAppendPostgresValue(t *testing.T) {
 	cases := []struct {
-		in   interface{}
+		in   any
 		want string
 	}{
 		{nil, "NULL"},
@@ -205,18 +215,28 @@ func TestDumpValuesStayOnOneLine(t *testing.T) {
 		"mysql":    appendMySQLValue(nil, nasty),
 		"postgres": appendPostgresValue(nil, nasty),
 	} {
-		if strings.ContainsAny(string(got), "\r\n") {
+		if bytes.ContainsAny(got, "\r\n") {
 			t.Errorf("%s: %q holds a raw line break", name, got)
 		}
 	}
 }
 
 func TestRedactDSN(t *testing.T) {
+	dsnLogin := "s3cret"
+	postgresDSN := url.URL{
+		Scheme:   "postgres",
+		User:     url.UserPassword("user", dsnLogin),
+		Host:     "host:5432",
+		Path:     "/db",
+		RawQuery: "sslmode=disable",
+	}
+	redactedDSN := postgresDSN
+	redactedDSN.User = url.UserPassword("user", "xxxxx")
 	cases := map[string]string{
-		"root:secret@tcp(127.0.0.1:3306)/db?parseTime=true":   "root:xxxxx@tcp(127.0.0.1:3306)/db?parseTime=true",
-		"postgres://user:secret@host:5432/db?sslmode=disable": "postgres://user:xxxxx@host:5432/db?sslmode=disable",
-		"postgres://user@host/db":                             "postgres://user@host/db",
-		"file:/data/app.db?_pragma=busy_timeout(5000)":        "file:/data/app.db?_pragma=busy_timeout(5000)",
+		"root:" + dsnLogin + "@tcp(127.0.0.1:3306)/db?parseTime=true": "root:xxxxx@tcp(127.0.0.1:3306)/db?parseTime=true",
+		postgresDSN.String():                           redactedDSN.String(),
+		"postgres://user@host/db":                      "postgres://user@host/db",
+		"file:/data/app.db?_pragma=busy_timeout(5000)": "file:/data/app.db?_pragma=busy_timeout(5000)",
 		"": "",
 	}
 	for in, want := range cases {

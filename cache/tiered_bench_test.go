@@ -17,8 +17,9 @@ func newBenchTiered(b *testing.B, keys int) *cache.TieredCache {
 	b.Cleanup(func() { _ = l1.Close(); _ = l2.Close() })
 	tc := cache.NewTieredCache(l1, l2)
 	ctx := context.Background()
-	for i := 0; i < keys; i++ {
-		if err := tc.Set(ctx, "key-"+strconv.Itoa(i), benchValue{ID: i, Name: "name"}, time.Hour); err != nil {
+	for i := range keys {
+		err := tc.Set(ctx, "key-"+strconv.Itoa(i), benchValue{ID: i, Name: "name"}, time.Hour)
+		if err != nil {
 			b.Fatal(err)
 		}
 	}

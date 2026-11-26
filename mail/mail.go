@@ -123,7 +123,7 @@ type Manager struct {
 	queueManager    *queue.Manager
 	stats           *Stats
 	statsMutex      sync.RWMutex
-	running         int32
+	running         atomic.Int32
 	ctx             context.Context
 	cancel          context.CancelFunc
 	wg              sync.WaitGroup
@@ -169,28 +169,26 @@ func NewManager(config *Config, queueManager *queue.Manager) *Manager {
 
 // Start starts the mail manager
 func (m *Manager) Start() error {
-	if !atomic.CompareAndSwapInt32(&m.running, 0, 1) {
+	if !m.running.CompareAndSwap(0, 1) {
 		return apperror.NewError("mail manager is already running")
 	}
 
 	if m.config.Queue.Enabled && m.queueManager != nil {
 		err := m.queueManager.Start(m.ctx)
 		if err != nil {
-			atomic.StoreInt32(&m.running, 0)
+			m.running.Store(0)
 			return apperror.Wrap(err)
 		}
 		m.queueManager.RegisterHandler("mail", m.handleMailJob)
 	}
 
 	if m.config.Server.Enabled && m.server != nil {
-		m.wg.Add(1)
-		go func() {
-			defer m.wg.Done()
+		m.wg.Go(func() {
 			err := m.server.Start(m.ctx)
 			if err != nil {
 				logger.Error().Err(err).Msg("failed to start SMTP server")
 			}
-		}()
+		})
 
 		logger.Info().Msgf("SMTP server started on %s:%d", m.config.Server.Host, m.config.Server.Port)
 	}
@@ -200,7 +198,7 @@ func (m *Manager) Start() error {
 
 // Stop stops the mail manager
 func (m *Manager) Stop(ctx context.Context) error {
-	if !atomic.CompareAndSwapInt32(&m.running, 1, 0) {
+	if !m.running.CompareAndSwap(1, 0) {
 		return apperror.NewError("mail manager is not running")
 	}
 
@@ -292,7 +290,7 @@ func (m *Manager) SendAsync(ctx context.Context, message *Message) error {
 		Msg("queuing email for async sending")
 
 	// Create queue job
-	jobData := map[string]interface{}{
+	jobData := map[string]any{
 		"id":            message.ID,
 		"from":          message.From,
 		"to":            message.To,
@@ -378,7 +376,7 @@ func (m *Manager) GetStats() *Stats {
 
 // IsRunning returns true if the mail manager is running
 func (m *Manager) IsRunning() bool {
-	return atomic.LoadInt32(&m.running) == 1
+	return m.running.Load() == 1
 }
 
 // SendTestEmail sends a test email
@@ -399,7 +397,7 @@ func (m *Manager) handleMailJob(ctx context.Context, job *queue.Job) error {
 	logger.Debug().Field("job_id", job.ID).Msg("processing mail job")
 
 	// Decode the message from job payload
-	var jobData map[string]interface{}
+	var jobData map[string]any
 	err := json.Unmarshal(job.Payload, &jobData)
 	if err != nil {
 		return apperror.Wrap(err)
@@ -492,7 +490,7 @@ func (m *Manager) updateLastReceived() {
 }
 
 // jobDataToMessage converts job data back to a Message
-func (m *Manager) jobDataToMessage(jobData map[string]interface{}) (*Message, error) {
+func (m *Manager) jobDataToMessage(jobData map[string]any) (*Message, error) {
 	message := &Message{}
 
 	id, ok := jobData["id"].(string)
@@ -543,7 +541,7 @@ func (m *Manager) jobDataToMessage(jobData map[string]interface{}) (*Message, er
 	if ok {
 		message.Priority = Priority(int(priority))
 	}
-	if headers, ok := jobData["headers"].(map[string]interface{}); ok {
+	if headers, ok := jobData["headers"].(map[string]any); ok {
 		message.Headers = make(map[string]string)
 		for k, v := range headers {
 			s, ok := v.(string)
@@ -552,7 +550,7 @@ func (m *Manager) jobDataToMessage(jobData map[string]interface{}) (*Message, er
 			}
 		}
 	}
-	if metadata, ok := jobData["metadata"].(map[string]interface{}); ok {
+	if metadata, ok := jobData["metadata"].(map[string]any); ok {
 		message.Metadata = make(map[string]string)
 		for k, v := range metadata {
 			s, ok := v.(string)
@@ -575,10 +573,10 @@ func (m *Manager) jobDataToMessage(jobData map[string]interface{}) (*Message, er
 		}
 		message.ScheduleAt = &t
 	}
-	if attachments, ok := jobData["attachments"].([]interface{}); ok {
+	if attachments, ok := jobData["attachments"].([]any); ok {
 		message.Attachments = make([]Attachment, 0, len(attachments))
 		for _, att := range attachments {
-			if attMap, ok := att.(map[string]interface{}); ok {
+			if attMap, ok := att.(map[string]any); ok {
 				attachment := Attachment{}
 				filename, ok := attMap["filename"].(string)
 				if ok {
@@ -618,12 +616,12 @@ func (m *Manager) jobDataToMessage(jobData map[string]interface{}) (*Message, er
 
 // convertToStringSlice safely converts various types to []string
 // This handles different JSON unmarshaling scenarios for string slice fields
-func convertToStringSlice(value interface{}) []string {
+func convertToStringSlice(value any) []string {
 	switch v := value.(type) {
 	case []string:
 		// Direct string slice (ideal case)
 		return v
-	case []interface{}:
+	case []any:
 		// JSON unmarshaled as interface slice
 		result := make([]string, 0, len(v))
 		for _, item := range v {
@@ -648,7 +646,7 @@ func convertToStringSlice(value interface{}) []string {
 }
 
 // convertToString safely converts various types to string
-func convertToString(value interface{}) string {
+func convertToString(value any) string {
 	switch v := value.(type) {
 	case string:
 		return v

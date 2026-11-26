@@ -20,8 +20,9 @@ func newBenchCache(b *testing.B, keys int) *cache.MemoryCache {
 	mc := cache.NewMemoryCache()
 	b.Cleanup(func() { _ = mc.Close() })
 	ctx := context.Background()
-	for i := 0; i < keys; i++ {
-		if err := mc.Set(ctx, "key-"+strconv.Itoa(i), benchValue{ID: i, Name: "name", Tags: []string{"a", "b"}}, time.Hour); err != nil {
+	for i := range keys {
+		err := mc.Set(ctx, "key-"+strconv.Itoa(i), benchValue{ID: i, Name: "name", Tags: []string{"a", "b"}}, time.Hour)
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -133,8 +134,9 @@ func newConfiguredBenchCache(b *testing.B, cfg cache.Config, keys int) *cache.Me
 	mc := cache.NewMemoryCacheWithConfig(cfg)
 	b.Cleanup(func() { _ = mc.Close() })
 	ctx := context.Background()
-	for i := 0; i < keys; i++ {
-		if err := mc.Set(ctx, "key-"+strconv.Itoa(i), benchValue{ID: i, Name: "name", Tags: []string{"a", "b"}}, time.Hour); err != nil {
+	for i := range keys {
+		err := mc.Set(ctx, "key-"+strconv.Itoa(i), benchValue{ID: i, Name: "name", Tags: []string{"a", "b"}}, time.Hour)
+		if err != nil {
 			b.Fatal(err)
 		}
 	}

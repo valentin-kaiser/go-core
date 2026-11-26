@@ -10,10 +10,11 @@ import (
 
 func TestParse(t *testing.T) {
 	// Parse depends on the global bundle, set it up first
-	if err := i18n.Init(i18n.WithMap(i18n.English, map[string]string{"k": "v"}), i18n.WithMap(i18n.German, map[string]string{"k": "v"})); err != nil {
+	err := i18n.Init(i18n.WithMap(i18n.English, map[string]string{"k": "v"}), i18n.WithMap(i18n.German, map[string]string{"k": "v"}))
+	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer i18n.Init()
+	defer resetBundle(t)
 
 	tests := []struct {
 		input string
@@ -37,10 +38,11 @@ func TestParse(t *testing.T) {
 
 func TestValid(t *testing.T) {
 	// Valid depends on the global bundle
-	if err := i18n.Init(i18n.WithMap(i18n.English, map[string]string{"k": "v"}), i18n.WithMap(i18n.German, map[string]string{"k": "v"})); err != nil {
+	err := i18n.Init(i18n.WithMap(i18n.English, map[string]string{"k": "v"}), i18n.WithMap(i18n.German, map[string]string{"k": "v"}))
+	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer i18n.Init()
+	defer resetBundle(t)
 
 	tests := []struct {
 		input string
@@ -61,10 +63,11 @@ func TestValid(t *testing.T) {
 }
 
 func TestSupported(t *testing.T) {
-	if err := i18n.Init(i18n.WithMap(i18n.English, map[string]string{"a": "b"}), i18n.WithMap(i18n.German, map[string]string{"a": "c"})); err != nil {
+	err := i18n.Init(i18n.WithMap(i18n.English, map[string]string{"a": "b"}), i18n.WithMap(i18n.German, map[string]string{"a": "c"}))
+	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer i18n.Init()
+	defer resetBundle(t)
 
 	langs := i18n.Supported()
 	if len(langs) != 2 {
@@ -276,7 +279,8 @@ func TestBundleLoad(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	if err := b.Load(fsys, "i18n"); err != nil {
+	err = b.Load(fsys, "i18n")
+	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
 
@@ -287,10 +291,11 @@ func TestBundleLoad(t *testing.T) {
 
 func TestGlobalFunctions(t *testing.T) {
 	// Set up a global bundle
-	if err := i18n.Init(i18n.WithMap(i18n.English, map[string]string{
+	err := i18n.Init(i18n.WithMap(i18n.English, map[string]string{
 		"global.key": "Global Value",
 		"format.key": "Hello %s",
-	})); err != nil {
+	}))
+	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
 
@@ -302,7 +307,7 @@ func TestGlobalFunctions(t *testing.T) {
 	}
 
 	// Reset to empty to avoid polluting other tests
-	i18n.Init()
+	resetBundle(t)
 }
 
 func TestSetDefault(t *testing.T) {
@@ -322,7 +327,7 @@ func TestSetDefault(t *testing.T) {
 	}
 
 	// Reset
-	i18n.Init()
+	resetBundle(t)
 }
 
 // ---------------------------------------------------------------------------
@@ -354,14 +359,15 @@ func TestArbitraryLanguage(t *testing.T) {
 }
 
 func TestParseArbitraryLanguage(t *testing.T) {
-	if err := i18n.Init(
+	err := i18n.Init(
 		i18n.WithMap(i18n.English, map[string]string{"k": "v"}),
 		i18n.WithMap("fr", map[string]string{"k": "v"}),
 		i18n.WithMap("zh-cn", map[string]string{"k": "v"}),
-	); err != nil {
+	)
+	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer i18n.Init()
+	defer resetBundle(t)
 
 	if got := i18n.Parse("fr"); got != "fr" {
 		t.Errorf("Parse(fr) = %q, want %q", got, "fr")
@@ -495,5 +501,13 @@ func TestWithFS_DuplicateFlattenedKeySkipsFile(t *testing.T) {
 	// de.json should still load fine
 	if got := b.T(i18n.German, "greeting.hello"); got != "Hallo" {
 		t.Errorf("T(German) = %q, want %q", got, "Hallo")
+	}
+}
+
+func resetBundle(tb testing.TB) {
+	tb.Helper()
+	err := i18n.Init()
+	if err != nil {
+		tb.Errorf("resetting global bundle failed: %v", err)
 	}
 }

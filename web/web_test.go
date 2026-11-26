@@ -38,7 +38,8 @@ func TestServerStartAsync(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	// Stop the server
-	if err := server.Stop(); err != nil {
+	err := server.Stop()
+	if err != nil {
 		t.Logf("Warning: failed to stop server: %v", err)
 	}
 
@@ -74,7 +75,7 @@ func TestServerErrorHandling(t *testing.T) {
 
 func TestServerMemoryUsage(_ *testing.T) {
 	// Test that creating many servers doesn't cause memory leaks
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		server := web.New()
 		server.WithHost("localhost").
 			WithPort(8080+uint16(i), web.ProtocolHTTP).
@@ -150,7 +151,10 @@ func TestServerHandlers(t *testing.T) {
 
 	// Test handler registration
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		fmt.Fprint(w, "test response")
+		_, err := fmt.Fprint(w, "test response")
+		if err != nil {
+			t.Errorf("writing response failed: %v", err)
+		}
 	})
 
 	result := server.WithHandlerFunc("/test", testHandler)
@@ -170,7 +174,8 @@ func TestServerFileServing(t *testing.T) {
 	// Create a temporary directory with a test file
 	tempDir := t.TempDir()
 	testFile := filepath.Join(tempDir, "test.txt")
-	if err := os.WriteFile(testFile, []byte("test content"), 0600); err != nil {
+	err := os.WriteFile(testFile, []byte("test content"), 0600)
+	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
@@ -239,7 +244,8 @@ func TestServerWebsocket(t *testing.T) {
 			if err != nil {
 				break
 			}
-			if err := conn.WriteMessage(websocket.TextMessage, message); err != nil {
+			err = conn.WriteMessage(websocket.TextMessage, message)
+			if err != nil {
 				break
 			}
 		}
@@ -296,7 +302,10 @@ func TestResponseWriter(t *testing.T) {
 	handler := func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("X-Test", "true")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("test response"))
+		_, err := w.Write([]byte("test response"))
+		if err != nil {
+			t.Errorf("writing response failed: %v", err)
+		}
 	}
 
 	server.WithHandlerFunc("/test", handler)

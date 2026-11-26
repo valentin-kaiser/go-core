@@ -215,19 +215,24 @@ func SetupGracefulShutdown(handlers []func() error, signals ...os.Signal) func()
 	}
 }
 
+const (
+	panicDirMode  os.FileMode = 0o750
+	panicFileMode os.FileMode = 0o600
+)
+
 func write(err any, caller string, line int) {
-	e := os.MkdirAll(Directory, os.ModePerm)
+	e := os.MkdirAll(Directory, panicDirMode)
 	if e != nil {
 		fmt.Fprintf(os.Stderr, "failed to create panic directory: %v", apperror.Wrap(e))
 		return
 	}
 	timestamp := time.Now().Format(Format)
-	name := filepath.Join(Directory, fmt.Sprintf("%s.log", timestamp))
+	name := filepath.Join(Directory, timestamp+".log")
 	content := fmt.Sprintf("Caller: %v\nLine: %v\nError: %v\n", caller, line, err)
 	if flag.Debug {
 		content = fmt.Sprintf("Caller: %v\nLine: %v\nError: %v\n\nStack Trace:\n%s\n", caller, line, err, string(debug.Stack()))
 	}
-	werr := os.WriteFile(name, []byte(content), 0644)
+	werr := os.WriteFile(name, []byte(content), panicFileMode)
 	if werr != nil {
 		fmt.Fprintf(os.Stderr, "failed to write panic: %v", apperror.Wrap(werr))
 	}

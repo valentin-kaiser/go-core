@@ -37,10 +37,7 @@ func (c *Client) Lock(ctx context.Context, key string, ttl time.Duration) (*Lock
 	if ttl <= 0 {
 		ttl = defaultLockTTL
 	}
-	seconds := int(ttl / time.Second)
-	if seconds < 1 {
-		seconds = 1
-	}
+	seconds := max(int(ttl/time.Second), 1)
 
 	session, err := concurrency.NewSession(c.raw, concurrency.WithTTL(seconds), concurrency.WithContext(ctx))
 	if err != nil {
@@ -49,9 +46,9 @@ func (c *Client) Lock(ctx context.Context, key string, ttl time.Duration) (*Lock
 
 	fullKey := c.key("locks", key)
 	mutex := concurrency.NewMutex(session, fullKey)
-	if err := mutex.Lock(ctx); err != nil {
-		_ = session.Close()
-		return nil, apperror.NewError("acquiring etcd lock failed").AddError(err)
+	err = mutex.Lock(ctx)
+	if err != nil {
+		return nil, closeSession(session, apperror.NewError("acquiring etcd lock failed").AddError(err))
 	}
 
 	return &Lock{session: session, mutex: mutex, key: fullKey}, nil
@@ -67,10 +64,7 @@ func (c *Client) TryLock(ctx context.Context, key string, ttl time.Duration) (*L
 	if ttl <= 0 {
 		ttl = defaultLockTTL
 	}
-	seconds := int(ttl / time.Second)
-	if seconds < 1 {
-		seconds = 1
-	}
+	seconds := max(int(ttl/time.Second), 1)
 
 	fullKey := c.key("locks", key)
 
@@ -82,7 +76,7 @@ func (c *Client) TryLock(ctx context.Context, key string, ttl time.Duration) (*L
 		return nil, apperror.NewError("attempting etcd lock failed").AddError(err)
 	}
 	if held.Count > 0 {
-		return nil, nil
+		return nil, nil //nolint:nilnil // documented contract: a nil lock without error means the lock is held elsewhere
 	}
 
 	session, err := concurrency.NewSession(c.raw, concurrency.WithTTL(seconds), concurrency.WithContext(ctx))
@@ -93,11 +87,11 @@ func (c *Client) TryLock(ctx context.Context, key string, ttl time.Duration) (*L
 	mutex := concurrency.NewMutex(session, fullKey)
 	err = mutex.TryLock(ctx)
 	if err != nil {
-		_ = session.Close()
 		if err == concurrency.ErrLocked {
-			return nil, nil
+			apperror.Catch(session.Close, "closing etcd session failed")
+			return nil, nil //nolint:nilnil // documented contract: a nil lock without error means the lock is held elsewhere
 		}
-		return nil, apperror.NewError("attempting etcd lock failed").AddError(err)
+		return nil, closeSession(session, apperror.NewError("attempting etcd lock failed").AddError(err))
 	}
 
 	return &Lock{session: session, mutex: mutex, key: fullKey}, nil
@@ -126,3 +120,13 @@ func (l *Lock) Unlock(ctx context.Context) error {
 // example because the lease expired due to a network partition). Callers
 // holding work-impacting locks should monitor this channel and abort.
 func (l *Lock) Done() <-chan struct{} { return l.session.Done() }
+
+// closeSession closes the session of a failed operation and returns cause,
+// extended by the close error if closing failed as well.
+func closeSession(session *concurrency.Session, cause apperror.Error) error {
+	err := session.Close()
+	if err != nil {
+		return cause.AddError(err)
+	}
+	return cause
+}

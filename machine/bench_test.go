@@ -11,7 +11,8 @@ func BenchmarkGeneratorID(b *testing.B) {
 	g := machine.New().WithCPU().WithMAC().VMFriendly()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if _, err := g.ID(); err != nil {
+		_, err := g.ID()
+		if err != nil {
 			b.Skip(err)
 		}
 	}

@@ -23,6 +23,7 @@ type SecurityManager struct {
 	ipConnections map[string]int
 	ipRateLimit   map[string]struct {
 		*rate.Limiter
+
 		last time.Time
 	}
 	authFailures    map[string]*authTracker
@@ -46,6 +47,7 @@ func NewSecurityManager(config SecurityConfig) *SecurityManager {
 		ipConnections: make(map[string]int),
 		ipRateLimit: make(map[string]struct {
 			*rate.Limiter
+
 			last time.Time
 		}),
 		authFailures: make(map[string]*authTracker),
@@ -246,6 +248,7 @@ func (sm *SecurityManager) CheckRateLimit(remoteAddr string) error {
 	if !exists {
 		sm.ipRateLimit[host] = struct {
 			*rate.Limiter
+
 			last time.Time
 		}{
 			Limiter: rate.NewLimiter(rate.Limit(sm.config.RateLimitPerIP), 1),

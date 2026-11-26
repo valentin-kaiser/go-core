@@ -55,10 +55,12 @@ func setupLarge(b *testing.B, name string) {
 
 	config.Reset()
 	cfg := newBenchLarge()
-	if err := config.Manager().WithPath(tempDir).WithName(name).Register(cfg); err != nil {
+	err := config.Manager().WithPath(tempDir).WithName(name).Register(cfg)
+	if err != nil {
 		b.Fatalf("Register failed: %v", err)
 	}
-	if err := config.Write(cfg); err != nil {
+	err = config.Write(cfg)
+	if err != nil {
 		b.Fatalf("Write failed: %v", err)
 	}
 }
@@ -76,7 +78,8 @@ func BenchmarkRegisterLarge(b *testing.B) {
 		b.StopTimer()
 		config.Reset()
 		b.StartTimer()
-		if err := config.Manager().WithPath(tempDir).WithName(fmt.Sprintf("bench-large-%d", i)).Register(newBenchLarge()); err != nil {
+		err := config.Manager().WithPath(tempDir).WithName(fmt.Sprintf("bench-large-%d", i)).Register(newBenchLarge())
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -88,7 +91,8 @@ func BenchmarkReadLarge(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := config.Read(); err != nil {
+		err := config.Read()
+		if err != nil {
 			b.Fatal(err)
 		}
 	}

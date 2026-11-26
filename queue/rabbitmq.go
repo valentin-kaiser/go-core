@@ -192,7 +192,7 @@ func declareTopology(channel *amqp.Channel, config RabbitMQConfig) error {
 		config.AutoDelete,            // delete when unused
 		config.Exclusive,             // exclusive
 		config.NoWait,                // no-wait
-		map[string]interface{}{
+		map[string]any{
 			"x-dead-letter-exchange":    config.ExchangeName,
 			"x-dead-letter-routing-key": config.RoutingKey,
 		},
@@ -343,7 +343,8 @@ func (rq *RabbitMQ) consumer() (<-chan amqp.Delivery, error) {
 		return rq.deliveries, nil
 	}
 
-	if err := rq.channel.Qos(rq.prefetch, 0, false); err != nil {
+	err := rq.channel.Qos(rq.prefetch, 0, false)
+	if err != nil {
 		return nil, apperror.Wrap(err)
 	}
 	deliveries, err := rq.channel.Consume(rq.queueName, "", false, false, false, false, nil)
@@ -550,13 +551,15 @@ func (rq *RabbitMQ) Close() error {
 
 	// The connection may be gone already; closing is then a no-op, not a reason to panic
 	if rq.channel != nil {
-		if err := rq.channel.Close(); err != nil {
+		err := rq.channel.Close()
+		if err != nil {
 			logger.Debug().Err(err).Msg("channel was not closed cleanly")
 		}
 	}
 
 	if rq.conn != nil {
-		if err := rq.conn.Close(); err != nil {
+		err := rq.conn.Close()
+		if err != nil {
 			logger.Debug().Err(err).Msg("connection was not closed cleanly")
 		}
 	}
@@ -580,12 +583,14 @@ func (rq *RabbitMQ) Reconnect(config RabbitMQConfig) error {
 	// Reconnect exists to replace a broken connection, so the old channel and connection
 	// are often closed already. That is not an error here and must not panic.
 	if rq.channel != nil {
-		if err := rq.channel.Close(); err != nil {
+		err := rq.channel.Close()
+		if err != nil {
 			logger.Debug().Err(err).Msg("old channel was not closed cleanly")
 		}
 	}
 	if rq.conn != nil {
-		if err := rq.conn.Close(); err != nil {
+		err := rq.conn.Close()
+		if err != nil {
 			logger.Debug().Err(err).Msg("old connection was not closed cleanly")
 		}
 	}
@@ -608,7 +613,8 @@ func (rq *RabbitMQ) Reconnect(config RabbitMQConfig) error {
 	// The broker may have lost the queues: an AutoDelete queue is deleted with its last
 	// consumer, and a non-durable one does not survive a broker restart. Declaring them again
 	// is harmless when they still exist.
-	if err := declareTopology(channel, rq.topology); err != nil {
+	err = declareTopology(channel, rq.topology)
+	if err != nil {
 		apperror.Handle(channel.Close(), "failed to close channel")
 		apperror.Handle(conn.Close(), "failed to close connection")
 		return apperror.Wrap(err)

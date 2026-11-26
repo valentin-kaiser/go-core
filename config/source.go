@@ -38,7 +38,7 @@ type Source interface {
 	// Load returns the full set of configuration values as a flat map keyed
 	// by lower-case dotted paths (e.g. "server.port"). Implementations must
 	// return ErrNotFound if the configuration has not been initialised yet.
-	Load(ctx context.Context) (map[string]interface{}, error)
+	Load(ctx context.Context) (map[string]any, error)
 
 	// Save persists the given configuration. Implementations that are
 	// read-only must return ErrReadOnly.
@@ -48,13 +48,13 @@ type Source interface {
 	// the freshly loaded values on every change. The returned cancel function
 	// stops the watch. Implementations that do not support watching must
 	// return ErrWatchUnsupported.
-	Watch(ctx context.Context, onChange func(map[string]interface{})) (cancel func(), err error)
+	Watch(ctx context.Context, onChange func(map[string]any)) (cancel func(), err error)
 }
 
 // mergeValues combines several flat dotted-key maps in order, with later maps
 // overriding earlier ones on key collision. nil maps are ignored.
-func mergeValues(maps ...map[string]interface{}) map[string]interface{} {
-	merged := make(map[string]interface{})
+func mergeValues(maps ...map[string]any) map[string]any {
+	merged := make(map[string]any)
 	for _, m := range maps {
 		for k, v := range m {
 			merged[strings.ToLower(k)] = v

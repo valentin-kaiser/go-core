@@ -14,7 +14,10 @@ func TestRouterUnregisterHandler(t *testing.T) {
 
 	// Register test routes
 	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("test"))
+		_, err := w.Write([]byte("test"))
+		if err != nil {
+			t.Errorf("writing response failed: %v", err)
+		}
 	})
 
 	router.Handle("/test1", handler)
@@ -47,7 +50,10 @@ func TestRouterUnregisterAllHandler(t *testing.T) {
 
 	// Register test routes
 	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("test"))
+		_, err := w.Write([]byte("test"))
+		if err != nil {
+			t.Errorf("writing response failed: %v", err)
+		}
 	})
 
 	router.Handle("/test1", handler)
@@ -82,11 +88,14 @@ func TestRouterConcurrentAccess(t *testing.T) {
 
 	// Test concurrent registration and unregistration
 	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Write([]byte("test"))
+		_, err := w.Write([]byte("test"))
+		if err != nil {
+			t.Errorf("writing response failed: %v", err)
+		}
 	})
 
 	// Register initial routes
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		router.Handle("/test"+string(rune('0'+i)), handler)
 	}
 
@@ -95,7 +104,7 @@ func TestRouterConcurrentAccess(t *testing.T) {
 
 	// Goroutine 1: Make requests
 	go func() {
-		for i := 0; i < 100; i++ {
+		for range 100 {
 			req := httptest.NewRequest(http.MethodGet, "/test0", nil)
 			w := httptest.NewRecorder()
 			router.ServeHTTP(w, req)
@@ -105,7 +114,7 @@ func TestRouterConcurrentAccess(t *testing.T) {
 
 	// Goroutine 2: Unregister and register routes
 	go func() {
-		for i := 0; i < 10; i++ {
+		for i := range 10 {
 			router.UnregisterHandler([]string{"/test" + string(rune('0'+i))})
 			router.Handle("/test"+string(rune('0'+i)), handler)
 		}
@@ -114,14 +123,14 @@ func TestRouterConcurrentAccess(t *testing.T) {
 
 	// Goroutine 3: Get registered routes
 	go func() {
-		for i := 0; i < 50; i++ {
+		for range 50 {
 			router.GetRegisteredRoutes()
 		}
 		done <- true
 	}()
 
 	// Wait for all goroutines to complete
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		<-done
 	}
 

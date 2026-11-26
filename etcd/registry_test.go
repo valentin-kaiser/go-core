@@ -60,7 +60,8 @@ func TestDeregisterRemovesEntry(t *testing.T) {
 		t.Fatalf("Register: %v", err)
 	}
 
-	if err := reg.Deregister(ctx); err != nil {
+	err = reg.Deregister(ctx)
+	if err != nil {
 		t.Fatalf("Deregister: %v", err)
 	}
 
@@ -76,8 +77,7 @@ func TestDeregisterRemovesEntry(t *testing.T) {
 func TestWatchServiceEvents(t *testing.T) {
 	cli := newTestClient(t)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	var (
 		mu     sync.Mutex
@@ -113,7 +113,8 @@ func TestWatchServiceEvents(t *testing.T) {
 
 	waitFor(t, got, "added event")
 
-	if err := reg.Deregister(ctx); err != nil {
+	err = reg.Deregister(ctx)
+	if err != nil {
 		t.Fatalf("Deregister: %v", err)
 	}
 

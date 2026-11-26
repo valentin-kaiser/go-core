@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/valentin-kaiser/go-core/apperror"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -22,7 +23,6 @@ type wsConn struct {
 	svc    *Service
 	conn   *websocket.Conn
 	wire   wire
-	ctx    context.Context
 	wmu    sync.Mutex
 	smu    sync.Mutex
 	stream map[string]*wsStream
@@ -32,7 +32,7 @@ type wsConn struct {
 type wsStream struct {
 	m      *method
 	in     chan proto.Message
-	ctx    context.Context
+	ctx    context.Context //nolint:containedctx // stream-scoped context that lets recv unblock when the stream is cancelled
 	cancel context.CancelFunc
 	closed bool // only accessed from the read loop
 }
@@ -70,17 +70,17 @@ func (s *Service) serveWS(w http.ResponseWriter, r *http.Request) {
 		svc:    s,
 		conn:   conn,
 		wire:   newWire(p, s.codecFor(w, r)),
-		ctx:    ctx,
 		stream: make(map[string]*wsStream),
 		sem:    make(chan struct{}, maxInflight),
 	}
-	c.serve()
+	c.serve(ctx)
 }
 
 func (c *wsConn) send(data []byte) error {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
-	if err := c.conn.SetWriteDeadline(time.Now().Add(writeTimeout)); err != nil {
+	err := c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
+	if err != nil {
 		return err
 	}
 	return c.conn.WriteMessage(websocket.TextMessage, data)
@@ -92,7 +92,8 @@ func (c *wsConn) sendReplies(replies []*reply, batch bool) {
 		logger.Error().Err(err).Msg("failed to encode response")
 		return
 	}
-	if err := c.send(out); err != nil {
+	err = c.send(out)
+	if err != nil {
 		logger.Trace().Err(err).Msg("failed to write websocket message")
 	}
 }
@@ -112,12 +113,15 @@ func (c *wsConn) acquire() bool {
 
 func (c *wsConn) release() { <-c.sem }
 
-func (c *wsConn) serve() {
+func (c *wsConn) serve(ctx context.Context) {
 	defer func() {
 		c.wmu.Lock()
-		_ = c.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
+		err := c.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
 		c.wmu.Unlock()
-		_ = c.conn.Close()
+		if err != nil {
+			logger.Trace().Err(err).Msg("failed to write websocket close message")
+		}
+		apperror.Catch(c.conn.Close, "closing websocket connection failed")
 	}()
 
 	c.conn.SetReadLimit(c.svc.maxBody)
@@ -130,11 +134,11 @@ func (c *wsConn) serve() {
 			c.fail(rpcID{set: true, null: true}, NewError(CodeInvalidRequest, "only text messages are supported"))
 			continue
 		}
-		c.dispatch(data)
+		c.dispatch(ctx, data)
 	}
 }
 
-func (c *wsConn) dispatch(data []byte) {
+func (c *wsConn) dispatch(ctx context.Context, data []byte) {
 	envs, batch, perr := c.wire.parse(data)
 	if perr != nil {
 		c.fail(rpcID{set: true, null: true}, perr)
@@ -149,7 +153,7 @@ func (c *wsConn) dispatch(data []byte) {
 			return
 		}
 		if m := c.svc.find(e.method); m != nil && m.kind != kindUnary && e.id.set {
-			c.startStream(m, e)
+			c.startStream(ctx, m, e)
 			return
 		}
 	}
@@ -160,7 +164,7 @@ func (c *wsConn) dispatch(data []byte) {
 	}
 	go func() {
 		defer c.release()
-		if replies := c.svc.process(c.ctx, envs); len(replies) > 0 {
+		if replies := c.svc.process(ctx, envs); len(replies) > 0 {
 			c.sendReplies(replies, batch)
 		}
 	}()
@@ -196,7 +200,8 @@ func (c *wsConn) control(e *envelope) {
 			return
 		}
 		msg := st.m.newIn()
-		if err := bindData(msg); err != nil {
+		err := bindData(msg)
+		if err != nil {
 			st.cancel()
 			return
 		}
@@ -211,7 +216,7 @@ func (c *wsConn) control(e *envelope) {
 	}
 }
 
-func (c *wsConn) startStream(m *method, e *envelope) {
+func (c *wsConn) startStream(parent context.Context, m *method, e *envelope) {
 	if e.id.null {
 		c.fail(e.id, NewError(CodeInvalidRequest, "stream requests require an id"))
 		return
@@ -220,7 +225,8 @@ func (c *wsConn) startStream(m *method, e *envelope) {
 	var first proto.Message
 	if m.kind == kindServerStream {
 		first = m.newIn()
-		if err := e.bind(first); err != nil {
+		err := e.bind(first)
+		if err != nil {
 			c.fail(e.id, NewError(CodeInvalidParams, "invalid params: "+err.Error()))
 			return
 		}
@@ -232,7 +238,7 @@ func (c *wsConn) startStream(m *method, e *envelope) {
 	}
 
 	key := e.id.key()
-	ctx, cancel := context.WithCancel(c.ctx)
+	ctx, cancel := context.WithCancel(parent)
 	st := &wsStream{m: m, in: make(chan proto.Message, 16), ctx: ctx, cancel: cancel}
 
 	c.smu.Lock()

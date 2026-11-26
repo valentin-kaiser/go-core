@@ -17,10 +17,6 @@ type Election struct {
 	election *concurrency.Election
 	identity string
 	key      string
-
-	campaignCtx    context.Context
-	campaignCancel context.CancelFunc
-	campaignErr    chan error
 }
 
 const defaultElectionTTL = 15 * time.Second
@@ -44,10 +40,7 @@ func (c *Client) Campaign(ctx context.Context, key, identity string, ttl time.Du
 	if ttl <= 0 {
 		ttl = defaultElectionTTL
 	}
-	seconds := int(ttl / time.Second)
-	if seconds < 1 {
-		seconds = 1
-	}
+	seconds := max(int(ttl/time.Second), 1)
 
 	session, err := concurrency.NewSession(c.raw, concurrency.WithTTL(seconds), concurrency.WithContext(ctx))
 	if err != nil {
@@ -57,9 +50,9 @@ func (c *Client) Campaign(ctx context.Context, key, identity string, ttl time.Du
 	fullKey := c.key("elections", key)
 	el := concurrency.NewElection(session, fullKey)
 
-	if err := el.Campaign(ctx, identity); err != nil {
-		_ = session.Close()
-		return nil, apperror.NewError("campaigning for leadership failed").AddError(err)
+	err = el.Campaign(ctx, identity)
+	if err != nil {
+		return nil, closeSession(session, apperror.NewError("campaigning for leadership failed").AddError(err))
 	}
 
 	return &Election{

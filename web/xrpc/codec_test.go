@@ -15,11 +15,11 @@ import (
 
 func field(name string, num int32, t descriptorpb.FieldDescriptorProto_Type, opts ...func(*descriptorpb.FieldDescriptorProto)) *descriptorpb.FieldDescriptorProto {
 	f := &descriptorpb.FieldDescriptorProto{
-		Name:     proto.String(name),
-		Number:   proto.Int32(num),
+		Name:     new(name),
+		Number:   new(num),
 		Type:     t.Enum(),
 		Label:    descriptorpb.FieldDescriptorProto_LABEL_OPTIONAL.Enum(),
-		JsonName: proto.String(name),
+		JsonName: new(name),
 	}
 	for _, o := range opts {
 		o(f)
@@ -31,35 +31,35 @@ func repeated(f *descriptorpb.FieldDescriptorProto) {
 	f.Label = descriptorpb.FieldDescriptorProto_LABEL_REPEATED.Enum()
 }
 func typeName(n string) func(*descriptorpb.FieldDescriptorProto) {
-	return func(f *descriptorpb.FieldDescriptorProto) { f.TypeName = proto.String(n) }
+	return func(f *descriptorpb.FieldDescriptorProto) { f.TypeName = new(n) }
 }
 func oneof(f *descriptorpb.FieldDescriptorProto) { f.OneofIndex = proto.Int32(0) }
 
-func allDescriptor(t testing.TB) protoreflect.MessageDescriptor {
-	t.Helper()
+func allDescriptor(tb testing.TB) protoreflect.MessageDescriptor {
+	tb.Helper()
 	entry := func(name string, key, val *descriptorpb.FieldDescriptorProto) *descriptorpb.DescriptorProto {
 		return &descriptorpb.DescriptorProto{
-			Name:    proto.String(name),
+			Name:    new(name),
 			Field:   []*descriptorpb.FieldDescriptorProto{key, val},
-			Options: &descriptorpb.MessageOptions{MapEntry: proto.Bool(true)},
+			Options: &descriptorpb.MessageOptions{MapEntry: new(true)},
 		}
 	}
 
 	fdp := &descriptorpb.FileDescriptorProto{
-		Name:    proto.String("codec/all.proto"),
-		Package: proto.String("codec"),
-		Syntax:  proto.String("proto3"),
+		Name:    new("codec/all.proto"),
+		Package: new("codec"),
+		Syntax:  new("proto3"),
 		EnumType: []*descriptorpb.EnumDescriptorProto{{
-			Name: proto.String("Color"),
+			Name: new("Color"),
 			Value: []*descriptorpb.EnumValueDescriptorProto{
-				{Name: proto.String("RED"), Number: proto.Int32(0)},
-				{Name: proto.String("GREEN"), Number: proto.Int32(1)},
+				{Name: new("RED"), Number: proto.Int32(0)},
+				{Name: new("GREEN"), Number: proto.Int32(1)},
 			},
 		}},
 		MessageType: []*descriptorpb.DescriptorProto{
-			{Name: proto.String("Inner"), Field: []*descriptorpb.FieldDescriptorProto{field("v", 1, descriptorpb.FieldDescriptorProto_TYPE_STRING)}},
+			{Name: new("Inner"), Field: []*descriptorpb.FieldDescriptorProto{field("v", 1, descriptorpb.FieldDescriptorProto_TYPE_STRING)}},
 			{
-				Name: proto.String("All"),
+				Name: new("All"),
 				Field: []*descriptorpb.FieldDescriptorProto{
 					field("i32", 1, descriptorpb.FieldDescriptorProto_TYPE_INT32),
 					field("i64", 2, descriptorpb.FieldDescriptorProto_TYPE_INT64),
@@ -86,7 +86,7 @@ func allDescriptor(t testing.TB) protoreflect.MessageDescriptor {
 					field("os", 23, descriptorpb.FieldDescriptorProto_TYPE_STRING, oneof),
 					field("oi", 24, descriptorpb.FieldDescriptorProto_TYPE_INT32, oneof),
 				},
-				OneofDecl: []*descriptorpb.OneofDescriptorProto{{Name: proto.String("o")}},
+				OneofDecl: []*descriptorpb.OneofDescriptorProto{{Name: new("o")}},
 				NestedType: []*descriptorpb.DescriptorProto{
 					entry("MEntry",
 						field("key", 1, descriptorpb.FieldDescriptorProto_TYPE_STRING),
@@ -100,7 +100,7 @@ func allDescriptor(t testing.TB) protoreflect.MessageDescriptor {
 	}
 	fd, err := protodesc.NewFile(fdp, protoregistry.GlobalFiles)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return fd.Messages().ByName("All")
 }
@@ -165,7 +165,8 @@ func TestCodecRoundTrip(t *testing.T) {
 				t.Fatal(err)
 			}
 			dst := dynamicpb.NewMessage(md)
-			if err := c.unmarshalJSON(data, dst); err != nil {
+			err = c.unmarshalJSON(data, dst)
+			if err != nil {
 				t.Fatalf("%v\n%s", err, data)
 			}
 			if !proto.Equal(src, dst) {
@@ -176,7 +177,8 @@ func TestCodecRoundTrip(t *testing.T) {
 		t.Run("xml", func(t *testing.T) {
 			var buf bytes.Buffer
 			buf.WriteString("<x>")
-			if err := c.writeXMLFields(&buf, src.ProtoReflect(), 0); err != nil {
+			err := c.writeXMLFields(&buf, src.ProtoReflect(), 0)
+			if err != nil {
 				t.Fatal(err)
 			}
 			buf.WriteString("</x>")
@@ -185,7 +187,8 @@ func TestCodecRoundTrip(t *testing.T) {
 				t.Fatalf("%v\n%s", err, buf.String())
 			}
 			dst := dynamicpb.NewMessage(md)
-			if err := c.readXMLFields(root, dst, 0); err != nil {
+			err = c.readXMLFields(root, dst, 0)
+			if err != nil {
 				t.Fatal(err)
 			}
 			if !proto.Equal(src, dst) {
@@ -219,7 +222,8 @@ func TestCodecFieldNumbers(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := (codec{}).writeXMLFields(&buf, m, 0); err != nil {
+	err = (codec{}).writeXMLFields(&buf, m, 0)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if got, want := buf.String(), `<_1>5</_1><_2>6</_2><_14>x</_14>`; got != want {
@@ -243,7 +247,8 @@ func TestCodecDecodeLeniency(t *testing.T) {
 func TestCodecRejectsInvalid(t *testing.T) {
 	md := allDescriptor(t)
 	for _, in := range []string{`{"1":"abc"}`, `{"1":{}}`, `{"21":{"a":"x"}}`, `{"15":"***"}`, `[1]`} {
-		if err := (codec{}).unmarshalJSON([]byte(in), dynamicpb.NewMessage(md)); err == nil {
+		err := (codec{}).unmarshalJSON([]byte(in), dynamicpb.NewMessage(md))
+		if err == nil {
 			t.Errorf("expected error for %s", in)
 		}
 	}

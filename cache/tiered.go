@@ -2,6 +2,7 @@ package cache
 
 import (
 	"context"
+	"maps"
 	"time"
 
 	"github.com/valentin-kaiser/go-core/apperror"
@@ -48,7 +49,7 @@ func (tc *TieredCache) WithEventHandler(handler EventHandler) *TieredCache {
 }
 
 // Get retrieves a value from the cache, checking L1 first, then L2
-func (tc *TieredCache) Get(ctx context.Context, key string, dest interface{}) (bool, error) {
+func (tc *TieredCache) Get(ctx context.Context, key string, dest any) (bool, error) {
 	// Try L1 cache first
 	found, err := tc.l1Cache.Get(ctx, key, dest)
 	if err != nil {
@@ -74,10 +75,9 @@ func (tc *TieredCache) Get(ctx context.Context, key string, dest interface{}) (b
 	if found {
 		// Backfill L1 cache with the value from L2
 		// Use a shorter TTL for L1 to avoid memory bloat
-		l1TTL := tc.config.DefaultTTL
-		if l1TTL > time.Hour {
-			l1TTL = time.Hour // Limit L1 TTL to 1 hour max
-		}
+		l1TTL := min(tc.config.DefaultTTL,
+			// Limit L1 TTL to 1 hour max
+			time.Hour)
 
 		err = tc.l1Cache.Set(ctx, key, dest, l1TTL)
 		if err != nil {
@@ -96,7 +96,7 @@ func (tc *TieredCache) Get(ctx context.Context, key string, dest interface{}) (b
 }
 
 // Set stores a value in both L1 and L2 caches
-func (tc *TieredCache) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
+func (tc *TieredCache) Set(ctx context.Context, key string, value any, ttl time.Duration) error {
 	effectiveTTL := tc.calculateTTL(ttl)
 
 	// Set in L2 cache first (source of truth)
@@ -108,10 +108,9 @@ func (tc *TieredCache) Set(ctx context.Context, key string, value interface{}, t
 	}
 
 	// Set in L1 cache with potentially shorter TTL
-	l1TTL := effectiveTTL
-	if l1TTL > time.Hour {
-		l1TTL = time.Hour // Limit L1 TTL to prevent memory bloat
-	}
+	l1TTL := min(effectiveTTL,
+		// Limit L1 TTL to prevent memory bloat
+		time.Hour)
 
 	err = tc.l1Cache.Set(ctx, key, value, l1TTL)
 	if err != nil {
@@ -188,8 +187,8 @@ func (tc *TieredCache) Clear(ctx context.Context) error {
 }
 
 // GetMulti retrieves multiple values from the cache
-func (tc *TieredCache) GetMulti(ctx context.Context, keys []string) (map[string]interface{}, error) {
-	result := make(map[string]interface{})
+func (tc *TieredCache) GetMulti(ctx context.Context, keys []string) (map[string]any, error) {
+	result := make(map[string]any)
 
 	// Try L1 cache first
 	l1Results, err := tc.l1Cache.GetMulti(ctx, keys)
@@ -198,9 +197,7 @@ func (tc *TieredCache) GetMulti(ctx context.Context, keys []string) (map[string]
 		// Continue to L2 even if L1 fails
 	}
 	if err == nil {
-		for key, value := range l1Results {
-			result[key] = value
-		}
+		maps.Copy(result, l1Results)
 	}
 
 	// Find keys not found in L1
@@ -220,7 +217,7 @@ func (tc *TieredCache) GetMulti(ctx context.Context, keys []string) (map[string]
 		}
 
 		// Backfill L1 cache with values from L2
-		backfillItems := make(map[string]interface{})
+		backfillItems := make(map[string]any)
 		for key, value := range l2Results {
 			result[key] = value
 			backfillItems[key] = value
@@ -228,10 +225,7 @@ func (tc *TieredCache) GetMulti(ctx context.Context, keys []string) (map[string]
 
 		if len(backfillItems) > 0 {
 			// Use shorter TTL for L1 backfill
-			l1TTL := tc.config.DefaultTTL
-			if l1TTL > time.Hour {
-				l1TTL = time.Hour
-			}
+			l1TTL := min(tc.config.DefaultTTL, time.Hour)
 
 			err = tc.l1Cache.SetMulti(ctx, backfillItems, l1TTL)
 			if err != nil {
@@ -244,7 +238,7 @@ func (tc *TieredCache) GetMulti(ctx context.Context, keys []string) (map[string]
 }
 
 // SetMulti stores multiple values in both L1 and L2 caches
-func (tc *TieredCache) SetMulti(ctx context.Context, items map[string]interface{}, ttl time.Duration) error {
+func (tc *TieredCache) SetMulti(ctx context.Context, items map[string]any, ttl time.Duration) error {
 	effectiveTTL := tc.calculateTTL(ttl)
 
 	// Set in L2 cache first
@@ -255,10 +249,7 @@ func (tc *TieredCache) SetMulti(ctx context.Context, items map[string]interface{
 	}
 
 	// Set in L1 cache with potentially shorter TTL
-	l1TTL := effectiveTTL
-	if l1TTL > time.Hour {
-		l1TTL = time.Hour
-	}
+	l1TTL := min(effectiveTTL, time.Hour)
 
 	err = tc.l1Cache.SetMulti(ctx, items, l1TTL)
 	if err != nil {
@@ -301,10 +292,7 @@ func (tc *TieredCache) SetTTL(ctx context.Context, key string, ttl time.Duration
 	l2Err = tc.l2Cache.SetTTL(ctx, key, ttl)
 
 	// Update TTL in L1 cache (use shorter TTL if necessary)
-	l1TTL := ttl
-	if l1TTL > time.Hour {
-		l1TTL = time.Hour
-	}
+	l1TTL := min(ttl, time.Hour)
 	l1Err = tc.l1Cache.SetTTL(ctx, key, l1TTL)
 
 	// Return error if both failed
@@ -394,10 +382,7 @@ func (tc *TieredCache) WarmupL1(ctx context.Context, keys []string) error {
 	}
 
 	// Set values in L1 with shorter TTL
-	l1TTL := tc.config.DefaultTTL
-	if l1TTL > time.Hour {
-		l1TTL = time.Hour
-	}
+	l1TTL := min(tc.config.DefaultTTL, time.Hour)
 
 	return tc.l1Cache.SetMulti(ctx, values, l1TTL)
 }

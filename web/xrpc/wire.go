@@ -122,7 +122,8 @@ func (w jsonWire) parse(data []byte) ([]*envelope, bool, *Error) {
 	}
 	if len(data) > 0 && data[0] == '[' {
 		var items []json.RawMessage
-		if err := json.Unmarshal(data, &items); err != nil || len(items) == 0 {
+		err := json.Unmarshal(data, &items)
+		if err != nil || len(items) == 0 {
 			return nil, true, NewError(CodeInvalidRequest, "invalid request")
 		}
 		envs := make([]*envelope, len(items))
@@ -147,7 +148,8 @@ func (w jsonWire) parseOne(raw []byte) *envelope {
 		return &envelope{id: id, err: NewError(CodeInvalidRequest, "invalid request")}
 	}
 
-	if err := json.Unmarshal(raw, &msg); err != nil {
+	err := json.Unmarshal(raw, &msg)
+	if err != nil {
 		return invalid(rpcID{set: true, null: true})
 	}
 	id, ok := parseJSONID(msg.ID)
@@ -176,7 +178,8 @@ func (w jsonWire) parseOne(raw []byte) *envelope {
 				ID   json.RawMessage `json:"id"`
 				Data json.RawMessage `json:"data"`
 			}
-			if err := json.Unmarshal(msg.Params, &p); err != nil {
+			err := json.Unmarshal(msg.Params, &p)
+			if err != nil {
 				return rpcID{}, nil, err
 			}
 			sid, ok := parseJSONID(p.ID)
@@ -193,7 +196,8 @@ func (w jsonWire) parseOne(raw []byte) *envelope {
 				Message string          `json:"message"`
 				Data    json.RawMessage `json:"data"`
 			}
-			if err := json.Unmarshal(msg.Error, &ev); err != nil {
+			err := json.Unmarshal(msg.Error, &ev)
+			if err != nil {
 				return invalid(id)
 			}
 			e.err = &Error{Code: ev.Code, Message: ev.Message, RawData: ev.Data}
@@ -219,7 +223,8 @@ func (w jsonWire) bindParams(params []byte, m proto.Message) error {
 		return w.c.unmarshalJSON(p, m)
 	case p[0] == '[':
 		var items []json.RawMessage
-		if err := json.Unmarshal(p, &items); err != nil {
+		err := json.Unmarshal(p, &items)
+		if err != nil {
 			return err
 		}
 		switch len(items) {
@@ -252,7 +257,8 @@ func (w jsonWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
 			b = appendString(b, r.err.Message)
 			if r.err.Data != nil {
 				b = append(b, `,"data":`...)
-				if b, err = w.c.appendJSON(b, r.err.Data.ProtoReflect(), 0); err != nil {
+				b, err = w.c.appendJSON(b, r.err.Data.ProtoReflect(), 0)
+				if err != nil {
 					return nil, err
 				}
 			}
@@ -261,8 +267,11 @@ func (w jsonWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
 			b = append(b, `"result":`...)
 			if r.result == nil {
 				b = append(b, "null"...)
-			} else if b, err = w.c.appendJSON(b, r.result.ProtoReflect(), 0); err != nil {
-				return nil, err
+			} else {
+				b, err = w.c.appendJSON(b, r.result.ProtoReflect(), 0)
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 		b = append(b, `,"id":`...)
@@ -302,7 +311,8 @@ func (w jsonWire) encodeEvent(method string, id rpcID, data proto.Message) ([]by
 	if data != nil {
 		var err error
 		b = append(b, `,"data":`...)
-		if b, err = w.c.appendJSON(b, data.ProtoReflect(), 0); err != nil {
+		b, err = w.c.appendJSON(b, data.ProtoReflect(), 0)
+		if err != nil {
 			return nil, err
 		}
 	}

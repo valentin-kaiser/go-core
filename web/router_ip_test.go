@@ -44,7 +44,8 @@ func TestRouterRejectsInvalidClientAddress(t *testing.T) {
 
 func TestRouterForwardedHeaders(t *testing.T) {
 	r := ipRouter(t)
-	if err := r.setBlacklist([]string{"203.0.113.0/24"}); err != nil {
+	err := r.setBlacklist([]string{"203.0.113.0/24"})
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -61,7 +62,8 @@ func TestRouterForwardedHeaders(t *testing.T) {
 		t.Errorf("clean address: status %d, want 200", code)
 	}
 
-	if err := r.setWhitelist([]string{"203.0.113.7/32"}); err != nil {
+	err = r.setWhitelist([]string{"203.0.113.7/32"})
+	if err != nil {
 		t.Fatal(err)
 	}
 	if code := serve(r, "192.0.2.1:1", map[string]string{"X-Forwarded-For": "203.0.113.7"}); code != http.StatusOK {
@@ -87,7 +89,7 @@ func TestRouterHoneypotConcurrentWithRequests(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 200; i++ {
+		for i := range 200 {
 			req := httptest.NewRequest(http.MethodGet, "/trap", nil)
 			req.Header.Set("X-Real-IP", "198.51.100."+itoa(i%250+1))
 			r.honeypot(httptest.NewRecorder(), req)
@@ -95,7 +97,7 @@ func TestRouterHoneypotConcurrentWithRequests(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 400; i++ {
+		for range 400 {
 			serve(r, "192.0.2.1:1", nil)
 		}
 	}()

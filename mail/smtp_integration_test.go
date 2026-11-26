@@ -22,15 +22,22 @@ type received struct {
 }
 
 // startSMTP starts the server on a free port and returns the address and the messages it received
-func startSMTP(t testing.TB, mutate func(*mail.ServerConfig)) (string, func() []received) {
-	t.Helper()
+func startSMTP(tb testing.TB, mutate func(*mail.ServerConfig)) (string, func() []received) {
+	tb.Helper()
 
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		t.Skipf("cannot listen: %v", err)
+		tb.Skipf("cannot listen: %v", err)
 	}
-	port := l.Addr().(*net.TCPAddr).Port
-	_ = l.Close()
+	tcpAddr, ok := l.Addr().(*net.TCPAddr)
+	if !ok {
+		tb.Skipf("unexpected listener address type %T", l.Addr())
+	}
+	port := tcpAddr.Port
+	err = l.Close()
+	if err != nil {
+		tb.Skipf("cannot release the listener: %v", err)
+	}
 
 	cfg := mail.ServerConfig{
 		Enabled:               true,
@@ -58,10 +65,11 @@ func startSMTP(t testing.TB, mutate func(*mail.ServerConfig)) (string, func() []
 		mu.Unlock()
 		return err
 	})
-	if err := server.Start(context.Background()); err != nil {
-		t.Skipf("cannot start the SMTP server: %v", err)
+	err = server.Start(context.Background())
+	if err != nil {
+		tb.Skipf("cannot start the SMTP server: %v", err)
 	}
-	t.Cleanup(func() {
+	tb.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		_ = server.Stop(ctx)
@@ -74,8 +82,8 @@ func startSMTP(t testing.TB, mutate func(*mail.ServerConfig)) (string, func() []
 	}
 }
 
-func waitFor(t testing.TB, cond func() bool) {
-	t.Helper()
+func waitFor(tb testing.TB, cond func() bool) {
+	tb.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
 		if cond() {
@@ -83,7 +91,7 @@ func waitFor(t testing.TB, cond func() bool) {
 		}
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatal("condition not met in time")
+	tb.Fatal("condition not met in time")
 }
 
 func TestSMTPServerReceivesMessages(t *testing.T) {
@@ -91,7 +99,8 @@ func TestSMTPServerReceivesMessages(t *testing.T) {
 
 	// Lines that start with a dot are dot-stuffed on the wire and must come out unchanged
 	body := "Subject: hello\r\n\r\nfirst line\r\n.starts with a dot\r\nlast line\r\n"
-	if err := smtp.SendMail(addr, nil, "sender@example.com", []string{"a@example.com", "b@example.com"}, []byte(body)); err != nil {
+	err := smtp.SendMail(addr, nil, "sender@example.com", []string{"a@example.com", "b@example.com"}, []byte(body))
+	if err != nil {
 		t.Fatalf("SendMail: %v", err)
 	}
 
@@ -114,21 +123,25 @@ func TestSMTPServerSeveralMessagesOnOneConnection(t *testing.T) {
 	}
 	defer func() { _ = c.Close() }()
 
-	for i := 0; i < 5; i++ {
-		if err := c.Mail("sender@example.com"); err != nil {
+	for i := range 5 {
+		err := c.Mail("sender@example.com")
+		if err != nil {
 			t.Fatalf("message %d MAIL: %v", i, err)
 		}
-		if err := c.Rcpt("rcpt@example.com"); err != nil {
+		err = c.Rcpt("rcpt@example.com")
+		if err != nil {
 			t.Fatalf("message %d RCPT: %v", i, err)
 		}
 		w, err := c.Data()
 		if err != nil {
 			t.Fatalf("message %d DATA: %v", i, err)
 		}
-		if _, err := fmt.Fprintf(w, "Subject: n%d\r\n\r\nbody %d\r\n", i, i); err != nil {
+		_, err = fmt.Fprintf(w, "Subject: n%d\r\n\r\nbody %d\r\n", i, i)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := w.Close(); err != nil {
+		err = w.Close()
+		if err != nil {
 			t.Fatalf("message %d end of data: %v", i, err)
 		}
 	}
@@ -148,10 +161,12 @@ func TestSMTPServerRefusesOversizedMessage(t *testing.T) {
 	}
 	defer func() { _ = c.Close() }()
 
-	if err := c.Mail("sender@example.com"); err != nil {
+	err = c.Mail("sender@example.com")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Rcpt("rcpt@example.com"); err != nil {
+	err = c.Rcpt("rcpt@example.com")
+	if err != nil {
 		t.Fatal(err)
 	}
 	w, err := c.Data()
@@ -159,23 +174,28 @@ func TestSMTPServerRefusesOversizedMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	line := strings.Repeat("x", 100) + "\r\n"
-	for i := 0; i < 1000; i++ { // about 100 KB
-		if _, err := io.WriteString(w, line); err != nil {
+	for range 1000 { // about 100 KB
+		_, err := io.WriteString(w, line)
+		if err != nil {
 			break
 		}
 	}
-	if err := w.Close(); err == nil {
+	err = w.Close()
+	if err == nil {
 		t.Fatal("a message ten times over the limit was accepted")
 	}
 
 	// The connection is still in sync: a small message goes through afterwards
-	if err := c.Reset(); err != nil {
+	err = c.Reset()
+	if err != nil {
 		t.Fatalf("RSET after the refused message: %v", err)
 	}
-	if err := c.Mail("sender@example.com"); err != nil {
+	err = c.Mail("sender@example.com")
+	if err != nil {
 		t.Fatal(err)
 	}
-	if err := c.Rcpt("rcpt@example.com"); err != nil {
+	err = c.Rcpt("rcpt@example.com")
+	if err != nil {
 		t.Fatal(err)
 	}
 	w, err = c.Data()
@@ -183,7 +203,8 @@ func TestSMTPServerRefusesOversizedMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, _ = io.WriteString(w, "Subject: small\r\n\r\nok\r\n")
-	if err := w.Close(); err != nil {
+	err = w.Close()
+	if err != nil {
 		t.Fatalf("small message after the refused one: %v", err)
 	}
 
@@ -194,6 +215,8 @@ func TestSMTPServerRefusesOversizedMessage(t *testing.T) {
 }
 
 func benchSMTP(b *testing.B, size int) {
+	b.Helper()
+
 	addr, messages := startSMTP(b, func(c *mail.ServerConfig) { c.MaxMessageBytes = 8 << 20 })
 
 	var body bytes.Buffer
@@ -213,20 +236,24 @@ func benchSMTP(b *testing.B, size int) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := c.Mail("sender@example.com"); err != nil {
+		err := c.Mail("sender@example.com")
+		if err != nil {
 			b.Fatal(err)
 		}
-		if err := c.Rcpt("rcpt@example.com"); err != nil {
+		err = c.Rcpt("rcpt@example.com")
+		if err != nil {
 			b.Fatal(err)
 		}
 		w, err := c.Data()
 		if err != nil {
 			b.Fatal(err)
 		}
-		if _, err := w.Write(body.Bytes()); err != nil {
+		_, err = w.Write(body.Bytes())
+		if err != nil {
 			b.Fatal(err)
 		}
-		if err := w.Close(); err != nil {
+		err = w.Close()
+		if err != nil {
 			b.Fatal(err)
 		}
 	}

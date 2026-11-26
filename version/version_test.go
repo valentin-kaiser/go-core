@@ -252,7 +252,8 @@ func TestVersionValidate(t *testing.T) {
 		Platform:  "linux/amd64",
 	}
 
-	if err := v.Validate(validVersion); err != nil {
+	err := v.Validate(validVersion)
+	if err != nil {
 		t.Errorf("Valid version should pass validation: %v", err)
 	}
 
@@ -271,7 +272,8 @@ func TestVersionValidate(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := v.Validate(tc.version); err == nil {
+			err := v.Validate(tc.version)
+			if err == nil {
 				t.Errorf("Expected validation to fail for %s", tc.name)
 			}
 		})

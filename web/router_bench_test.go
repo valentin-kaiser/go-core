@@ -54,7 +54,7 @@ func benchConfiguredRouter() *web.Router {
 	for _, p := range []string{"/a", "/api/", "/static/", "/health"} {
 		r.OnStatus(p, http.StatusNotFound, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) })
 	}
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		r.Use(web.MiddlewareOrderDefault, func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { next.ServeHTTP(w, req) })
 		})

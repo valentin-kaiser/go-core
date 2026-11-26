@@ -195,7 +195,7 @@ func (c *Client) Call(ctx context.Context, u *url.URL, req, resp proto.Message, 
 	if err != nil {
 		return apperror.NewError("HTTP request failed").AddError(err)
 	}
-	defer httpResp.Body.Close()
+	defer apperror.Catch(func() error { return httpResp.Body.Close() }, "closing response body failed")
 
 	// Read response body
 	respBytes, err := io.ReadAll(httpResp.Body)
@@ -248,8 +248,9 @@ func ServerStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, r
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	defer conn.Close()
+	defer apperror.Catch(func() error { return resp.Body.Close() }, "closing handshake response body failed")
+	closeConn := closeOnce(conn)
+	defer apperror.Catch(closeConn, "closing websocket connection failed")
 
 	// Send initial request
 	err = c.writeWSMessage(conn, req)
@@ -285,7 +286,7 @@ func ServerStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, r
 	case err := <-errChan:
 		return err
 	case <-ctx.Done():
-		conn.Close()
+		apperror.Catch(closeConn, "closing websocket connection failed")
 		return <-errChan
 	}
 }
@@ -318,8 +319,9 @@ func ClientStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, i
 	if err != nil {
 		return err
 	}
-	defer r.Body.Close()
-	defer conn.Close()
+	defer apperror.Catch(func() error { return r.Body.Close() }, "closing handshake response body failed")
+	closeConn := closeOnce(conn)
+	defer apperror.Catch(closeConn, "closing websocket connection failed")
 
 	errChan := make(chan error, 1)
 	go func() {
@@ -361,7 +363,7 @@ func ClientStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, i
 	case err := <-errChan:
 		return err
 	case <-ctx.Done():
-		conn.Close()
+		apperror.Catch(closeConn, "closing websocket connection failed")
 		<-errChan
 		return ctx.Err()
 	}
@@ -400,8 +402,9 @@ func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	defer conn.Close()
+	defer apperror.Catch(func() error { return resp.Body.Close() }, "closing handshake response body failed")
+	closeConn := closeOnce(conn)
+	defer apperror.Catch(closeConn, "closing websocket connection failed")
 
 	errChan := make(chan error, 1)
 	var wg sync.WaitGroup
@@ -416,9 +419,7 @@ func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx
 	}
 
 	// Writer goroutine
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for msg := range in {
 			select {
 			case <-ctx.Done():
@@ -436,12 +437,10 @@ func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx
 				}
 			}
 		}
-	}()
+	})
 
 	// Reader goroutine
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		defer close(out)
 		for {
 			resp := respFactory()
@@ -465,7 +464,7 @@ func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx
 			case out <- resp:
 			}
 		}
-	}()
+	})
 
 	go func() {
 		wg.Wait()
@@ -484,7 +483,7 @@ func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx
 	case err := <-errChan:
 		return err
 	case <-ctx.Done():
-		conn.Close()
+		apperror.Catch(closeConn, "closing websocket connection failed")
 		<-errChan
 		return ctx.Err()
 	}
@@ -553,4 +552,15 @@ func (c *Client) readWSMessage(conn *websocket.Conn, msg *proto.Message) error {
 	err = c.unmarshalOpts.Unmarshal(data, *msg)
 	c.mutex.RUnlock()
 	return err
+}
+
+// closeOnce wraps c so that closing it repeatedly is safe: the first call closes
+// and later calls (e.g. explicit close on cancellation plus a deferred close) are no-ops.
+func closeOnce(c io.Closer) func() error {
+	var once sync.Once
+	return func() error {
+		var err error
+		once.Do(func() { err = c.Close() })
+		return err
+	}
 }

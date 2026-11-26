@@ -11,6 +11,7 @@ linters:
     - cyclop
     - exhaustive
     - exhaustruct
+    - exhaustruct_v5
     - forbidigo
     - funlen
     - gochecknoglobals
@@ -22,6 +23,7 @@ linters:
     - tagliatelle
     - varnamelen
     - wsl
+    - wsl_v5
     - nonamedreturns
 
     #complexity linters

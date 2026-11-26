@@ -7,6 +7,9 @@ import (
 	"strings"
 )
 
+// DataPath returns the directory for the data of an application. A service gets a system wide
+// location, an interactive application one in the profile of the user. An empty appName is
+// replaced by the name of the executable.
 func DataPath(service bool, appName string) string {
 	if appName == "" {
 		execName := executableName()
@@ -21,7 +24,8 @@ func DataPath(service bool, appName string) string {
 
 func dataPathFor(appName string, service bool) string {
 	path := filepath.Join(dataRoot(service), appName)
-	if absPath, err := filepath.Abs(path); err == nil {
+	absPath, err := filepath.Abs(path)
+	if err == nil {
 		return absPath
 	}
 
@@ -61,7 +65,8 @@ func dataRoot(service bool) string {
 			return xdgDataHome
 		}
 
-		if home, err := os.UserHomeDir(); err == nil && home != "" {
+		home, err := os.UserHomeDir()
+		if err == nil && home != "" {
 			return filepath.Join(home, ".local", "share")
 		}
 
@@ -71,7 +76,8 @@ func dataRoot(service bool) string {
 			return "/Library/Application Support"
 		}
 
-		if home, err := os.UserHomeDir(); err == nil && home != "" {
+		home, err := os.UserHomeDir()
+		if err == nil && home != "" {
 			return filepath.Join(home, "Library", "Application Support")
 		}
 

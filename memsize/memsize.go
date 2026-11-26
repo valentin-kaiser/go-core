@@ -33,7 +33,7 @@ import (
 
 // SizeOf returns the number of bytes that 'value' takes up in memory, without using reflect or unsafe
 // this functions has minor overhead for the encoding process.
-func SizeOf(value interface{}) (int64, error) {
+func SizeOf(value any) (int64, error) {
 	if InterfaceIsNullPointer(value) {
 		return 0, nil
 	}
@@ -61,12 +61,12 @@ func ToByteString(b int64) string {
 }
 
 // InterfaceIsNullPointer returns true if the interface is nil or if the interface is a pointer, map, chan, or slice and is nil
-func InterfaceIsNullPointer(i interface{}) bool {
+func InterfaceIsNullPointer(i any) bool {
 	if i == nil {
 		return true
 	}
 	switch reflect.TypeOf(i).Kind() {
-	case reflect.Ptr, reflect.Map, reflect.Chan, reflect.Slice:
+	case reflect.Pointer, reflect.Map, reflect.Chan, reflect.Slice:
 		return reflect.ValueOf(i).IsNil()
 	}
 	return false

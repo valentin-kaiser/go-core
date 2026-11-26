@@ -64,7 +64,7 @@ func TestMessageBuilder(t *testing.T) {
 
 func TestMessageBuilderWithTemplateContent(t *testing.T) {
 	templateContent := "<h1>Hello {{.Name}}</h1><p>Welcome to {{.Company}}!</p>"
-	templateData := map[string]interface{}{
+	templateData := map[string]any{
 		"Name":    "John Doe",
 		"Company": "Example Corp",
 	}
@@ -149,7 +149,8 @@ func TestTemplateManagerWithFileServer(t *testing.T) {
 	// Create a test template file
 	templateContent := `<html><body><h1>{{.Subject}}</h1><p>{{.Message}}</p></body></html>`
 	templatePath := filepath.Join(tempDir, "test.html")
-	if err := os.WriteFile(templatePath, []byte(templateContent), 0600); err != nil {
+	err := os.WriteFile(templatePath, []byte(templateContent), 0600)
+	if err != nil {
 		t.Fatalf("Failed to write test template: %v", err)
 	}
 
@@ -174,7 +175,7 @@ func TestTemplateManagerWithFileServer(t *testing.T) {
 	}
 
 	// Test rendering template
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Subject": "Test Subject",
 		"Message": "Test message content",
 	}
@@ -410,7 +411,12 @@ func TestManagerSendAsync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to start mail manager: %v", err)
 	}
-	defer manager.Stop(context.Background())
+	t.Cleanup(func() {
+		err := manager.Stop(context.Background())
+		if err != nil {
+			t.Errorf("Failed to stop mail manager: %v", err)
+		}
+	})
 
 	message, _ := mail.NewMessage().
 		From("sender@example.com").
@@ -436,8 +442,16 @@ func TestManagerSendAsyncQueueDisabled(t *testing.T) {
 	config.Queue.Enabled = false
 
 	manager := mail.NewManager(config, nil)
-	_ = manager.Start()
-	defer manager.Stop(t.Context())
+	err := manager.Start()
+	if err != nil {
+		t.Fatalf("Failed to start mail manager: %v", err)
+	}
+	t.Cleanup(func() {
+		err := manager.Stop(context.Background())
+		if err != nil {
+			t.Errorf("Failed to stop mail manager: %v", err)
+		}
+	})
 
 	message, _ := mail.NewMessage().
 		From("sender@example.com").
@@ -447,14 +461,15 @@ func TestManagerSendAsyncQueueDisabled(t *testing.T) {
 		Build()
 
 	// Test async send with queue disabled
-	err := manager.SendAsync(t.Context(), message)
+	err = manager.SendAsync(t.Context(), message)
 	if err == nil {
 		t.Error("Expected error when sending async email with queue disabled")
 	}
 }
 
-func TestManagerAddNotificationHandler(_ *testing.T) {
+func TestManagerAddNotificationHandler(t *testing.T) {
 	config := mail.DefaultConfig()
+	config.Server.Enabled = true
 	manager := mail.NewManager(config, nil)
 
 	handler := func(_ context.Context, _ string, _ []string, _ io.Reader) error {
@@ -462,7 +477,10 @@ func TestManagerAddNotificationHandler(_ *testing.T) {
 	}
 
 	// Test add handler
-	manager.AddNotificationHandler(handler)
+	err := manager.AddNotificationHandler(handler)
+	if err != nil {
+		t.Fatalf("Failed to add notification handler: %v", err)
+	}
 }
 
 func TestSenderValidation(t *testing.T) {
@@ -613,7 +631,8 @@ func TestAttachFile(t *testing.T) {
 	tempFile := filepath.Join(tempDir, "test.txt")
 	testContent := "This is test file content"
 
-	if err := os.WriteFile(tempFile, []byte(testContent), 0600); err != nil {
+	err := os.WriteFile(tempFile, []byte(testContent), 0600)
+	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
@@ -705,7 +724,7 @@ func BenchmarkTemplateRendering(b *testing.B) {
 	}
 
 	tm := mail.NewTemplateManager(config)
-	data := map[string]interface{}{
+	data := map[string]any{
 		"Subject": "Benchmark Subject",
 		"Message": "Benchmark message content",
 	}
@@ -718,8 +737,8 @@ func BenchmarkTemplateRendering(b *testing.B) {
 
 func TestFormatDateTemplateFunction(t *testing.T) {
 	// Create a simple template with formatDate function to test it directly
-	funcMap := map[string]interface{}{
-		"formatDate": func(format string, date interface{}) string {
+	funcMap := map[string]any{
+		"formatDate": func(format string, date any) string {
 			// This is the same implementation as in template.go
 			switch v := date.(type) {
 			case time.Time:
@@ -737,7 +756,8 @@ func TestFormatDateTemplateFunction(t *testing.T) {
 				return v.Format(format)
 			case string:
 				// Try to parse string as time
-				if t, err := time.Parse(time.RFC3339, v); err == nil {
+				t, err := time.Parse(time.RFC3339, v)
+				if err == nil {
 					if format == "" {
 						format = "2006-01-02 15:04:05"
 					}
@@ -752,7 +772,7 @@ func TestFormatDateTemplateFunction(t *testing.T) {
 
 	// Test with time.Time
 	now := time.Date(2023, 12, 25, 10, 30, 0, 0, time.UTC)
-	formatFunc, ok := funcMap["formatDate"].(func(string, interface{}) string)
+	formatFunc, ok := funcMap["formatDate"].(func(string, any) string)
 	if !ok {
 		t.Fatal("Expected formatDate function to be defined")
 	}
@@ -831,7 +851,8 @@ func TestSMTPSenderWithPerMessageTemplateFuncs(t *testing.T) {
 </body></html>`
 
 	templatePath := filepath.Join(tempDir, "permsg.html")
-	if err := os.WriteFile(templatePath, []byte(templateContent), 0600); err != nil {
+	err := os.WriteFile(templatePath, []byte(templateContent), 0600)
+	if err != nil {
 		t.Fatalf("Failed to create template: %v", err)
 	}
 
@@ -863,7 +884,8 @@ func TestSMTPSenderWithPerMessageTemplateFuncs(t *testing.T) {
 </body></html>`
 
 	customTemplatePath := filepath.Join(tempDir, "custom_permsg.html")
-	if err := os.WriteFile(customTemplatePath, []byte(customTemplateContent), 0600); err != nil {
+	err = os.WriteFile(customTemplatePath, []byte(customTemplateContent), 0600)
+	if err != nil {
 		t.Fatalf("Failed to create custom template: %v", err)
 	}
 
@@ -888,7 +910,7 @@ func TestSMTPSenderWithPerMessageTemplateFuncs(t *testing.T) {
 	defer cancel()
 
 	// This will fail due to network, but template processing should work
-	err := sender.Send(ctx, message)
+	err = sender.Send(ctx, message)
 	// We just want to ensure no template processing errors occur
 	// Network errors are expected in tests
 	_ = err

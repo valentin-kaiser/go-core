@@ -1,6 +1,7 @@
 package logging
 
 import (
+	"slices"
 	"strings"
 	"sync"
 )
@@ -92,9 +93,9 @@ func (sw *StreamWriter) addToBuffer(entry string) {
 
 // broadcast sends log entry to all listeners
 func (sw *StreamWriter) broadcast(entry string) {
-	for i := len(sw.listeners) - 1; i >= 0; i-- {
+	for i, v := range slices.Backward(sw.listeners) {
 		select {
-		case sw.listeners[i] <- entry:
+		case v <- entry:
 			// Successfully sent
 		default:
 			// Channel is full or closed, remove listener

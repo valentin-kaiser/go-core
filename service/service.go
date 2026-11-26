@@ -208,6 +208,7 @@ func IsInteractive() bool {
 // It includes error handling and graceful shutdown capabilities.
 type Service struct {
 	service.Service
+
 	err   chan error
 	start func(s *Service) error
 	stop  func(s *Service) error

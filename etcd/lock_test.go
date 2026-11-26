@@ -27,7 +27,8 @@ func TestLockSerializesAccess(t *testing.T) {
 		t.Fatal("expected TryLock to fail while first holder is active")
 	}
 
-	if err := first.Unlock(ctx); err != nil {
+	err = first.Unlock(ctx)
+	if err != nil {
 		t.Fatalf("Unlock first: %v", err)
 	}
 
@@ -39,7 +40,8 @@ func TestLockSerializesAccess(t *testing.T) {
 	if third == nil {
 		t.Fatal("expected TryLock to succeed after Unlock")
 	}
-	if err := third.Unlock(ctx); err != nil {
+	err = third.Unlock(ctx)
+	if err != nil {
 		t.Fatalf("Unlock third: %v", err)
 	}
 }
@@ -71,7 +73,8 @@ func TestLockBlocksUntilReleased(t *testing.T) {
 	case <-time.After(300 * time.Millisecond):
 	}
 
-	if err := held.Unlock(ctx); err != nil {
+	err = held.Unlock(ctx)
+	if err != nil {
 		t.Fatalf("Unlock: %v", err)
 	}
 

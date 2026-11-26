@@ -30,7 +30,7 @@ func (m *mockMiddleware) BeforeExec(ctx context.Context, query string, args []dr
 	return ctx
 }
 
-func (m *mockMiddleware) AfterExec(ctx context.Context, query string, args []driver.NamedValue, result driver.Result, err error) {
+func (m *mockMiddleware) AfterExec(_ context.Context, _ string, _ []driver.NamedValue, _ driver.Result, err error) {
 	m.afterExecCalled++
 	m.lastError = err
 }
@@ -42,12 +42,12 @@ func (m *mockMiddleware) BeforeQuery(ctx context.Context, query string, args []d
 	return ctx
 }
 
-func (m *mockMiddleware) AfterQuery(ctx context.Context, query string, args []driver.NamedValue, err error) {
+func (m *mockMiddleware) AfterQuery(_ context.Context, _ string, _ []driver.NamedValue, err error) {
 	m.afterQueryCalled++
 	m.lastError = err
 }
 
-func (m *mockMiddleware) BeginTx(ctx context.Context, opts driver.TxOptions) (driver.Tx, error) {
+func (m *mockMiddleware) BeginTx(_ context.Context, _ driver.TxOptions) (driver.Tx, error) {
 	return nil, driver.ErrSkip
 }
 
@@ -136,7 +136,7 @@ func TestLoggingMiddleware_BeforeAfterQuery(t *testing.T) {
 	mw := database.NewLoggingMiddleware(logger)
 
 	ctx := context.Background()
-	query := "SELECT * FROM users WHERE id = ?"
+	query := "SELECT id FROM users WHERE id = ?"
 	args := []driver.NamedValue{
 		{Ordinal: 1, Value: 1},
 	}
@@ -172,13 +172,13 @@ func TestLoggingMiddleware_BeginTx(t *testing.T) {
 }
 
 // TestLoggingMiddleware_DisabledLogging tests that disabled middleware doesn't log
-func TestLoggingMiddleware_DisabledLogging(t *testing.T) {
+func TestLoggingMiddleware_DisabledLogging(_ *testing.T) {
 	logger := logging.NewNoOpAdapter()
 	mw := database.NewLoggingMiddleware(logger)
 	mw.SetEnabled(false)
 
 	ctx := context.Background()
-	query := "SELECT * FROM users"
+	query := "SELECT id FROM users"
 	args := []driver.NamedValue{}
 
 	// These should not panic or cause issues when disabled
@@ -190,7 +190,7 @@ func TestLoggingMiddleware_DisabledLogging(t *testing.T) {
 }
 
 // TestLoggingMiddleware_WithDriverErrSkip tests handling of driver.ErrSkip
-func TestLoggingMiddleware_WithDriverErrSkip(t *testing.T) {
+func TestLoggingMiddleware_WithDriverErrSkip(_ *testing.T) {
 	logger := logging.NewNoOpAdapter()
 	mw := database.NewLoggingMiddleware(logger)
 
@@ -224,7 +224,7 @@ func TestMiddleware_Integration(t *testing.T) {
 	dsn := ":memory:"
 
 	db.Connect(100*time.Millisecond, dsn)
-	defer db.Disconnect()
+	defer disconnect(t, db)
 
 	// Wait for connection
 	time.Sleep(200 * time.Millisecond)
@@ -263,7 +263,7 @@ func TestMiddleware_Chaining(t *testing.T) {
 	dsn := ":memory:"
 
 	db.Connect(100*time.Millisecond, dsn)
-	defer db.Disconnect()
+	defer disconnect(t, db)
 
 	time.Sleep(200 * time.Millisecond)
 
@@ -293,7 +293,7 @@ func TestMiddleware_NilMiddleware(t *testing.T) {
 	dsn := ":memory:"
 
 	db.Connect(100*time.Millisecond, dsn)
-	defer db.Disconnect()
+	defer disconnect(t, db)
 
 	time.Sleep(200 * time.Millisecond)
 
@@ -307,7 +307,7 @@ func BenchmarkLoggingMiddleware_BeforeExec(b *testing.B) {
 	logger := logging.NewNoOpAdapter()
 	mw := database.NewLoggingMiddleware(logger)
 	ctx := context.Background()
-	query := "SELECT * FROM users WHERE id = ?"
+	query := "SELECT id FROM users WHERE id = ?"
 	args := []driver.NamedValue{{Ordinal: 1, Value: 1}}
 
 	b.ResetTimer()
@@ -321,7 +321,7 @@ func BenchmarkLoggingMiddleware_AfterExec(b *testing.B) {
 	logger := logging.NewNoOpAdapter()
 	mw := database.NewLoggingMiddleware(logger)
 	ctx := context.Background()
-	query := "SELECT * FROM users WHERE id = ?"
+	query := "SELECT id FROM users WHERE id = ?"
 	args := []driver.NamedValue{{Ordinal: 1, Value: 1}}
 
 	b.ResetTimer()
@@ -335,7 +335,7 @@ func BenchmarkLoggingMiddleware_BeforeQuery(b *testing.B) {
 	logger := logging.NewNoOpAdapter()
 	mw := database.NewLoggingMiddleware(logger)
 	ctx := context.Background()
-	query := "SELECT * FROM users WHERE id = ?"
+	query := "SELECT id FROM users WHERE id = ?"
 	args := []driver.NamedValue{{Ordinal: 1, Value: 1}}
 
 	b.ResetTimer()
@@ -349,7 +349,7 @@ func BenchmarkLoggingMiddleware_AfterQuery(b *testing.B) {
 	logger := logging.NewNoOpAdapter()
 	mw := database.NewLoggingMiddleware(logger)
 	ctx := context.Background()
-	query := "SELECT * FROM users WHERE id = ?"
+	query := "SELECT id FROM users WHERE id = ?"
 	args := []driver.NamedValue{{Ordinal: 1, Value: 1}}
 
 	b.ResetTimer()
@@ -364,7 +364,7 @@ func BenchmarkLoggingMiddleware_Disabled(b *testing.B) {
 	mw := database.NewLoggingMiddleware(logger)
 	mw.SetEnabled(false)
 	ctx := context.Background()
-	query := "SELECT * FROM users WHERE id = ?"
+	query := "SELECT id FROM users WHERE id = ?"
 	args := []driver.NamedValue{{Ordinal: 1, Value: 1}}
 
 	b.ResetTimer()
@@ -427,8 +427,8 @@ func TestMiddleware_DriverReuse(t *testing.T) {
 	}
 
 	// Cleanup
-	db1.Disconnect()
-	db2.Disconnect()
+	disconnect(t, db1)
+	disconnect(t, db2)
 }
 
 // TestMiddleware_DifferentInstances tests that different middleware instances get different drivers
@@ -471,6 +471,6 @@ func TestMiddleware_DifferentInstances(t *testing.T) {
 	}
 
 	// Cleanup
-	db1.Disconnect()
-	db2.Disconnect()
+	disconnect(t, db1)
+	disconnect(t, db2)
 }

@@ -226,7 +226,7 @@ func TestSMTPServer_MultipleHandlers(t *testing.T) {
 	// Add multiple handlers
 	handlerCount := 0
 
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		handler := func(_ context.Context, _ string, _ []string, _ io.Reader) error {
 			handlerCount++
 			return nil

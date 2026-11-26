@@ -297,7 +297,7 @@ func (h *jobHeap) Less(i, j int) bool {
 
 func (h *jobHeap) Swap(i, j int) { (*h)[i], (*h)[j] = (*h)[j], (*h)[i] }
 
-func (h *jobHeap) Push(x interface{}) {
+func (h *jobHeap) Push(x any) {
 	job, ok := x.(*Job)
 	if !ok {
 		panic("expected *Job type")
@@ -305,7 +305,7 @@ func (h *jobHeap) Push(x interface{}) {
 	*h = append(*h, job)
 }
 
-func (h *jobHeap) Pop() interface{} {
+func (h *jobHeap) Pop() any {
 	old := *h
 	n := len(old)
 	item := old[n-1]

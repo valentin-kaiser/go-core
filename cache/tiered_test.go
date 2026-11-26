@@ -40,17 +40,18 @@ func setupTieredTest(t *testing.T) *cache.TieredCache {
 	}
 
 	l2Config := cache.DefaultConfig()
-	l2Config.Namespace = fmt.Sprintf("tiered-test:%s:%d:%d", t.Name(), time.Now().UnixNano(), rand.Int63())
+	l2Config.Namespace = fmt.Sprintf("tiered-test:%s:%d:%d", t.Name(), time.Now().UnixNano(), rand.Int63()) //nolint:gosec // unique test namespace, not security relevant
 	l2Cache := cache.NewRedisCacheWithConfig(client, l2Config)
 
 	// Clean up any existing test data
-	if err := l2Cache.Clear(ctx); err != nil {
+	err = l2Cache.Clear(ctx)
+	if err != nil {
 		t.Logf("Warning: failed to clear test data: %v", err)
 	}
 
 	// Create tiered cache
 	tieredConfig := cache.DefaultConfig()
-	tieredConfig.Namespace = fmt.Sprintf("tiered:%s:%d:%d", t.Name(), time.Now().UnixNano(), rand.Int63())
+	tieredConfig.Namespace = fmt.Sprintf("tiered:%s:%d:%d", t.Name(), time.Now().UnixNano(), rand.Int63()) //nolint:gosec // unique test namespace, not security relevant
 
 	c := cache.NewTieredCacheWithConfig(l1Cache, l2Cache, tieredConfig)
 	return c
@@ -306,7 +307,7 @@ func TestTieredCache_MultiOperations(t *testing.T) {
 	ctx := t.Context()
 
 	// Test SetMulti
-	items := map[string]interface{}{
+	items := map[string]any{
 		"user:1": TestUser{ID: 1, Name: "Alice", Email: "alice@example.com"},
 		"user:2": TestUser{ID: 2, Name: "Bob", Email: "bob@example.com"},
 		"user:3": TestUser{ID: 3, Name: "Charlie", Email: "charlie@example.com"},

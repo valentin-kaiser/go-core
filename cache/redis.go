@@ -135,7 +135,7 @@ func (rc *RedisCache) Ping(ctx context.Context) error {
 }
 
 // Get retrieves a value from the cache
-func (rc *RedisCache) Get(ctx context.Context, key string, dest interface{}) (bool, error) {
+func (rc *RedisCache) Get(ctx context.Context, key string, dest any) (bool, error) {
 	formattedKey := rc.formatKey(key)
 
 	data, err := rc.client.Get(ctx, formattedKey).Result()
@@ -164,7 +164,7 @@ func (rc *RedisCache) Get(ctx context.Context, key string, dest interface{}) (bo
 }
 
 // Set stores a value in the cache
-func (rc *RedisCache) Set(ctx context.Context, key string, value interface{}, ttl time.Duration) error {
+func (rc *RedisCache) Set(ctx context.Context, key string, value any, ttl time.Duration) error {
 	formattedKey := rc.formatKey(key)
 	effectiveTTL := rc.calculateTTL(ttl)
 
@@ -245,9 +245,9 @@ func (rc *RedisCache) Clear(ctx context.Context) error {
 }
 
 // GetMulti retrieves multiple values from the cache
-func (rc *RedisCache) GetMulti(ctx context.Context, keys []string) (map[string]interface{}, error) {
+func (rc *RedisCache) GetMulti(ctx context.Context, keys []string) (map[string]any, error) {
 	if len(keys) == 0 {
-		return make(map[string]interface{}), nil
+		return make(map[string]any), nil
 	}
 
 	formattedKeys := make([]string, len(keys))
@@ -261,10 +261,10 @@ func (rc *RedisCache) GetMulti(ctx context.Context, keys []string) (map[string]i
 		return nil, NewCacheError("getmulti", "", err)
 	}
 
-	result := make(map[string]interface{}, len(values))
+	result := make(map[string]any, len(values))
 	for i, value := range values {
 		if value != nil {
-			var dest interface{}
+			var dest any
 			if data, ok := value.(string); ok {
 				err := rc.config.Serializer.Deserialize([]byte(data), &dest)
 				if err != nil {
@@ -284,7 +284,7 @@ func (rc *RedisCache) GetMulti(ctx context.Context, keys []string) (map[string]i
 }
 
 // SetMulti stores multiple values in the cache
-func (rc *RedisCache) SetMulti(ctx context.Context, items map[string]interface{}, ttl time.Duration) error {
+func (rc *RedisCache) SetMulti(ctx context.Context, items map[string]any, ttl time.Duration) error {
 	effectiveTTL := rc.calculateTTL(ttl)
 
 	pipe := rc.client.Pipeline()
@@ -390,8 +390,8 @@ func (rc *RedisCache) GetInfo(ctx context.Context) (map[string]string, error) {
 	}
 
 	result := make(map[string]string)
-	lines := strings.Split(info, "\r\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(info, "\r\n")
+	for line := range lines {
 		if strings.Contains(line, ":") {
 			parts := strings.SplitN(line, ":", 2)
 			if len(parts) == 2 {
@@ -442,7 +442,7 @@ func (rc *RedisCache) Decrement(ctx context.Context, key string, delta int64) (i
 }
 
 // SetNX sets a key only if it doesn't exist (atomic operation)
-func (rc *RedisCache) SetNX(ctx context.Context, key string, value interface{}, ttl time.Duration) (bool, error) {
+func (rc *RedisCache) SetNX(ctx context.Context, key string, value any, ttl time.Duration) (bool, error) {
 	formattedKey := rc.formatKey(key)
 	effectiveTTL := rc.calculateTTL(ttl)
 
@@ -467,7 +467,7 @@ func (rc *RedisCache) SetNX(ctx context.Context, key string, value interface{}, 
 }
 
 // GetSet atomically sets a new value and returns the old value
-func (rc *RedisCache) GetSet(ctx context.Context, key string, value interface{}) (interface{}, bool, error) {
+func (rc *RedisCache) GetSet(ctx context.Context, key string, value any) (any, bool, error) {
 	formattedKey := rc.formatKey(key)
 
 	data, err := rc.config.Serializer.Serialize(value)
@@ -476,7 +476,7 @@ func (rc *RedisCache) GetSet(ctx context.Context, key string, value interface{})
 		return nil, false, NewCacheError("getset", key, err)
 	}
 
-	oldData, err := rc.client.GetSet(ctx, formattedKey, data).Result()
+	oldData, err := rc.client.SetArgs(ctx, formattedKey, data, redis.SetArgs{Get: true}).Result()
 	if err != nil {
 		if err == redis.Nil {
 			rc.updateStats(func(s *Stats) { s.Sets++ })
@@ -487,7 +487,7 @@ func (rc *RedisCache) GetSet(ctx context.Context, key string, value interface{})
 		return nil, false, NewCacheError("getset", key, err)
 	}
 
-	var oldValue interface{}
+	var oldValue any
 	err = rc.config.Serializer.Deserialize([]byte(oldData), &oldValue)
 	if err != nil {
 		rc.recordError(err)

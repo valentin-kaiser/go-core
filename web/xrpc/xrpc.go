@@ -152,13 +152,15 @@ func (s *Service) codecFor(w http.ResponseWriter, r *http.Request) codec {
 	if s.namesHdr != "" {
 		w.Header().Add("Vary", s.namesHdr)
 		if v := r.Header.Get(s.namesHdr); v != "" {
-			if names, err := strconv.ParseBool(v); err == nil {
+			names, err := strconv.ParseBool(v)
+			if err == nil {
 				return codec{names: names}
 			}
 		}
 	}
 	if s.namesQry != "" && websocket.IsWebSocketUpgrade(r) {
-		if names, err := strconv.ParseBool(r.URL.Query().Get(s.namesQry)); err == nil {
+		names, err := strconv.ParseBool(r.URL.Query().Get(s.namesQry))
+		if err == nil {
 			return codec{names: names}
 		}
 	}
@@ -329,8 +331,7 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request, wr wire) {
 	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, s.maxBody))
 	if err != nil {
-		var tooLarge *http.MaxBytesError
-		if errors.As(err, &tooLarge) {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
 			http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
 			return
 		}
@@ -372,7 +373,8 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request, wr wire) {
 	}
 	w.Header().Set("Content-Type", wr.contentType())
 	w.WriteHeader(code)
-	if _, err := w.Write(out); err != nil {
+	_, err = w.Write(out) //nolint:gosec // out is wire-encoded JSON or XML served with a matching non-HTML Content-Type
+	if err != nil {
 		logger.Error().Err(err).Msg("failed to write response")
 	}
 }
@@ -413,7 +415,8 @@ func (s *Service) handle(ctx context.Context, e *envelope) *reply {
 	}
 
 	in := m.newIn()
-	if err := e.bind(in); err != nil {
+	err := e.bind(in)
+	if err != nil {
 		return fail(NewError(CodeInvalidParams, "invalid params: "+err.Error()))
 	}
 

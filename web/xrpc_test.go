@@ -59,7 +59,12 @@ func TestServerWithXRPC(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer resp.Body.Close()
+		defer func() {
+			err := resp.Body.Close()
+			if err != nil {
+				t.Errorf("closing response body failed: %v", err)
+			}
+		}()
 		body, _ := io.ReadAll(resp.Body)
 		if want := `{"jsonrpc":"2.0","result":{"1":1},"id":1}`; string(body) != want {
 			t.Errorf("body = %s, want %s", body, want)
@@ -70,7 +75,12 @@ func TestServerWithXRPC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close()
+	defer func() {
+		err := conn.Close()
+		if err != nil {
+			t.Errorf("closing connection failed: %v", err)
+		}
+	}()
 	client, err := xrpc.NewClient("", xrpc.WithGRPCConn(conn))
 	if err != nil {
 		t.Fatal(err)
@@ -80,7 +90,8 @@ func TestServerWithXRPC(t *testing.T) {
 
 	t.Run("grpc unary", func(t *testing.T) {
 		out := &grpc_health_v1.HealthCheckResponse{}
-		if err := client.Call(ctx, "grpc.health.v1.Health/Check", &grpc_health_v1.HealthCheckRequest{}, out); err != nil {
+		err := client.Call(ctx, "grpc.health.v1.Health/Check", &grpc_health_v1.HealthCheckRequest{}, out)
+		if err != nil {
 			t.Fatal(err)
 		}
 		if out.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
@@ -110,7 +121,8 @@ func TestServerWithXRPC(t *testing.T) {
 		if m := <-out; m.GetStatus() != grpc_health_v1.HealthCheckResponse_SERVING {
 			t.Errorf("unexpected second message %v", m)
 		}
-		if err := <-errc; err != nil {
+		err := <-errc
+		if err != nil {
 			t.Fatal(err)
 		}
 	})

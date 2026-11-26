@@ -11,11 +11,13 @@ func finish(t *testing.T, q *queue.MemoryQueue, id string, status queue.Status) 
 	t.Helper()
 	ctx := t.Context()
 	job := queue.NewJob("r").WithID(id).Build()
-	if err := q.Enqueue(ctx, job); err != nil {
+	err := q.Enqueue(ctx, job)
+	if err != nil {
 		t.Fatal(err)
 	}
 	job.Status = status
-	if err := q.UpdateJob(ctx, job); err != nil {
+	err = q.UpdateJob(ctx, job)
+	if err != nil {
 		t.Fatal(err)
 	}
 }
@@ -25,16 +27,18 @@ func TestMemoryQueueFinishedRetention(t *testing.T) {
 	q := queue.NewMemoryQueue().WithFinishedRetention(5)
 	ctx := t.Context()
 
-	for i := 0; i < 20; i++ {
+	for i := range 20 {
 		finish(t, q, fmt.Sprintf("done-%d", i), queue.StatusCompleted)
 	}
 	finish(t, q, "failed-1", queue.StatusFailed)
 	finish(t, q, "dead-1", queue.StatusDeadLetter)
 
-	if _, err := q.GetJob(ctx, "done-0"); err == nil {
+	_, err := q.GetJob(ctx, "done-0")
+	if err == nil {
 		t.Error("the oldest finished job is still indexed")
 	}
-	if _, err := q.GetJob(ctx, "dead-1"); err != nil {
+	_, err = q.GetJob(ctx, "dead-1")
+	if err != nil {
 		t.Errorf("the newest finished job was dropped: %v", err)
 	}
 
@@ -53,7 +57,8 @@ func TestMemoryQueueRetentionKeepsRetriedJobs(t *testing.T) {
 	ctx := t.Context()
 
 	job := queue.NewJob("r").WithID("retry-me").Build()
-	if err := q.Enqueue(ctx, job); err != nil {
+	err := q.Enqueue(ctx, job)
+	if err != nil {
 		t.Fatal(err)
 	}
 	job.Status = queue.StatusFailed
@@ -61,20 +66,22 @@ func TestMemoryQueueRetentionKeepsRetriedJobs(t *testing.T) {
 	job.Status = queue.StatusRetrying
 	_ = q.UpdateJob(ctx, job)
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		finish(t, q, fmt.Sprintf("other-%d", i), queue.StatusCompleted)
 	}
-	if _, err := q.GetJob(ctx, "retry-me"); err != nil {
+	_, err = q.GetJob(ctx, "retry-me")
+	if err != nil {
 		t.Fatalf("an active job was dropped: %v", err)
 	}
 }
 
 func TestMemoryQueueUnlimitedRetention(t *testing.T) {
 	q := queue.NewMemoryQueue().WithFinishedRetention(0)
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		finish(t, q, fmt.Sprintf("done-%d", i), queue.StatusCompleted)
 	}
-	if _, err := q.GetJob(t.Context(), "done-0"); err != nil {
+	_, err := q.GetJob(t.Context(), "done-0")
+	if err != nil {
 		t.Fatalf("a job was dropped although retention is unlimited: %v", err)
 	}
 }
@@ -86,30 +93,36 @@ func TestMemoryQueueRetentionKeepsNewerIncarnation(t *testing.T) {
 	ctx := t.Context()
 
 	job := queue.NewJob("r").WithID("again").Build()
-	if err := q.Enqueue(ctx, job); err != nil {
+	err := q.Enqueue(ctx, job)
+	if err != nil {
 		t.Fatal(err)
 	}
 	job.Status = queue.StatusFailed
-	if err := q.UpdateJob(ctx, job); err != nil { // entry 1
+	err = q.UpdateJob(ctx, job)
+	if err != nil { // entry 1
 		t.Fatal(err)
 	}
 	finish(t, q, "a", queue.StatusCompleted) // entry 2
 	job.Status = queue.StatusRunning
-	if err := q.UpdateJob(ctx, job); err != nil {
+	err = q.UpdateJob(ctx, job)
+	if err != nil {
 		t.Fatal(err)
 	}
 	job.Status = queue.StatusCompleted
-	if err := q.UpdateJob(ctx, job); err != nil { // entry 3, the ring is full
+	err = q.UpdateJob(ctx, job)
+	if err != nil { // entry 3, the ring is full
 		t.Fatal(err)
 	}
 	finish(t, q, "b", queue.StatusCompleted) // evicts entry 1
 
-	if _, err := q.GetJob(ctx, "again"); err != nil {
+	_, err = q.GetJob(ctx, "again")
+	if err != nil {
 		t.Fatalf("the newer completion was dropped by its older ring entry: %v", err)
 	}
 	finish(t, q, "c", queue.StatusCompleted) // evicts entry 2
 	finish(t, q, "d", queue.StatusCompleted) // evicts entry 3, the job's own
-	if _, err := q.GetJob(ctx, "again"); err == nil {
+	_, err = q.GetJob(ctx, "again")
+	if err == nil {
 		t.Fatal("the job is still indexed after its own entry was evicted")
 	}
 }

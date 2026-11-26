@@ -23,29 +23,33 @@ func serverDSN(env, fallback string) string {
 	return fallback
 }
 
-func connectServer(t testing.TB, driver database.Driver, name, dsn string) *database.Database[TestQueries] {
-	t.Helper()
+const dumpRoundtripQuery = "SELECT id, txt, bin, num, ts, flag FROM dump_roundtrip ORDER BY id"
+
+func connectServer(tb testing.TB, driver database.Driver, name, dsn string) *database.Database[TestQueries] {
+	tb.Helper()
 	db := database.New[TestQueries](driver, name)
 	db.Connect(100*time.Millisecond, dsn)
-	t.Cleanup(func() { _ = db.Disconnect() })
+	tb.Cleanup(func() { _ = db.Disconnect() })
 
 	done := make(chan struct{})
 	go func() { db.AwaitConnection(); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Skipf("%s server not available at %s", name, dsn)
+		tb.Skipf("%s server not available at %s", name, dsn)
 	}
 	return db
 }
 
-func mysqlServer(t testing.TB) *database.Database[TestQueries] {
-	return connectServer(t, database.DriverMySQL, "mysql",
+func mysqlServer(tb testing.TB) *database.Database[TestQueries] {
+	tb.Helper()
+	return connectServer(tb, database.DriverMySQL, "mysql",
 		serverDSN("MYSQL_DSN", "root:bench@tcp(127.0.0.1:13306)/bench?parseTime=true&multiStatements=false"))
 }
 
-func postgresServer(t testing.TB) *database.Database[TestQueries] {
-	return connectServer(t, database.DriverPostgres, "postgres",
+func postgresServer(tb testing.TB) *database.Database[TestQueries] {
+	tb.Helper()
+	return connectServer(tb, database.DriverPostgres, "postgres",
 		serverDSN("POSTGRES_DSN", "postgres://postgres:bench@127.0.0.1:15432/bench?sslmode=disable"))
 }
 
@@ -60,18 +64,19 @@ var trickyStrings = []string{
 	"tab\tand 'quotes' and ''double''",
 }
 
-func execAll(t testing.TB, db *database.Database[TestQueries], statements ...string) {
-	t.Helper()
+func execAll(tb testing.TB, db *database.Database[TestQueries], statements ...string) {
+	tb.Helper()
 	err := db.Execute(func(c *sql.DB) error {
 		for _, s := range statements {
-			if _, err := c.Exec(s); err != nil {
+			_, err := c.Exec(s)
+			if err != nil {
 				return fmt.Errorf("%s: %w", s, err)
 			}
 		}
 		return nil
 	})
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 }
 
@@ -84,18 +89,19 @@ type dumpRow struct {
 	Flag sql.NullBool
 }
 
-func readRows(t testing.TB, db *database.Database[TestQueries], query string) []dumpRow {
-	t.Helper()
+func readRows(tb testing.TB, db *database.Database[TestQueries]) []dumpRow {
+	tb.Helper()
 	var out []dumpRow
 	err := db.Execute(func(c *sql.DB) error {
-		rows, err := c.Query(query)
+		rows, err := c.Query(dumpRoundtripQuery)
 		if err != nil {
 			return err
 		}
 		defer func() { _ = rows.Close() }()
 		for rows.Next() {
 			var r dumpRow
-			if err := rows.Scan(&r.ID, &r.Text, &r.Blob, &r.Num, &r.When, &r.Flag); err != nil {
+			err := rows.Scan(&r.ID, &r.Text, &r.Blob, &r.Num, &r.When, &r.Flag)
+			if err != nil {
 				return err
 			}
 			out = append(out, r)
@@ -103,7 +109,7 @@ func readRows(t testing.TB, db *database.Database[TestQueries], query string) []
 		return rows.Err()
 	})
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return out
 }
@@ -133,7 +139,8 @@ func TestMySQLBackupRestoreRoundTrip(t *testing.T) {
 	when := time.Date(2026, 3, 4, 5, 6, 7, 123456000, time.UTC)
 	err := db.Execute(func(c *sql.DB) error {
 		for i, s := range trickyStrings {
-			if _, err := c.Exec("INSERT INTO dump_roundtrip VALUES (?, ?, ?, ?, ?, ?)", i+1, s, []byte{0, 1, 2, 255, 254, byte(i)}, float64(i)+0.1, when, i%2); err != nil {
+			_, err := c.Exec("INSERT INTO dump_roundtrip VALUES (?, ?, ?, ?, ?, ?)", i+1, s, []byte{0, 1, 2, 255, 254, byte(i)}, float64(i)+0.1, when, i%2)
+			if err != nil {
 				return err
 			}
 		}
@@ -142,8 +149,9 @@ func TestMySQLBackupRestoreRoundTrip(t *testing.T) {
 			return err
 		}
 		// More rows than fit in one INSERT statement of the dump
-		for i := 0; i < 1300; i++ {
-			if _, err := c.Exec("INSERT INTO dump_roundtrip VALUES (?, ?, NULL, ?, ?, 1)", 1000+i, fmt.Sprintf("row %d; 'x'", i), float64(i)/3, when); err != nil {
+		for i := range 1300 {
+			_, err := c.Exec("INSERT INTO dump_roundtrip VALUES (?, ?, NULL, ?, ?, 1)", 1000+i, fmt.Sprintf("row %d; 'x'", i), float64(i)/3, when)
+			if err != nil {
 				return err
 			}
 		}
@@ -153,15 +161,18 @@ func TestMySQLBackupRestoreRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	query := "SELECT id, txt, bin, num, ts, flag FROM dump_roundtrip ORDER BY id"
-	want := readRows(t, db, query)
+	want := readRows(t, db)
 
 	backup := filepath.Join(t.TempDir(), "mysql.sql")
-	if err := db.Backup(backup, ""); err != nil {
+	err = db.Backup(backup, "")
+	if err != nil {
 		t.Fatalf("Backup: %v", err)
 	}
 
-	dump, _ := os.ReadFile(backup)
+	dump, err := os.ReadFile(filepath.Clean(backup))
+	if err != nil {
+		t.Fatalf("reading backup failed: %v", err)
+	}
 	if strings.Contains(string(dump), "bench@") || strings.Contains(string(dump), ":bench") {
 		t.Error("the backup contains the password of the DSN")
 	}
@@ -170,10 +181,11 @@ func TestMySQLBackupRestoreRoundTrip(t *testing.T) {
 	}
 
 	execAll(t, db, "DELETE FROM dump_roundtrip")
-	if err := db.Restore(backup); err != nil {
+	err = db.Restore(backup)
+	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
-	compareRows(t, want, readRows(t, db, query))
+	compareRows(t, want, readRows(t, db))
 }
 
 func TestPostgresBackupRestoreRoundTrip(t *testing.T) {
@@ -187,15 +199,18 @@ func TestPostgresBackupRestoreRoundTrip(t *testing.T) {
 	when := time.Date(2026, 3, 4, 5, 6, 7, 123456000, time.UTC)
 	err := db.Execute(func(c *sql.DB) error {
 		for i, s := range trickyStrings {
-			if _, err := c.Exec("INSERT INTO dump_roundtrip VALUES ($1, $2, $3, $4, $5, $6)", i+1, s, []byte{0, 1, 2, 255, 254, byte(i)}, float64(i)+0.1, when, i%2 == 0); err != nil {
+			_, err := c.Exec("INSERT INTO dump_roundtrip VALUES ($1, $2, $3, $4, $5, $6)", i+1, s, []byte{0, 1, 2, 255, 254, byte(i)}, float64(i)+0.1, when, i%2 == 0)
+			if err != nil {
 				return err
 			}
 		}
-		if _, err := c.Exec("INSERT INTO dump_roundtrip VALUES (100, NULL, NULL, NULL, NULL, NULL)"); err != nil {
+		_, err := c.Exec("INSERT INTO dump_roundtrip VALUES (100, NULL, NULL, NULL, NULL, NULL)")
+		if err != nil {
 			return err
 		}
-		for i := 0; i < 1300; i++ {
-			if _, err := c.Exec("INSERT INTO dump_roundtrip VALUES ($1, $2, NULL, $3, $4, true)", 1000+i, fmt.Sprintf("row %d; 'x'", i), float64(i)/3, when); err != nil {
+		for i := range 1300 {
+			_, err := c.Exec("INSERT INTO dump_roundtrip VALUES ($1, $2, NULL, $3, $4, true)", 1000+i, fmt.Sprintf("row %d; 'x'", i), float64(i)/3, when)
+			if err != nil {
 				return err
 			}
 		}
@@ -205,24 +220,28 @@ func TestPostgresBackupRestoreRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	query := "SELECT id, txt, bin, num, ts, flag FROM dump_roundtrip ORDER BY id"
-	want := readRows(t, db, query)
+	want := readRows(t, db)
 
 	backup := filepath.Join(t.TempDir(), "postgres.sql")
-	if err := db.Backup(backup, "public"); err != nil {
+	err = db.Backup(backup, "public")
+	if err != nil {
 		t.Fatalf("Backup: %v", err)
 	}
 
-	dump, _ := os.ReadFile(backup)
+	dump, err := os.ReadFile(filepath.Clean(backup))
+	if err != nil {
+		t.Fatalf("reading backup failed: %v", err)
+	}
 	if strings.Contains(string(dump), ":bench@") {
 		t.Error("the backup contains the password of the DSN")
 	}
 
 	execAll(t, db, "DELETE FROM dump_roundtrip")
-	if err := db.Restore(backup); err != nil {
+	err = db.Restore(backup)
+	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
-	compareRows(t, want, readRows(t, db, query))
+	compareRows(t, want, readRows(t, db))
 }
 
 // The dump switches foreign key checks off and on again; that only works when every statement
@@ -243,19 +262,21 @@ func TestMySQLRestoreWithForeignKeys(t *testing.T) {
 	})
 
 	backup := filepath.Join(t.TempDir(), "fk.sql")
-	if err := db.Backup(backup, ""); err != nil {
+	err := db.Backup(backup, "")
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Remove both tables, the way a restore into an empty database starts
-	err := db.Execute(func(c *sql.DB) error {
+	err = db.Execute(func(c *sql.DB) error {
 		conn, err := c.Conn(t.Context())
 		if err != nil {
 			return err
 		}
 		defer func() { _ = conn.Close() }()
 		for _, s := range []string{"SET FOREIGN_KEY_CHECKS = 0", "DROP TABLE a_fk_child", "DROP TABLE b_fk_parent", "SET FOREIGN_KEY_CHECKS = 1"} {
-			if _, err := conn.ExecContext(t.Context(), s); err != nil {
+			_, err := conn.ExecContext(t.Context(), s)
+			if err != nil {
 				return err
 			}
 		}
@@ -265,13 +286,15 @@ func TestMySQLRestoreWithForeignKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := db.Restore(backup); err != nil {
+	err = db.Restore(backup)
+	if err != nil {
 		t.Fatal(err)
 	}
 
 	var children, parents int
 	err = db.Execute(func(c *sql.DB) error {
-		if err := c.QueryRow("SELECT COUNT(*) FROM a_fk_child").Scan(&children); err != nil {
+		err := c.QueryRow("SELECT COUNT(*) FROM a_fk_child").Scan(&children)
+		if err != nil {
 			return err
 		}
 		return c.QueryRow("SELECT COUNT(*) FROM b_fk_parent").Scan(&parents)

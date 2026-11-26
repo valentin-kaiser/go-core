@@ -158,6 +158,7 @@ package database
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -167,20 +168,30 @@ import (
 	"sync/atomic"
 	"time"
 
+	// Registers the MySQL driver for DriverMySQL.
 	_ "github.com/go-sql-driver/mysql"
+	// Registers the PostgreSQL driver for DriverPostgres.
 	_ "github.com/jackc/pgx/v5/stdlib"
+	// Registers the SQLite driver for DriverSQLite.
 	_ "github.com/mattn/go-sqlite3"
 	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/interruption"
 	"github.com/valentin-kaiser/go-core/logging"
 )
 
+// Driver is the name of a supported database/sql driver.
 type Driver string
 
+// The supported database drivers.
 const (
 	DriverSQLite   Driver = "sqlite3"
 	DriverMySQL    Driver = "mysql"
 	DriverPostgres Driver = "pgx"
+)
+
+const (
+	sqliteWALSuffix = "-wal"
+	sqliteSHMSuffix = "-shm"
 )
 
 // Database represents a database connection instance with its own state and configuration.
@@ -360,7 +371,8 @@ func (d *Database[Q]) Transaction(call func(tx *sql.Tx) error) error {
 
 	err = call(tx)
 	if err != nil {
-		if rbErr := tx.Rollback(); rbErr != nil {
+		rbErr := tx.Rollback()
+		if rbErr != nil {
 			return apperror.NewErrorf("failed to rollback transaction").AddError(rbErr).AddError(err)
 		}
 		return err
@@ -368,7 +380,8 @@ func (d *Database[Q]) Transaction(call func(tx *sql.Tx) error) error {
 
 	err = tx.Commit()
 	if err != nil {
-		if rbErr := tx.Rollback(); rbErr != nil {
+		rbErr := tx.Rollback()
+		if rbErr != nil {
 			return apperror.NewErrorf("failed to rollback transaction").AddError(rbErr).AddError(err)
 		}
 		return apperror.NewErrorf("failed to commit transaction").AddError(err)
@@ -421,7 +434,8 @@ func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 
 	queries, err := parent.newQueries(tx)
 	if err != nil {
-		if rbErr := tx.Rollback(); rbErr != nil {
+		rbErr := tx.Rollback()
+		if rbErr != nil {
 			return apperror.NewErrorf("failed to rollback transaction").AddError(rbErr).AddError(err)
 		}
 		return err
@@ -430,7 +444,8 @@ func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 	// Execute the user's function
 	err = call(queries)
 	if err != nil {
-		if rbErr := tx.Rollback(); rbErr != nil {
+		rbErr := tx.Rollback()
+		if rbErr != nil {
 			return apperror.NewErrorf("failed to rollback transaction").AddError(rbErr).AddError(err)
 		}
 		return err
@@ -438,7 +453,8 @@ func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 
 	err = tx.Commit()
 	if err != nil {
-		if rbErr := tx.Rollback(); rbErr != nil {
+		rbErr := tx.Rollback()
+		if rbErr != nil {
 			return apperror.NewErrorf("failed to rollback transaction").AddError(rbErr).AddError(err)
 		}
 		return apperror.NewErrorf("failed to commit transaction").AddError(err)
@@ -453,7 +469,7 @@ func (d *Database[Q]) TestConnection(dsn string) error {
 	if err != nil {
 		return apperror.NewError("connection test failed").AddError(err)
 	}
-	defer instance.Close()
+	defer apperror.Catch(instance.Close, "closing database connection failed")
 
 	err = instance.Ping()
 	if err != nil {
@@ -543,7 +559,8 @@ func (d *Database[Q]) Connect(interval time.Duration, dsn string) {
 					// it: otherwise its idle connections and opener goroutine live until exit,
 					// once per reconnect. Queries already running on it finish normally.
 					if replaced != nil && replaced != instance {
-						if err := replaced.Close(); err != nil {
+						err := replaced.Close()
+						if err != nil {
 							d.logger.Warn().Err(err).Msg("failed to close replaced connection pool")
 						}
 					}
@@ -585,7 +602,7 @@ func (d *Database[Q]) Connect(interval time.Duration, dsn string) {
 					var lastErr error
 					pingSucceeded := false
 
-					for i := 0; i < maxRetries; i++ {
+					for i := range maxRetries {
 						ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 						err := dbInstance.PingContext(ctx)
 						cancel()
@@ -699,7 +716,10 @@ func (d *Database[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
 
 	err = conn.Ping()
 	if err != nil {
-		conn.Close()
+		closeErr := conn.Close()
+		if closeErr != nil {
+			return nil, apperror.Wrap(errors.Join(err, closeErr))
+		}
 		return nil, apperror.Wrap(err)
 	}
 
@@ -717,7 +737,8 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 	}
 
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0750); err != nil {
+	err := os.MkdirAll(dir, 0750)
+	if err != nil {
 		return apperror.NewErrorf("failed to create backup directory").AddError(err)
 	}
 
@@ -744,7 +765,8 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 		}
 
 		// Copy the database file
-		if err := copyFile(sourceFilePath, path, 0640); err != nil {
+		err = copyFile(sourceFilePath, path)
+		if err != nil {
 			return apperror.NewErrorf("failed to copy database file").AddError(err)
 		}
 
@@ -789,7 +811,8 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		return apperror.NewErrorf("database is not connected")
 	}
 
-	if _, err := os.Stat(backupPath); os.IsNotExist(err) {
+	_, err := os.Stat(backupPath)
+	if os.IsNotExist(err) {
 		return apperror.NewErrorf("backup file does not exist: %s", backupPath)
 	}
 
@@ -818,12 +841,17 @@ func (d *Database[Q]) Restore(backupPath string) error {
 			return apperror.Wrap(err)
 		}
 
-		if err := copyFile(backupPath, targetPath, 0640); err != nil {
+		err = copyFile(backupPath, targetPath)
+		if err != nil {
 			return apperror.NewErrorf("failed to restore database file").AddError(err)
 		}
 
-		os.Remove(targetPath + "-wal")
-		os.Remove(targetPath + "-shm")
+		for _, suffix := range []string{sqliteWALSuffix, sqliteSHMSuffix} {
+			err = os.Remove(targetPath + suffix)
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				d.logger.Warn().Err(err).Field("file", targetPath+suffix).Msg("removing stale sqlite file failed")
+			}
+		}
 
 		d.logger.Info().Msgf("database restored from backup: %s", backupPath)
 
@@ -839,7 +867,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 			return apperror.NewErrorf("database instance is nil")
 		}
 
-		backupFile, err := os.Open(backupPath)
+		backupFile, err := os.Open(filepath.Clean(backupPath))
 		if err != nil {
 			return apperror.NewErrorf("failed to read backup file").AddError(err)
 		}
@@ -856,7 +884,8 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		// Every statement is its own transaction otherwise, and each commit waits for the disk. The
 		// CREATE and DROP statements of the dump commit implicitly, so the rows of a table go in as
 		// one transaction.
-		if _, err := conn.ExecContext(context.Background(), "SET autocommit = 0"); err != nil {
+		_, err = conn.ExecContext(context.Background(), "SET autocommit = 0")
+		if err != nil {
 			return apperror.NewErrorf("failed to start the restore").AddError(err)
 		}
 		// The connection goes back to the pool, so it must not stay in this mode
@@ -867,7 +896,8 @@ func (d *Database[Q]) Restore(backupPath string) error {
 
 		// Statements run as they are read, so the dump is never held in memory as a whole
 		err = forEachStatement(backupFile, func(stmt string) error {
-			if _, err := conn.ExecContext(context.Background(), stmt); err != nil {
+			_, err := conn.ExecContext(context.Background(), stmt)
+			if err != nil {
 				return apperror.NewErrorf("failed to execute statement: %s", stmt[:min(50, len(stmt))]).AddError(err)
 			}
 			return nil
@@ -879,7 +909,8 @@ func (d *Database[Q]) Restore(backupPath string) error {
 			return apperror.NewErrorf("failed to restore the backup").AddError(err)
 		}
 
-		if _, err := conn.ExecContext(context.Background(), "COMMIT"); err != nil {
+		_, err = conn.ExecContext(context.Background(), "COMMIT")
+		if err != nil {
 			return apperror.NewErrorf("failed to commit the restore").AddError(err)
 		}
 
@@ -895,7 +926,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 			return apperror.NewErrorf("database instance is nil")
 		}
 
-		backupFile, err := os.Open(backupPath)
+		backupFile, err := os.Open(filepath.Clean(backupPath))
 		if err != nil {
 			return apperror.NewErrorf("failed to read backup file").AddError(err)
 		}
@@ -908,7 +939,8 @@ func (d *Database[Q]) Restore(backupPath string) error {
 
 		// Statements run as they are read, so the dump is never held in memory as a whole
 		err = forEachStatement(backupFile, func(stmt string) error {
-			if _, err := tx.Exec(stmt); err != nil {
+			_, err := tx.Exec(stmt)
+			if err != nil {
 				return apperror.NewErrorf("failed to execute statement: %s", stmt[:min(50, len(stmt))]).AddError(err)
 			}
 			return nil
@@ -918,8 +950,12 @@ func (d *Database[Q]) Restore(backupPath string) error {
 			return apperror.NewErrorf("failed to restore the backup").AddError(err)
 		}
 
-		if err := tx.Commit(); err != nil {
-			tx.Rollback()
+		err = tx.Commit()
+		if err != nil {
+			rbErr := tx.Rollback()
+			if rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
+				return apperror.NewErrorf("failed to rollback transaction").AddError(rbErr).AddError(err)
+			}
 			return apperror.NewErrorf("failed to commit transaction").AddError(err)
 		}
 
@@ -1007,5 +1043,4 @@ func escapeDSNParams(dsn string) string {
 	}
 
 	return base + "?" + strings.Join(params, "&")
-
 }

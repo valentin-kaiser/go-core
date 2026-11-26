@@ -12,7 +12,7 @@ func traceHere() string { return apperror.Trace(2) }
 // The trace points at the caller, and a repeated call from the same place gives the same text
 func TestTraceNamesTheCaller(t *testing.T) {
 	var traces []string
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		traces = append(traces, traceHere()) // the same call site twice
 	}
 	if !strings.Contains(traces[0], "trace_cache_test.go:") {

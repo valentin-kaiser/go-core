@@ -22,15 +22,24 @@ func TestRegisterQueriesFuncQueryAndTransaction(t *testing.T) {
 	db := connectedTyped(t)
 
 	called := false
-	if err := db.Query(func(q *TestQueries) error { called = q != nil; return nil }); err != nil || !called {
+	err := db.Query(func(q *TestQueries) error {
+		called = q != nil
+		return nil
+	})
+	if err != nil || !called {
 		t.Fatalf("Query: err=%v called=%v", err, called)
 	}
 
 	called = false
-	if err := db.QueryTransaction(func(q *TestQueries) error { called = q != nil; return nil }); err != nil || !called {
+	err = db.QueryTransaction(func(q *TestQueries) error {
+		called = q != nil
+		return nil
+	})
+	if err != nil || !called {
 		t.Fatalf("QueryTransaction: err=%v called=%v", err, called)
 	}
-	if err := db.Transaction(func(tx *sql.Tx) error { return nil }); err != nil {
+	err = db.Transaction(func(_ *sql.Tx) error { return nil })
+	if err != nil {
 		t.Fatalf("Transaction: %v", err)
 	}
 }
@@ -43,12 +52,17 @@ func TestRegisterQueriesReflective(t *testing.T) {
 	db.Connect(100*time.Millisecond, ":memory:")
 	db.AwaitConnection()
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		var got *TestQueries
-		if err := db.Query(func(q *TestQueries) error { got = q; return nil }); err != nil || got == nil {
+		err := db.Query(func(q *TestQueries) error {
+			got = q
+			return nil
+		})
+		if err != nil || got == nil {
 			t.Fatalf("round %d: err=%v queries=%v", i, err, got)
 		}
-		if err := db.Get().Ping(); err != nil {
+		err = db.Get().Ping()
+		if err != nil {
 			t.Fatalf("round %d: connection: %v", i, err)
 		}
 	}

@@ -2,6 +2,7 @@ package queue
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -284,8 +285,8 @@ func (s *TaskScheduler) parseRangeField(field string, low, high int, cronField C
 
 // parseListField parses a list field (e.g., "1,3,5")
 func (s *TaskScheduler) parseListField(field string, low, high int, cronField CronField) (CronField, error) {
-	parts := strings.Split(field, ",")
-	for _, part := range parts {
+	parts := strings.SplitSeq(field, ",")
+	for part := range parts {
 		value, err := strconv.Atoi(strings.TrimSpace(part))
 		if err != nil || value < low || value > high {
 			return cronField, apperror.NewError("invalid value in list")
@@ -522,12 +523,7 @@ func (s *TaskScheduler) calculateNextCronRun(cronSpec string, after time.Time) (
 
 // fieldMatches checks if a value matches a cron field
 func (s *TaskScheduler) fieldMatches(field CronField, value int) bool {
-	for _, v := range field.Values {
-		if v == value {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(field.Values, value)
 }
 
 // findNextValidValue finds the next valid value in a cron field that is >= the given value

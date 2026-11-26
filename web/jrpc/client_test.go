@@ -63,11 +63,14 @@ func TestNewClient(t *testing.T) {
 // TestClientWithTimeout verifies that custom timeout option works
 func TestClientWithTimeout(t *testing.T) {
 	// Create a test server that delays response beyond the timeout
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
+		_, err := w.Write([]byte("{}"))
+		if err != nil {
+			t.Errorf("writing response failed: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -94,11 +97,14 @@ func TestClientWithTimeout(t *testing.T) {
 // TestClientWithHTTPClient verifies that custom HTTP client option works
 func TestClientWithHTTPClient(t *testing.T) {
 	// Create a test server with a slow response
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(200 * time.Millisecond)
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
+		_, err := w.Write([]byte("{}"))
+		if err != nil {
+			t.Errorf("writing response failed: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -136,7 +142,10 @@ func TestClientWithUserAgent(t *testing.T) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
+		_, err := w.Write([]byte("{}"))
+		if err != nil {
+			t.Errorf("writing response failed: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -167,7 +176,10 @@ func TestClientWithMarshalOptions(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
+		_, err := w.Write([]byte("{}"))
+		if err != nil {
+			t.Errorf("writing response failed: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -192,11 +204,14 @@ func TestClientWithMarshalOptions(t *testing.T) {
 // TestClientWithUnmarshalOptions verifies that custom unmarshal options are applied correctly
 func TestClientWithUnmarshalOptions(t *testing.T) {
 	// Create a test server that returns JSON with unknown fields
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		// Return JSON with an unknown field
-		w.Write([]byte(`{"unknownField": "value"}`))
+		_, err := w.Write([]byte(`{"unknownField": "value"}`))
+		if err != nil {
+			t.Errorf("writing response failed: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -255,7 +270,10 @@ func TestClientCall(t *testing.T) {
 		// Return a valid empty response
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
+		_, err := w.Write([]byte("{}"))
+		if err != nil {
+			t.Errorf("writing response failed: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -287,7 +305,10 @@ func TestClientCallCustomUserAgent(t *testing.T) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
+		_, err := w.Write([]byte("{}"))
+		if err != nil {
+			t.Errorf("writing response failed: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -343,7 +364,10 @@ func TestClientCallServerError(t *testing.T) {
 	// Create a test server that returns an error
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
-		w.Write([]byte("internal server error"))
+		_, err := w.Write([]byte("internal server error"))
+		if err != nil {
+			t.Errorf("writing response failed: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -370,7 +394,10 @@ func TestClientCallContextCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		time.Sleep(2 * time.Second)
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
+		_, err := w.Write([]byte("{}"))
+		if err != nil {
+			t.Errorf("writing response failed: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -396,7 +423,10 @@ func TestClientCallInvalidJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("not valid json"))
+		_, err := w.Write([]byte("not valid json"))
+		if err != nil {
+			t.Errorf("writing response failed: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -418,7 +448,10 @@ func BenchmarkClientCall(b *testing.B) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
+		_, err := w.Write([]byte("{}"))
+		if err != nil {
+			b.Errorf("writing response failed: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -525,8 +558,18 @@ func TestClientBidirectionalStreamNilChannels(t *testing.T) {
 	}
 }
 
+// closeAndLog closes c and logs the error; a peer may already have closed the connection.
+func closeAndLog(t *testing.T, c io.Closer) {
+	t.Helper()
+	err := c.Close()
+	if err != nil {
+		t.Logf("closing failed: %v", err)
+	}
+}
+
 // Helper function to create a WebSocket test server
 func newWSTestServer(t *testing.T, handler func(*websocket.Conn)) *httptest.Server {
+	t.Helper()
 	upgrader := websocket.Upgrader{
 		CheckOrigin: func(_ *http.Request) bool { return true },
 	}
@@ -537,7 +580,7 @@ func newWSTestServer(t *testing.T, handler func(*websocket.Conn)) *httptest.Serv
 			t.Errorf("failed to upgrade connection: %v", err)
 			return
 		}
-		defer conn.Close()
+		defer closeAndLog(t, conn)
 		handler(conn)
 	}))
 }
@@ -556,22 +599,27 @@ func TestClientServerStreamConnection(t *testing.T) {
 
 		// Verify it's valid JSON (protobuf JSON format)
 		req := &emptypb.Empty{}
-		if err := testUnmarshalOpts.Unmarshal(reqData, req); err != nil {
+		err = testUnmarshalOpts.Unmarshal(reqData, req)
+		if err != nil {
 			t.Errorf("failed to unmarshal request: %v", err)
 			return
 		}
 
 		// Send two messages to the client
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			msg := wrapperspb.String("message")
 			data, _ := testMarshalOpts.Marshal(msg)
-			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			err := conn.WriteMessage(websocket.TextMessage, data)
+			if err != nil {
 				return
 			}
 		}
 
 		// Close connection
-		conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		err = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+		if err != nil {
+			t.Logf("writing close message failed: %v", err)
+		}
 	})
 	defer server.Close()
 
@@ -648,7 +696,8 @@ func TestClientClientStreamConnection(t *testing.T) {
 				// Send response - this may or may not work due to WebSocket state
 				resp := wrapperspb.String("received")
 				respData, _ := testMarshalOpts.Marshal(resp)
-				if err := conn.WriteMessage(websocket.TextMessage, respData); err == nil {
+				err := conn.WriteMessage(websocket.TextMessage, respData)
+				if err == nil {
 					responseSent = true
 				}
 				return
@@ -661,7 +710,8 @@ func TestClientClientStreamConnection(t *testing.T) {
 
 			// Verify it's valid JSON
 			msg := &wrapperspb.StringValue{}
-			if err := testUnmarshalOpts.Unmarshal(data, msg); err != nil {
+			err = testUnmarshalOpts.Unmarshal(data, msg)
+			if err != nil {
 				t.Errorf("failed to unmarshal message: %v", err)
 				return
 			}
@@ -684,7 +734,7 @@ func TestClientClientStreamConnection(t *testing.T) {
 	}()
 
 	// Send messages through input channel
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		in <- wrapperspb.String("test message")
 	}
 	close(in)
@@ -734,7 +784,11 @@ func TestClientBidirectionalStreamConnection(t *testing.T) {
 	// Create WebSocket server that echoes messages back
 	server := newWSTestServer(t, func(conn *websocket.Conn) {
 		// Set a deadline to avoid hanging
-		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		err := conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		if err != nil {
+			t.Errorf("setting read deadline failed: %v", err)
+			return
+		}
 
 		// Read messages and echo them back immediately
 		for {
@@ -751,13 +805,15 @@ func TestClientBidirectionalStreamConnection(t *testing.T) {
 
 			// Verify it's valid JSON
 			msg := &wrapperspb.StringValue{}
-			if err := testUnmarshalOpts.Unmarshal(data, msg); err != nil {
+			err = testUnmarshalOpts.Unmarshal(data, msg)
+			if err != nil {
 				t.Errorf("failed to unmarshal message: %v", err)
 				return
 			}
 
 			// Echo back immediately
-			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+			err = conn.WriteMessage(websocket.TextMessage, data)
+			if err != nil {
 				return
 			}
 		}
@@ -873,16 +929,19 @@ func TestClientWebSocketURLConversion(t *testing.T) {
 // TestClientWithTLSConfig verifies that custom TLS config option works
 func TestClientWithTLSConfig(t *testing.T) {
 	// Create a TLS test server
-	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("{}"))
+		_, err := w.Write([]byte("{}"))
+		if err != nil {
+			t.Errorf("writing response failed: %v", err)
+		}
 	}))
 	defer server.Close()
 
 	// Create a custom TLS config that accepts the test server's certificate
 	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true, // Required for test server's self-signed cert
+		InsecureSkipVerify: true, //nolint:gosec // the test server presents a self-signed certificate
 	}
 
 	// Create HTTP client with TLS config
@@ -942,7 +1001,8 @@ func TestWebSocketMessageMarshaling(t *testing.T) {
 			proto.Reset(newMsg)
 
 			// Unmarshal
-			if err := testUnmarshalOpts.Unmarshal(data, newMsg); err != nil {
+			err = testUnmarshalOpts.Unmarshal(data, newMsg)
+			if err != nil {
 				t.Fatalf("failed to unmarshal: %v", err)
 			}
 
@@ -969,7 +1029,7 @@ func TestWebSocketDialerConfiguration(t *testing.T) {
 		if err != nil {
 			return
 		}
-		defer conn.Close()
+		defer closeAndLog(t, conn)
 
 		// Mark connection as established
 		mu.Lock()
@@ -984,15 +1044,17 @@ func TestWebSocketDialerConfiguration(t *testing.T) {
 
 		// Validate it's a valid protobuf JSON message
 		req := &emptypb.Empty{}
-		if err := testUnmarshalOpts.Unmarshal(msgData, req); err != nil {
+		err = testUnmarshalOpts.Unmarshal(msgData, req)
+		if err != nil {
 			return
 		}
 
 		// Send multiple responses to keep the stream alive briefly
 		resp := &emptypb.Empty{}
 		data, _ := testMarshalOpts.Marshal(resp)
-		for i := 0; i < 3; i++ {
-			if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		for range 3 {
+			err := conn.WriteMessage(websocket.TextMessage, data)
+			if err != nil {
 				return
 			}
 			time.Sleep(10 * time.Millisecond)
@@ -1005,7 +1067,7 @@ func TestWebSocketDialerConfiguration(t *testing.T) {
 
 	// Test with TLS config - should work with InsecureSkipVerify
 	tlsConfig := &tls.Config{
-		InsecureSkipVerify: true,
+		InsecureSkipVerify: true, //nolint:gosec // the test server presents a self-signed certificate
 	}
 	client := jrpc.NewClient(jrpc.WithTLSConfig(tlsConfig))
 
@@ -1021,21 +1083,17 @@ func TestWebSocketDialerConfiguration(t *testing.T) {
 	// Collect messages in a goroutine
 	var msgCount int
 	var collectWg sync.WaitGroup
-	collectWg.Add(1)
-	go func() {
-		defer collectWg.Done()
+	collectWg.Go(func() {
 		for range out {
 			msgCount++
 		}
-	}()
+	})
 
 	// Start streaming in another goroutine
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_ = jrpc.ServerStream(client, ctx, u, req, out, factory)
-	}()
+	})
 
 	// Wait for streaming to complete
 	wg.Wait()
@@ -1062,10 +1120,13 @@ func TestWebSocketDialerConfiguration(t *testing.T) {
 func TestWebSocketConnectionClosure(t *testing.T) {
 	server := newWSTestServer(t, func(conn *websocket.Conn) {
 		// Read one message
-		conn.ReadMessage()
+		_, _, err := conn.ReadMessage()
+		if err != nil {
+			t.Errorf("reading message failed: %v", err)
+		}
 
 		// Close immediately
-		conn.Close()
+		closeAndLog(t, conn)
 	})
 	defer server.Close()
 

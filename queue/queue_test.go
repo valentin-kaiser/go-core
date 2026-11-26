@@ -30,7 +30,7 @@ func TestNewJob(t *testing.T) {
 }
 
 func TestJobBuilder(t *testing.T) {
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"email": "test@example.com",
 		"name":  "Test User",
 	}
@@ -65,8 +65,9 @@ func TestJobBuilder(t *testing.T) {
 	}
 
 	// Unmarshal payload to check values
-	var payloadMap map[string]interface{}
-	if err := json.Unmarshal(job.Payload, &payloadMap); err != nil {
+	var payloadMap map[string]any
+	err := json.Unmarshal(job.Payload, &payloadMap)
+	if err != nil {
 		t.Fatalf("Failed to unmarshal payload: %v", err)
 	}
 
@@ -87,8 +88,9 @@ func TestJobBuilderWithPayloadJSON(t *testing.T) {
 		Build()
 
 	// Unmarshal payload to check values
-	var payloadMap map[string]interface{}
-	if err := json.Unmarshal(job.Payload, &payloadMap); err != nil {
+	var payloadMap map[string]any
+	err := json.Unmarshal(job.Payload, &payloadMap)
+	if err != nil {
 		t.Fatalf("Failed to unmarshal payload: %v", err)
 	}
 
@@ -645,7 +647,7 @@ func TestMiddleware(t *testing.T) {
 func TestJobContext(t *testing.T) {
 	ctx := t.Context()
 	job := queue.NewJob("test").
-		WithPayload(map[string]interface{}{
+		WithPayload(map[string]any{
 			"string_value": "test",
 			"int_value":    42,
 			"bool_value":   true,
@@ -727,7 +729,7 @@ func BenchmarkMemoryQueueDequeue(b *testing.B) {
 }
 
 func BenchmarkJobBuilder(b *testing.B) {
-	payload := map[string]interface{}{
+	payload := map[string]any{
 		"email": "test@example.com",
 		"name":  "Test User",
 	}

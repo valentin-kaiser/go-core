@@ -121,7 +121,7 @@ func (rw *ResponseWriter) flush() {
 func (rw *ResponseWriter) copyTrailers() {
 	declared := make(map[string]struct{})
 	for _, v := range rw.w.Header().Values("Trailer") {
-		for _, name := range strings.Split(v, ",") {
+		for name := range strings.SplitSeq(v, ",") {
 			declared[http.CanonicalHeaderKey(strings.TrimSpace(name))] = struct{}{}
 		}
 	}
