@@ -53,7 +53,7 @@ func TestHandleWithPanic(t *testing.T) {
 func TestHandleWithDifferentPanicTypes(t *testing.T) {
 	testCases := []struct {
 		name  string
-		panic interface{}
+		panic any
 	}{
 		{"string panic", "string panic message"},
 		{"int panic", 42},
@@ -168,7 +168,7 @@ func TestHandleNested(t *testing.T) {
 
 func TestHandleMultiple(t *testing.T) {
 	// Test multiple separate panic recoveries
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		var handled bool
 
 		func() {
@@ -226,7 +226,7 @@ func TestHandleInGoroutine(t *testing.T) {
 func TestHandleWithDetailedPanicTypes(t *testing.T) {
 	tests := []struct {
 		name      string
-		panicData interface{}
+		panicData any
 	}{
 		{"custom error", errors.New("custom error message")},
 		{"runtime error", errors.New("runtime error: invalid memory address or nil pointer dereference")},
@@ -558,7 +558,7 @@ func TestHandlePerformance(t *testing.T) {
 	iterations := 1000
 
 	start := time.Now()
-	for i := 0; i < iterations; i++ {
+	for range iterations {
 		func() {
 			defer interruption.Catch()
 			panic("performance test")
@@ -668,19 +668,18 @@ func TestOnSignalHandlerExecution(t *testing.T) {
 
 	// Use a wait group to synchronize goroutine completion
 	var wg sync.WaitGroup
-	wg.Add(1)
 
 	// Simulate the OnSignal goroutine behavior
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		// Wait for context cancellation (simulating signal)
 		<-ctx.Done()
 		for _, handler := range handlers {
-			if err := handler(); err != nil {
+			err := handler()
+			if err != nil {
 				t.Errorf("Handler failed: %v", err)
 			}
 		}
-	}()
+	})
 
 	// Cancel the context to simulate signal
 	cancel()
@@ -719,20 +718,19 @@ func TestOnSignalWithErrors(t *testing.T) {
 
 	// Use a wait group to synchronize goroutine completion
 	var wg sync.WaitGroup
-	wg.Add(1)
 
 	// Simulate the OnSignal goroutine behavior
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		<-ctx.Done()
 		for _, handler := range handlers {
-			if err := handler(); err != nil {
+			err := handler()
+			if err != nil {
 				mu.Lock()
 				handlerErrors = append(handlerErrors, err)
 				mu.Unlock()
 			}
 		}
-	}()
+	})
 
 	// Cancel the context to simulate signal
 	cancel()
@@ -813,21 +811,20 @@ func TestOnSignalHandlerPanic(t *testing.T) {
 
 	// Use a wait group to synchronize goroutine completion
 	var wg sync.WaitGroup
-	wg.Add(1)
 
 	// Simulate the OnSignal goroutine behavior with panic recovery
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		<-ctx.Done()
 		for _, handler := range handlers {
 			func() {
 				defer interruption.Catch()
-				if err := handler(); err != nil {
+				err := handler()
+				if err != nil {
 					t.Errorf("Handler failed: %v", err)
 				}
 			}()
 		}
-	}()
+	})
 
 	// Cancel the context to simulate signal
 	cancel()
@@ -877,7 +874,8 @@ func TestOnSignalLongRunningHandler(t *testing.T) {
 		defer wg.Done()
 		<-ctx.Done()
 		for _, h := range handlers {
-			if err := h(); err != nil {
+			err := h()
+			if err != nil {
 				t.Errorf("Handler failed: %v", err)
 			}
 		}
@@ -1068,7 +1066,7 @@ func TestWaitForShutdownWithNilContext(t *testing.T) {
 	// Test WaitForShutdown with nil context
 	done := make(chan bool, 1)
 	go func() {
-		interruption.WaitForShutdown(nil)
+		interruption.WaitForShutdown(nil) //nolint:staticcheck // SA1012: a nil context is the behaviour under test
 		done <- true
 	}()
 
@@ -1120,7 +1118,8 @@ func TestWaitForShutdownWithOnSignal(t *testing.T) {
 		t.Fatalf("Failed to find process: %v", err)
 	}
 
-	if err := process.Signal(syscall.SIGTERM); err != nil {
+	err = process.Signal(syscall.SIGTERM)
+	if err != nil {
 		t.Fatalf("Failed to send signal: %v", err)
 	}
 

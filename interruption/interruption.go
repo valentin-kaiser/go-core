@@ -227,7 +227,7 @@ func write(err any, caller string, line int) {
 		return
 	}
 	timestamp := time.Now().Format(Format)
-	name := filepath.Join(Directory, fmt.Sprintf("%s.log", timestamp))
+	name := filepath.Join(Directory, timestamp+".log")
 	content := fmt.Sprintf("Caller: %v\nLine: %v\nError: %v\n", caller, line, err)
 	if flag.Debug {
 		content = fmt.Sprintf("Caller: %v\nLine: %v\nError: %v\n\nStack Trace:\n%s\n", caller, line, err, string(debug.Stack()))
