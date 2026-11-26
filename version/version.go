@@ -135,6 +135,21 @@ const (
 	componentWeek     = "week"
 )
 
+const (
+	// FormatUnknown represents an unknown or unsupported version format
+	FormatUnknown Format = iota
+	// FormatSemVer represents semantic versioning (vX.Y.Z)
+	FormatSemVer
+	// FormatCalVerYYYYMMDD represents calendar versioning YYYY.MM.DD
+	FormatCalVerYYYYMMDD
+	// FormatCalVerYYMMMICRO represents calendar versioning YY.MM.MICRO
+	FormatCalVerYYMMMICRO
+	// FormatCalVerYYYYWW represents calendar versioning YYYY.WW
+	FormatCalVerYYYYWW
+	// FormatCalVerYYYYMMDDMICRO represents calendar versioning YYYY.MM.DD.MICRO
+	FormatCalVerYYYYMMDDMICRO
+)
+
 var (
 	// GitTag is the release tag of the application, typically in the format "vX.Y.Z".
 	GitTag = "v0.0.0"
@@ -163,62 +178,12 @@ var (
 	logger = logging.GetPackageLogger("version")
 )
 
-func init() {
-	info, available := debug.ReadBuildInfo()
-	if !available {
-		return
-	}
-
-	for _, mod := range info.Deps {
-		Modules = append(Modules, (&Module{}).fromBuildInfo(mod))
-	}
-
-	if GitCommit != unknownValue || BuildDate != unknownValue {
-		return
-	}
-
-	if info.Main.Version != "" && info.Main.Version != develVersion {
-		GitTag = info.Main.Version
-	}
-
-	for _, setting := range info.Settings {
-		applyBuildSetting(setting)
-	}
-}
-
-func applyBuildSetting(setting debug.BuildSetting) {
-	switch setting.Key {
-	case vcsRevisionKey:
-		if setting.Value == "" {
-			return
-		}
-		GitCommit = setting.Value
-		GitShort = GitCommit
-		if len(GitShort) >= shortCommitLength {
-			GitShort = GitShort[:shortCommitLength]
-		}
-	case vcsTimeKey:
-		BuildDate = setting.Value
-	}
-}
+// lastTag remembers the result for the most recent tag. GitTag is set at link time and
+// does not change while the program runs, so Get does not need to parse it on every call.
+var lastTag atomic.Pointer[tagInfo]
 
 // Format represents the type of version format
 type Format int
-
-const (
-	// FormatUnknown represents an unknown or unsupported version format
-	FormatUnknown Format = iota
-	// FormatSemVer represents semantic versioning (vX.Y.Z)
-	FormatSemVer
-	// FormatCalVerYYYYMMDD represents calendar versioning YYYY.MM.DD
-	FormatCalVerYYYYMMDD
-	// FormatCalVerYYMMMICRO represents calendar versioning YY.MM.MICRO
-	FormatCalVerYYMMMICRO
-	// FormatCalVerYYYYWW represents calendar versioning YYYY.WW
-	FormatCalVerYYYYWW
-	// FormatCalVerYYYYMMDDMICRO represents calendar versioning YYYY.MM.DD.MICRO
-	FormatCalVerYYYYMMDDMICRO
-)
 
 // String returns the string representation of the version format
 func (f Format) String() string {
@@ -286,6 +251,76 @@ type Release struct {
 	ParsedVersion *ParsedVersion `json:"parsedVersion" gorm:"-"`
 }
 
+// Compare compares the Git tag and commit hash of the current version with another version.
+func (v *Release) Compare(c *Release) bool {
+	return v.CompareTag(c) && v.CompareCommit(c)
+}
+
+// CompareTag compares the Git tag of the current version with another version.
+func (v *Release) CompareTag(c *Release) bool {
+	return v.GitTag == c.GitTag
+}
+
+// CompareCommit compares the Git commit hash and short hash of the current version with another version.
+func (v *Release) CompareCommit(c *Release) bool {
+	return v.GitCommit == c.GitCommit && v.GitShort == c.GitShort
+}
+
+// CompareVersions compares the version of the current release with another release using proper version comparison
+func (v *Release) CompareVersions(c *Release) (int, error) {
+	return CompareVersions(v.GitTag, c.GitTag)
+}
+
+// GetVersionComponents returns the parsed version components
+func (v *Release) GetVersionComponents() (map[string]any, error) {
+	if v.ParsedVersion != nil {
+		return GetVersionComponents(v.GitTag)
+	}
+	return GetVersionComponents(v.GitTag)
+}
+
+// IsCalVer returns true if the release uses Calendar Versioning
+func (v *Release) IsCalVer() bool {
+	return v.VersionFormat == FormatCalVerYYYYMMDD ||
+		v.VersionFormat == FormatCalVerYYMMMICRO ||
+		v.VersionFormat == FormatCalVerYYYYWW ||
+		v.VersionFormat == FormatCalVerYYYYMMDDMICRO
+}
+
+// IsSemVer returns true if the release uses Semantic Versioning
+func (v *Release) IsSemVer() bool {
+	return v.VersionFormat == FormatSemVer
+}
+
+// Validate checks if the provided version information is valid.
+func (v *Release) Validate(change *Release) error {
+	if strings.TrimSpace(change.GitTag) == "" {
+		return apperror.NewError("tag cannot be empty")
+	}
+
+	if strings.TrimSpace(change.GitCommit) == "" {
+		return apperror.NewError("commit cannot be empty")
+	}
+
+	if strings.TrimSpace(change.GitShort) == "" {
+		return apperror.NewError("short commit cannot be empty")
+	}
+
+	if strings.TrimSpace(change.BuildDate) == "" {
+		return apperror.NewError("build date cannot be empty")
+	}
+
+	if strings.TrimSpace(change.GoVersion) == "" {
+		return apperror.NewError("go version cannot be empty")
+	}
+
+	if strings.TrimSpace(change.Platform) == "" {
+		return apperror.NewError("platform cannot be empty")
+	}
+
+	return nil
+}
+
 // Module represents a module dependency of the application.
 // It includes the module path, version, checksum, and an optional replacement module.
 type Module struct {
@@ -295,29 +330,16 @@ type Module struct {
 	Replace *Module `json:",omitempty"`
 }
 
-// Get returns the current version information of the application.
-func Get() *Release {
-	tag := GitTag
-	info := parsedTag(tag)
-
-	var parsedVersion *ParsedVersion
-	if info.parsed != nil {
-		// A copy, so a caller changing the result does not change what later calls see
-		copied := *info.parsed
-		parsedVersion = &copied
+// fromBuildInfo populates the Module struct with information from the debug.Module.
+func (m *Module) fromBuildInfo(mod *debug.Module) *Module {
+	m.Path = mod.Path
+	m.Version = mod.Version
+	m.Sum = mod.Sum
+	if mod.Replace != nil {
+		m.Replace = &Module{}
+		m.Replace.fromBuildInfo(mod.Replace)
 	}
-
-	return &Release{
-		GitTag:        tag,
-		GitCommit:     GitCommit,
-		GitShort:      GitShort,
-		BuildDate:     BuildDate,
-		GoVersion:     GoVersion,
-		Platform:      Platform,
-		Modules:       Modules,
-		VersionFormat: info.format,
-		ParsedVersion: parsedVersion,
-	}
+	return m
 }
 
 // tagInfo is the detected format and parsed version of a git tag
@@ -325,385 +347,6 @@ type tagInfo struct {
 	tag    string
 	format Format
 	parsed *ParsedVersion
-}
-
-// lastTag remembers the result for the most recent tag. GitTag is set at link time and
-// does not change while the program runs, so Get does not need to parse it on every call.
-var lastTag atomic.Pointer[tagInfo]
-
-func parsedTag(tag string) *tagInfo {
-	if info := lastTag.Load(); info != nil && info.tag == tag {
-		return info
-	}
-
-	info := &tagInfo{tag: tag, format: DetectFormat(tag)}
-	if parser := GetParser(info.format); parser != nil {
-		pv, err := parser.Parse(tag)
-		if err == nil {
-			info.parsed = pv
-		}
-	}
-	lastTag.Store(info)
-	return info
-}
-
-// Major returns the major version number from the Git tag if it follows semantic versioning.
-func Major() int {
-	if IsSemver(GitTag) {
-		return ParseSemver(GitTag, 0)
-	}
-
-	// For CalVer formats, try to return year as major
-	parser := GetParser(DetectFormat(GitTag))
-	if parser != nil {
-		pv, err := parser.Parse(GitTag)
-		if err == nil {
-			if pv.Year > 0 {
-				return pv.Year
-			}
-			return pv.Major
-		}
-	}
-	return 0
-}
-
-// Minor returns the minor version number from the Git tag if it follows semantic versioning.
-func Minor() int {
-	if IsSemver(GitTag) {
-		return ParseSemver(GitTag, 1)
-	}
-
-	// For CalVer formats, try to return month as minor
-	parser := GetParser(DetectFormat(GitTag))
-	if parser != nil {
-		pv, err := parser.Parse(GitTag)
-		if err == nil {
-			if pv.Month > 0 {
-				return pv.Month
-			}
-			if pv.Week > 0 {
-				return pv.Week
-			}
-			return pv.Minor
-		}
-	}
-	return 0
-}
-
-// Patch returns the patch version number from the Git tag if it follows semantic versioning.
-func Patch() int {
-	if IsSemver(GitTag) {
-		return ParseSemver(GitTag, patchSegmentIndex)
-	}
-
-	// For CalVer formats, try to return day as patch
-	parser := GetParser(DetectFormat(GitTag))
-	if parser != nil {
-		pv, err := parser.Parse(GitTag)
-		if err == nil {
-			if pv.Day > 0 {
-				return pv.Day
-			}
-			if pv.Micro > 0 {
-				return pv.Micro
-			}
-			return pv.Patch
-		}
-	}
-	return 0
-}
-
-// String returns the version tag as a string without the "v" prefix.
-func String() string {
-	version, _, _ := strings.Cut(GitTag, preReleaseSeparator)
-	return strings.TrimPrefix(version, versionPrefix)
-}
-
-// IsSemver checks if the provided tag is a valid Git tag in semantic versioning format "vX.Y.Z".
-func IsSemver(tag string) bool {
-	return semver.MatchString(tag)
-}
-
-// ParseSemver parses the specified segment (major, minor, or patch) from the Git tag.
-func ParseSemver(tag string, n int) int {
-	if !IsSemver(tag) {
-		logger.Error().Fields(logging.F("tag", tag)).Msg("invalid git tag format")
-		return 0
-	}
-
-	version := strings.TrimPrefix(strings.SplitN(tag, preReleaseSeparator, splitPartsCount)[0], versionPrefix)
-	segments := strings.Split(version, segmentSeparator)
-	if n >= len(segments) {
-		logger.Error().Fields(
-			logging.F("index", n),
-			logging.F("reason", "index out of range"),
-		).Msg("parsing version segment failed")
-		return 0
-	}
-
-	v, err := strconv.Atoi(segments[n])
-	if err != nil {
-		logger.Error().Err(err).Fields(
-			logging.F("index", n),
-		).Msg("parsing version segment failed")
-		return 0
-	}
-
-	return v
-}
-
-// semverSegment returns segment n of a tag that IsSemver already accepted, without validating
-// it again or splitting the whole tag. Missing or unparsable segments are 0.
-func semverSegment(tag string, n int) int {
-	tag = strings.TrimPrefix(tag, versionPrefix)
-	if i := strings.IndexByte(tag, preReleaseSeparator[0]); i >= 0 {
-		tag = tag[:i]
-	}
-	for ; n > 0; n-- {
-		i := strings.IndexByte(tag, segmentSeparator[0])
-		if i < 0 {
-			return 0
-		}
-		tag = tag[i+1:]
-	}
-	if i := strings.IndexByte(tag, segmentSeparator[0]); i >= 0 {
-		tag = tag[:i]
-	}
-	v, err := strconv.Atoi(tag)
-	if err != nil {
-		return 0
-	}
-	return v
-}
-
-// parseNumbers converts regex captures to integers and fails on values that overflow int.
-func parseNumbers(parts ...string) ([]int, error) {
-	nums := make([]int, len(parts))
-	for i, part := range parts {
-		n, err := strconv.Atoi(part)
-		if err != nil {
-			return nil, apperror.NewErrorf("parsing number %q failed", part).AddError(err)
-		}
-		nums[i] = n
-	}
-	return nums, nil
-}
-
-// ExtractSemanticVersion parses the version number from the Git tag.
-// It returns the version string without the "v" prefix and any pre-release/build metadata.
-// If the tag is not a valid Git tag, it returns an empty string.
-func ExtractSemanticVersion(tag string) string {
-	if !IsSemver(tag) {
-		logger.Error().Fields(logging.F("tag", tag)).Msg("invalid git tag format")
-		return ""
-	}
-
-	return strings.TrimPrefix(strings.SplitN(tag, preReleaseSeparator, splitPartsCount)[0], versionPrefix)
-}
-
-// ParseVersion parses a version string and returns a ParsedVersion struct
-func ParseVersion(tag string) (*ParsedVersion, error) {
-	format := DetectFormat(tag)
-	// DetectFormat has just matched the tag against the semver pattern; do not match it again
-	if format == FormatSemVer {
-		return (&SemVerParser{}).parseValid(tag), nil
-	}
-	parser := GetParser(format)
-	if parser == nil {
-		return nil, apperror.NewError("unsupported version format")
-	}
-	return parser.Parse(tag)
-}
-
-// IsValidVersion checks if a version string is valid in any supported format
-func IsValidVersion(tag string) bool {
-	format := DetectFormat(tag)
-	return format != FormatUnknown
-}
-
-// CompareVersions compares two version strings, returns -1, 0, or 1
-func CompareVersions(tag1, tag2 string) (int, error) {
-	format1 := DetectFormat(tag1)
-	format2 := DetectFormat(tag2)
-
-	if format1 != format2 {
-		return 0, apperror.NewError("cannot compare versions of different formats")
-	}
-
-	parser := GetParser(format1)
-	if parser == nil {
-		return 0, apperror.NewError("unsupported version format")
-	}
-
-	return parser.Compare(tag1, tag2)
-}
-
-// GetVersionComponents returns the version components as a map for any supported format
-func GetVersionComponents(tag string) (map[string]any, error) {
-	pv, err := ParseVersion(tag)
-	if err != nil {
-		return nil, apperror.NewErrorf("parsing version %q failed", tag).AddError(err)
-	}
-
-	components := make(map[string]any)
-	components[componentFormat] = pv.Format.String()
-	components[componentOriginal] = pv.Original
-
-	if pv.Major > 0 {
-		components[componentMajor] = pv.Major
-	}
-	if pv.Minor > 0 {
-		components[componentMinor] = pv.Minor
-	}
-	if pv.Patch > 0 {
-		components[componentPatch] = pv.Patch
-	}
-	if pv.Micro > 0 {
-		components[componentMicro] = pv.Micro
-	}
-	if pv.Year > 0 {
-		components[componentYear] = pv.Year
-	}
-	if pv.Month > 0 {
-		components[componentMonth] = pv.Month
-	}
-	if pv.Day > 0 {
-		components[componentDay] = pv.Day
-	}
-	if pv.Week > 0 {
-		components[componentWeek] = pv.Week
-	}
-
-	return components, nil
-}
-
-// calverCandidate reports whether the tag starts, after an optional "v", with a number of
-// two or four digits followed by a dot, which every CalVer pattern requires.
-func calverCandidate(tag string) bool {
-	tag = strings.TrimPrefix(tag, versionPrefix)
-	digits := 0
-	for digits < len(tag) && tag[digits] >= '0' && tag[digits] <= '9' {
-		digits++
-	}
-	return (digits == calverShortYearDigits || digits == calverLongYearDigits) && digits < len(tag) && tag[digits] == segmentSeparator[0]
-}
-
-// DetectFormat automatically detects the version format from a tag string
-func DetectFormat(tag string) Format {
-	// Every CalVer pattern starts with a two or four digit number, so most tags (all
-	// semantic versions, for one) skip the four regular expressions
-	if calverCandidate(tag) {
-		if IsCalVerYYYYMMDDMICRO(tag) {
-			return FormatCalVerYYYYMMDDMICRO
-		}
-		if IsCalVerYYYYMMDD(tag) {
-			return FormatCalVerYYYYMMDD
-		}
-		if IsCalVerYYMMMICRO(tag) {
-			return FormatCalVerYYMMMICRO
-		}
-		if IsCalVerYYYYWW(tag) {
-			return FormatCalVerYYYYWW
-		}
-	}
-	if IsSemver(tag) {
-		return FormatSemVer
-	}
-	return FormatUnknown
-}
-
-// GetParser returns the appropriate parser for the given format
-func GetParser(format Format) Parser {
-	switch format {
-	case FormatSemVer:
-		return &SemVerParser{}
-	case FormatCalVerYYYYMMDD:
-		return &CalVerYYYYMMDDParser{}
-	case FormatCalVerYYMMMICRO:
-		return &CalVerYYMMMICROParser{}
-	case FormatCalVerYYYYWW:
-		return &CalVerYYYYWWParser{}
-	case FormatCalVerYYYYMMDDMICRO:
-		return &CalVerYYYYMMDDMICROParser{}
-	default:
-		return nil
-	}
-}
-
-// IsCalVerYYYYMMDD checks if the tag is in YYYY.MM.DD CalVer format
-func IsCalVerYYYYMMDD(tag string) bool {
-	if !calverYYYYMMDD.MatchString(tag) {
-		return false
-	}
-	matches := calverYYYYMMDD.FindStringSubmatch(tag)
-	if len(matches) < threePartMatchCount {
-		return false
-	}
-
-	nums, err := parseNumbers(matches[1:threePartMatchCount]...)
-	if err != nil {
-		return false
-	}
-	year, month, day := nums[0], nums[1], nums[2]
-
-	return year > 0 && month >= 1 && month <= maxMonth && day >= 1 && day <= maxDay
-}
-
-// IsCalVerYYMMMICRO checks if the tag is in YY.MM.MICRO CalVer format
-func IsCalVerYYMMMICRO(tag string) bool {
-	if !calverYYMMMICRO.MatchString(tag) {
-		return false
-	}
-	matches := calverYYMMMICRO.FindStringSubmatch(tag)
-	if len(matches) < threePartMatchCount {
-		return false
-	}
-
-	nums, err := parseNumbers(matches[1:threePartMatchCount]...)
-	if err != nil {
-		return false
-	}
-	year, month, micro := nums[0], nums[1], nums[2]
-
-	return year >= 0 && year <= maxShortYear && month >= 1 && month <= maxMonth && micro >= 0
-}
-
-// IsCalVerYYYYWW checks if the tag is in YYYY.WW CalVer format
-func IsCalVerYYYYWW(tag string) bool {
-	if !calverYYYYWW.MatchString(tag) {
-		return false
-	}
-	matches := calverYYYYWW.FindStringSubmatch(tag)
-	if len(matches) < twoPartMatchCount {
-		return false
-	}
-
-	nums, err := parseNumbers(matches[1:twoPartMatchCount]...)
-	if err != nil {
-		return false
-	}
-	year, week := nums[0], nums[1]
-
-	return year > 0 && week >= 1 && week <= maxWeek
-}
-
-// IsCalVerYYYYMMDDMICRO checks if the tag is in YYYY.MM.DD.MICRO CalVer format
-func IsCalVerYYYYMMDDMICRO(tag string) bool {
-	if !calverYYYYMMDDMICRO.MatchString(tag) {
-		return false
-	}
-	matches := calverYYYYMMDDMICRO.FindStringSubmatch(tag)
-	if len(matches) < fourPartMatchCount {
-		return false
-	}
-
-	nums, err := parseNumbers(matches[1:fourPartMatchCount]...)
-	if err != nil {
-		return false
-	}
-	year, month, day, micro := nums[0], nums[1], nums[2], nums[microIndex]
-
-	return year > 0 && month >= 1 && month <= maxMonth && day >= 1 && day <= maxDay && micro >= 0
 }
 
 // SemVerParser implements VersionParser for semantic versioning
@@ -716,17 +359,6 @@ func (p *SemVerParser) Parse(tag string) (*ParsedVersion, error) {
 	}
 
 	return p.parseValid(tag), nil
-}
-
-// parseValid builds the result for a tag that IsSemver already accepted
-func (p *SemVerParser) parseValid(tag string) *ParsedVersion {
-	return &ParsedVersion{
-		Original: tag,
-		Format:   FormatSemVer,
-		Major:    semverSegment(tag, 0),
-		Minor:    semverSegment(tag, 1),
-		Patch:    semverSegment(tag, 2),
-	}
 }
 
 // IsValid checks if the given tag is a valid semantic version format.
@@ -772,6 +404,17 @@ func (p *SemVerParser) Compare(tag1, tag2 string) (int, error) {
 	}
 
 	return 0, nil
+}
+
+// parseValid builds the result for a tag that IsSemver already accepted
+func (p *SemVerParser) parseValid(tag string) *ParsedVersion {
+	return &ParsedVersion{
+		Original: tag,
+		Format:   FormatSemVer,
+		Major:    semverSegment(tag, 0),
+		Minor:    semverSegment(tag, 1),
+		Patch:    semverSegment(tag, 2),
+	}
 }
 
 // CalVerYYYYMMDDParser implements VersionParser for YYYY.MM.DD CalVer format
@@ -1078,84 +721,441 @@ func (p *CalVerYYYYMMDDMICROParser) Compare(tag1, tag2 string) (int, error) {
 	return 0, nil
 }
 
-// Compare compares the Git tag and commit hash of the current version with another version.
-func (v *Release) Compare(c *Release) bool {
-	return v.CompareTag(c) && v.CompareCommit(c)
-}
+// Get returns the current version information of the application.
+func Get() *Release {
+	tag := GitTag
+	info := parsedTag(tag)
 
-// CompareTag compares the Git tag of the current version with another version.
-func (v *Release) CompareTag(c *Release) bool {
-	return v.GitTag == c.GitTag
-}
-
-// CompareCommit compares the Git commit hash and short hash of the current version with another version.
-func (v *Release) CompareCommit(c *Release) bool {
-	return v.GitCommit == c.GitCommit && v.GitShort == c.GitShort
-}
-
-// CompareVersions compares the version of the current release with another release using proper version comparison
-func (v *Release) CompareVersions(c *Release) (int, error) {
-	return CompareVersions(v.GitTag, c.GitTag)
-}
-
-// GetVersionComponents returns the parsed version components
-func (v *Release) GetVersionComponents() (map[string]any, error) {
-	if v.ParsedVersion != nil {
-		return GetVersionComponents(v.GitTag)
-	}
-	return GetVersionComponents(v.GitTag)
-}
-
-// IsCalVer returns true if the release uses Calendar Versioning
-func (v *Release) IsCalVer() bool {
-	return v.VersionFormat == FormatCalVerYYYYMMDD ||
-		v.VersionFormat == FormatCalVerYYMMMICRO ||
-		v.VersionFormat == FormatCalVerYYYYWW ||
-		v.VersionFormat == FormatCalVerYYYYMMDDMICRO
-}
-
-// IsSemVer returns true if the release uses Semantic Versioning
-func (v *Release) IsSemVer() bool {
-	return v.VersionFormat == FormatSemVer
-}
-
-// Validate checks if the provided version information is valid.
-func (v *Release) Validate(change *Release) error {
-	if strings.TrimSpace(change.GitTag) == "" {
-		return apperror.NewError("tag cannot be empty")
+	var parsedVersion *ParsedVersion
+	if info.parsed != nil {
+		// A copy, so a caller changing the result does not change what later calls see
+		copied := *info.parsed
+		parsedVersion = &copied
 	}
 
-	if strings.TrimSpace(change.GitCommit) == "" {
-		return apperror.NewError("commit cannot be empty")
+	return &Release{
+		GitTag:        tag,
+		GitCommit:     GitCommit,
+		GitShort:      GitShort,
+		BuildDate:     BuildDate,
+		GoVersion:     GoVersion,
+		Platform:      Platform,
+		Modules:       Modules,
+		VersionFormat: info.format,
+		ParsedVersion: parsedVersion,
 	}
-
-	if strings.TrimSpace(change.GitShort) == "" {
-		return apperror.NewError("short commit cannot be empty")
-	}
-
-	if strings.TrimSpace(change.BuildDate) == "" {
-		return apperror.NewError("build date cannot be empty")
-	}
-
-	if strings.TrimSpace(change.GoVersion) == "" {
-		return apperror.NewError("go version cannot be empty")
-	}
-
-	if strings.TrimSpace(change.Platform) == "" {
-		return apperror.NewError("platform cannot be empty")
-	}
-
-	return nil
 }
 
-// fromBuildInfo populates the Module struct with information from the debug.Module.
-func (m *Module) fromBuildInfo(mod *debug.Module) *Module {
-	m.Path = mod.Path
-	m.Version = mod.Version
-	m.Sum = mod.Sum
-	if mod.Replace != nil {
-		m.Replace = &Module{}
-		m.Replace.fromBuildInfo(mod.Replace)
+// Major returns the major version number from the Git tag if it follows semantic versioning.
+func Major() int {
+	if IsSemver(GitTag) {
+		return ParseSemver(GitTag, 0)
 	}
-	return m
+
+	// For CalVer formats, try to return year as major
+	parser := GetParser(DetectFormat(GitTag))
+	if parser != nil {
+		pv, err := parser.Parse(GitTag)
+		if err == nil {
+			if pv.Year > 0 {
+				return pv.Year
+			}
+			return pv.Major
+		}
+	}
+	return 0
+}
+
+// Minor returns the minor version number from the Git tag if it follows semantic versioning.
+func Minor() int {
+	if IsSemver(GitTag) {
+		return ParseSemver(GitTag, 1)
+	}
+
+	// For CalVer formats, try to return month as minor
+	parser := GetParser(DetectFormat(GitTag))
+	if parser != nil {
+		pv, err := parser.Parse(GitTag)
+		if err == nil {
+			if pv.Month > 0 {
+				return pv.Month
+			}
+			if pv.Week > 0 {
+				return pv.Week
+			}
+			return pv.Minor
+		}
+	}
+	return 0
+}
+
+// Patch returns the patch version number from the Git tag if it follows semantic versioning.
+func Patch() int {
+	if IsSemver(GitTag) {
+		return ParseSemver(GitTag, patchSegmentIndex)
+	}
+
+	// For CalVer formats, try to return day as patch
+	parser := GetParser(DetectFormat(GitTag))
+	if parser != nil {
+		pv, err := parser.Parse(GitTag)
+		if err == nil {
+			if pv.Day > 0 {
+				return pv.Day
+			}
+			if pv.Micro > 0 {
+				return pv.Micro
+			}
+			return pv.Patch
+		}
+	}
+	return 0
+}
+
+// String returns the version tag as a string without the "v" prefix.
+func String() string {
+	version, _, _ := strings.Cut(GitTag, preReleaseSeparator)
+	return strings.TrimPrefix(version, versionPrefix)
+}
+
+// IsSemver checks if the provided tag is a valid Git tag in semantic versioning format "vX.Y.Z".
+func IsSemver(tag string) bool {
+	return semver.MatchString(tag)
+}
+
+// ParseSemver parses the specified segment (major, minor, or patch) from the Git tag.
+func ParseSemver(tag string, n int) int {
+	if !IsSemver(tag) {
+		logger.Error().Fields(logging.F("tag", tag)).Msg("invalid git tag format")
+		return 0
+	}
+
+	version := strings.TrimPrefix(strings.SplitN(tag, preReleaseSeparator, splitPartsCount)[0], versionPrefix)
+	segments := strings.Split(version, segmentSeparator)
+	if n >= len(segments) {
+		logger.Error().Fields(
+			logging.F("index", n),
+			logging.F("reason", "index out of range"),
+		).Msg("parsing version segment failed")
+		return 0
+	}
+
+	v, err := strconv.Atoi(segments[n])
+	if err != nil {
+		logger.Error().Err(err).Fields(
+			logging.F("index", n),
+		).Msg("parsing version segment failed")
+		return 0
+	}
+
+	return v
+}
+
+// ExtractSemanticVersion parses the version number from the Git tag.
+// It returns the version string without the "v" prefix and any pre-release/build metadata.
+// If the tag is not a valid Git tag, it returns an empty string.
+func ExtractSemanticVersion(tag string) string {
+	if !IsSemver(tag) {
+		logger.Error().Fields(logging.F("tag", tag)).Msg("invalid git tag format")
+		return ""
+	}
+
+	return strings.TrimPrefix(strings.SplitN(tag, preReleaseSeparator, splitPartsCount)[0], versionPrefix)
+}
+
+// ParseVersion parses a version string and returns a ParsedVersion struct
+func ParseVersion(tag string) (*ParsedVersion, error) {
+	format := DetectFormat(tag)
+	// DetectFormat has just matched the tag against the semver pattern; do not match it again
+	if format == FormatSemVer {
+		return (&SemVerParser{}).parseValid(tag), nil
+	}
+	parser := GetParser(format)
+	if parser == nil {
+		return nil, apperror.NewError("unsupported version format")
+	}
+	return parser.Parse(tag)
+}
+
+// IsValidVersion checks if a version string is valid in any supported format
+func IsValidVersion(tag string) bool {
+	format := DetectFormat(tag)
+	return format != FormatUnknown
+}
+
+// CompareVersions compares two version strings, returns -1, 0, or 1
+func CompareVersions(tag1, tag2 string) (int, error) {
+	format1 := DetectFormat(tag1)
+	format2 := DetectFormat(tag2)
+
+	if format1 != format2 {
+		return 0, apperror.NewError("cannot compare versions of different formats")
+	}
+
+	parser := GetParser(format1)
+	if parser == nil {
+		return 0, apperror.NewError("unsupported version format")
+	}
+
+	return parser.Compare(tag1, tag2)
+}
+
+// GetVersionComponents returns the version components as a map for any supported format
+func GetVersionComponents(tag string) (map[string]any, error) {
+	pv, err := ParseVersion(tag)
+	if err != nil {
+		return nil, apperror.NewErrorf("parsing version %q failed", tag).AddError(err)
+	}
+
+	components := make(map[string]any)
+	components[componentFormat] = pv.Format.String()
+	components[componentOriginal] = pv.Original
+
+	if pv.Major > 0 {
+		components[componentMajor] = pv.Major
+	}
+	if pv.Minor > 0 {
+		components[componentMinor] = pv.Minor
+	}
+	if pv.Patch > 0 {
+		components[componentPatch] = pv.Patch
+	}
+	if pv.Micro > 0 {
+		components[componentMicro] = pv.Micro
+	}
+	if pv.Year > 0 {
+		components[componentYear] = pv.Year
+	}
+	if pv.Month > 0 {
+		components[componentMonth] = pv.Month
+	}
+	if pv.Day > 0 {
+		components[componentDay] = pv.Day
+	}
+	if pv.Week > 0 {
+		components[componentWeek] = pv.Week
+	}
+
+	return components, nil
+}
+
+// DetectFormat automatically detects the version format from a tag string
+func DetectFormat(tag string) Format {
+	// Every CalVer pattern starts with a two or four digit number, so most tags (all
+	// semantic versions, for one) skip the four regular expressions
+	if calverCandidate(tag) {
+		if IsCalVerYYYYMMDDMICRO(tag) {
+			return FormatCalVerYYYYMMDDMICRO
+		}
+		if IsCalVerYYYYMMDD(tag) {
+			return FormatCalVerYYYYMMDD
+		}
+		if IsCalVerYYMMMICRO(tag) {
+			return FormatCalVerYYMMMICRO
+		}
+		if IsCalVerYYYYWW(tag) {
+			return FormatCalVerYYYYWW
+		}
+	}
+	if IsSemver(tag) {
+		return FormatSemVer
+	}
+	return FormatUnknown
+}
+
+// GetParser returns the appropriate parser for the given format
+func GetParser(format Format) Parser {
+	switch format {
+	case FormatSemVer:
+		return &SemVerParser{}
+	case FormatCalVerYYYYMMDD:
+		return &CalVerYYYYMMDDParser{}
+	case FormatCalVerYYMMMICRO:
+		return &CalVerYYMMMICROParser{}
+	case FormatCalVerYYYYWW:
+		return &CalVerYYYYWWParser{}
+	case FormatCalVerYYYYMMDDMICRO:
+		return &CalVerYYYYMMDDMICROParser{}
+	default:
+		return nil
+	}
+}
+
+// IsCalVerYYYYMMDD checks if the tag is in YYYY.MM.DD CalVer format
+func IsCalVerYYYYMMDD(tag string) bool {
+	if !calverYYYYMMDD.MatchString(tag) {
+		return false
+	}
+	matches := calverYYYYMMDD.FindStringSubmatch(tag)
+	if len(matches) < threePartMatchCount {
+		return false
+	}
+
+	nums, err := parseNumbers(matches[1:threePartMatchCount]...)
+	if err != nil {
+		return false
+	}
+	year, month, day := nums[0], nums[1], nums[2]
+
+	return year > 0 && month >= 1 && month <= maxMonth && day >= 1 && day <= maxDay
+}
+
+// IsCalVerYYMMMICRO checks if the tag is in YY.MM.MICRO CalVer format
+func IsCalVerYYMMMICRO(tag string) bool {
+	if !calverYYMMMICRO.MatchString(tag) {
+		return false
+	}
+	matches := calverYYMMMICRO.FindStringSubmatch(tag)
+	if len(matches) < threePartMatchCount {
+		return false
+	}
+
+	nums, err := parseNumbers(matches[1:threePartMatchCount]...)
+	if err != nil {
+		return false
+	}
+	year, month, micro := nums[0], nums[1], nums[2]
+
+	return year >= 0 && year <= maxShortYear && month >= 1 && month <= maxMonth && micro >= 0
+}
+
+// IsCalVerYYYYWW checks if the tag is in YYYY.WW CalVer format
+func IsCalVerYYYYWW(tag string) bool {
+	if !calverYYYYWW.MatchString(tag) {
+		return false
+	}
+	matches := calverYYYYWW.FindStringSubmatch(tag)
+	if len(matches) < twoPartMatchCount {
+		return false
+	}
+
+	nums, err := parseNumbers(matches[1:twoPartMatchCount]...)
+	if err != nil {
+		return false
+	}
+	year, week := nums[0], nums[1]
+
+	return year > 0 && week >= 1 && week <= maxWeek
+}
+
+// IsCalVerYYYYMMDDMICRO checks if the tag is in YYYY.MM.DD.MICRO CalVer format
+func IsCalVerYYYYMMDDMICRO(tag string) bool {
+	if !calverYYYYMMDDMICRO.MatchString(tag) {
+		return false
+	}
+	matches := calverYYYYMMDDMICRO.FindStringSubmatch(tag)
+	if len(matches) < fourPartMatchCount {
+		return false
+	}
+
+	nums, err := parseNumbers(matches[1:fourPartMatchCount]...)
+	if err != nil {
+		return false
+	}
+	year, month, day, micro := nums[0], nums[1], nums[2], nums[microIndex]
+
+	return year > 0 && month >= 1 && month <= maxMonth && day >= 1 && day <= maxDay && micro >= 0
+}
+
+func init() {
+	info, available := debug.ReadBuildInfo()
+	if !available {
+		return
+	}
+
+	for _, mod := range info.Deps {
+		Modules = append(Modules, (&Module{}).fromBuildInfo(mod))
+	}
+
+	if GitCommit != unknownValue || BuildDate != unknownValue {
+		return
+	}
+
+	if info.Main.Version != "" && info.Main.Version != develVersion {
+		GitTag = info.Main.Version
+	}
+
+	for _, setting := range info.Settings {
+		applyBuildSetting(setting)
+	}
+}
+
+func applyBuildSetting(setting debug.BuildSetting) {
+	switch setting.Key {
+	case vcsRevisionKey:
+		if setting.Value == "" {
+			return
+		}
+		GitCommit = setting.Value
+		GitShort = GitCommit
+		if len(GitShort) >= shortCommitLength {
+			GitShort = GitShort[:shortCommitLength]
+		}
+	case vcsTimeKey:
+		BuildDate = setting.Value
+	}
+}
+
+func parsedTag(tag string) *tagInfo {
+	if info := lastTag.Load(); info != nil && info.tag == tag {
+		return info
+	}
+
+	info := &tagInfo{tag: tag, format: DetectFormat(tag)}
+	if parser := GetParser(info.format); parser != nil {
+		pv, err := parser.Parse(tag)
+		if err == nil {
+			info.parsed = pv
+		}
+	}
+	lastTag.Store(info)
+	return info
+}
+
+// semverSegment returns segment n of a tag that IsSemver already accepted, without validating
+// it again or splitting the whole tag. Missing or unparsable segments are 0.
+func semverSegment(tag string, n int) int {
+	tag = strings.TrimPrefix(tag, versionPrefix)
+	if i := strings.IndexByte(tag, preReleaseSeparator[0]); i >= 0 {
+		tag = tag[:i]
+	}
+	for ; n > 0; n-- {
+		i := strings.IndexByte(tag, segmentSeparator[0])
+		if i < 0 {
+			return 0
+		}
+		tag = tag[i+1:]
+	}
+	if i := strings.IndexByte(tag, segmentSeparator[0]); i >= 0 {
+		tag = tag[:i]
+	}
+	v, err := strconv.Atoi(tag)
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+// parseNumbers converts regex captures to integers and fails on values that overflow int.
+func parseNumbers(parts ...string) ([]int, error) {
+	nums := make([]int, len(parts))
+	for i, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, apperror.NewErrorf("parsing number %q failed", part).AddError(err)
+		}
+		nums[i] = n
+	}
+	return nums, nil
+}
+
+// calverCandidate reports whether the tag starts, after an optional "v", with a number of
+// two or four digits followed by a dot, which every CalVer pattern requires.
+func calverCandidate(tag string) bool {
+	tag = strings.TrimPrefix(tag, versionPrefix)
+	digits := 0
+	for digits < len(tag) && tag[digits] >= '0' && tag[digits] <= '9' {
+		digits++
+	}
+	return (digits == calverShortYearDigits || digits == calverLongYearDigits) && digits < len(tag) && tag[digits] == segmentSeparator[0]
 }
