@@ -20,7 +20,8 @@ func BenchmarkLockUnlock(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-		if err := l.Unlock(ctx); err != nil {
+		err = l.Unlock(ctx)
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -57,7 +58,8 @@ func BenchmarkConfigSourceSave(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		cfg.Port = i
-		if err := src.Save(ctx, cfg); err != nil {
+		err := src.Save(ctx, cfg)
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -67,13 +69,15 @@ func BenchmarkConfigSourceLoad(b *testing.B) {
 	cli := newTestClient(b)
 	src := cli.ConfigSource("bench-load")
 	ctx := context.Background()
-	if err := src.Save(ctx, &cfgConfig{Name: "alpha", Port: 4242}); err != nil {
+	err := src.Save(ctx, &cfgConfig{Name: "alpha", Port: 4242})
+	if err != nil {
 		b.Fatal(err)
 	}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := src.Load(ctx); err != nil {
+		_, err := src.Load(ctx)
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -86,7 +90,8 @@ func BenchmarkRawPut(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := raw.Put(ctx, cli.Prefix()+"/k"+strconv.Itoa(i&255), "v"); err != nil {
+		_, err := raw.Put(ctx, cli.Prefix()+"/k"+strconv.Itoa(i&255), "v")
+		if err != nil {
 			b.Fatal(err)
 		}
 	}

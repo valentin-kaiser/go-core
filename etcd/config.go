@@ -41,7 +41,7 @@ func (c *Client) ConfigSource(name string) config.Source {
 func (s *source) Name() string { return "etcd" }
 
 // Load implements config.Source.
-func (s *source) Load(ctx context.Context) (map[string]interface{}, error) {
+func (s *source) Load(ctx context.Context) (map[string]any, error) {
 	resp, err := s.cli.raw.Get(ctx, s.keyPrefix, clientv3.WithPrefix())
 	if err != nil {
 		return nil, apperror.NewError("loading configuration from etcd failed").AddError(err)
@@ -50,14 +50,15 @@ func (s *source) Load(ctx context.Context) (map[string]interface{}, error) {
 		return nil, config.ErrNotFound
 	}
 
-	values := make(map[string]interface{}, len(resp.Kvs))
+	values := make(map[string]any, len(resp.Kvs))
 	for _, kv := range resp.Kvs {
 		key := strings.TrimPrefix(string(kv.Key), s.keyPrefix)
 		if key == "" {
 			continue
 		}
-		var v interface{}
-		if err := yaml.Unmarshal(kv.Value, &v); err != nil {
+		var v any
+		err := yaml.Unmarshal(kv.Value, &v)
+		if err != nil {
 			return nil, apperror.NewErrorf("decoding etcd value at %q failed", string(kv.Key)).AddError(err)
 		}
 		values[strings.ToLower(key)] = v
@@ -78,7 +79,8 @@ func (s *source) Save(ctx context.Context, c config.Config) error {
 	// snapshot in etcd matches the in-memory configuration exactly. The
 	// delete is issued outside the transaction because etcd rejects txns
 	// whose ranges overlap with mutated keys.
-	if _, err := s.cli.raw.Delete(ctx, s.keyPrefix, clientv3.WithPrefix()); err != nil {
+	_, err = s.cli.raw.Delete(ctx, s.keyPrefix, clientv3.WithPrefix())
+	if err != nil {
 		return apperror.NewError("clearing existing configuration in etcd failed").AddError(err)
 	}
 
@@ -104,7 +106,7 @@ func (s *source) Save(ctx context.Context, c config.Config) error {
 
 // Watch implements config.Source. The returned cancel function stops the
 // underlying watch goroutine.
-func (s *source) Watch(ctx context.Context, onChange func(map[string]interface{})) (func(), error) {
+func (s *source) Watch(ctx context.Context, onChange func(map[string]any)) (func(), error) {
 	watchCtx, cancel := context.WithCancel(ctx)
 	ch := s.cli.raw.Watch(watchCtx, s.keyPrefix, clientv3.WithPrefix())
 
@@ -128,7 +130,7 @@ func (s *source) Watch(ctx context.Context, onChange func(map[string]interface{}
 					// Either the keys were deleted or another transient
 					// issue occurred; emit an empty map so the manager
 					// can re-bootstrap if needed.
-					values = map[string]interface{}{}
+					values = map[string]any{}
 				}
 				onChange(values)
 			}
@@ -141,7 +143,7 @@ func (s *source) Watch(ctx context.Context, onChange func(map[string]interface{}
 // flattenConfig marshals a Config to YAML and returns its flat dotted-key
 // representation, mirroring the encoding used by the file source so the
 // resulting map can be consumed directly by config.unmarshal.
-func flattenConfig(c config.Config) (map[string]interface{}, error) {
+func flattenConfig(c config.Config) (map[string]any, error) {
 	if c == nil {
 		return nil, apperror.NewError("configuration is nil")
 	}
@@ -149,28 +151,29 @@ func flattenConfig(c config.Config) (map[string]interface{}, error) {
 	if err != nil {
 		return nil, apperror.NewError("marshalling configuration to yaml failed").AddError(err)
 	}
-	var decoded map[string]interface{}
-	if err := yaml.Unmarshal(raw, &decoded); err != nil {
+	var decoded map[string]any
+	err = yaml.Unmarshal(raw, &decoded)
+	if err != nil {
 		return nil, apperror.NewError("unmarshalling configuration yaml failed").AddError(err)
 	}
-	out := make(map[string]interface{})
+	out := make(map[string]any)
 	flatten(decoded, "", out)
 	return out, nil
 }
 
 // flatten mirrors the file source flattening so that nested maps become
 // dotted-key entries while slices and scalars are kept as-is.
-func flatten(data map[string]interface{}, prefix string, out map[string]interface{}) {
+func flatten(data map[string]any, prefix string, out map[string]any) {
 	for k, v := range data {
 		key := k
 		if prefix != "" {
 			key = prefix + "." + k
 		}
 		switch nested := v.(type) {
-		case map[string]interface{}:
+		case map[string]any:
 			flatten(nested, key, out)
-		case map[interface{}]interface{}:
-			conv := make(map[string]interface{}, len(nested))
+		case map[any]any:
+			conv := make(map[string]any, len(nested))
 			for nk, nv := range nested {
 				if ks, ok := nk.(string); ok {
 					conv[ks] = nv

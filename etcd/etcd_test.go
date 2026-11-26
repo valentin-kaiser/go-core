@@ -14,6 +14,7 @@ import (
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.uber.org/zap"
 
+	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/etcd"
 )
 
@@ -28,16 +29,16 @@ type testEtcd struct {
 var (
 	sharedOnce   sync.Once
 	sharedServer *testEtcd
-	sharedErr    error
+	errShared    error
 )
 
-func sharedEtcd(t testing.TB) []string {
-	t.Helper()
+func sharedEtcd(tb testing.TB) []string {
+	tb.Helper()
 	sharedOnce.Do(func() {
-		sharedServer, sharedErr = startEmbedded()
+		sharedServer, errShared = startEmbedded()
 	})
-	if sharedErr != nil {
-		t.Skipf("embedded etcd unavailable: %v", sharedErr)
+	if errShared != nil {
+		tb.Skipf("embedded etcd unavailable: %v", errShared)
 	}
 	return sharedServer.endpoints
 }
@@ -101,21 +102,25 @@ func freePort() (int, error) {
 		return 0, err
 	}
 	defer func() { _ = l.Close() }()
-	return l.Addr().(*net.TCPAddr).Port, nil
+	addr, ok := l.Addr().(*net.TCPAddr)
+	if !ok {
+		return 0, apperror.NewError("listener address is not a TCP address")
+	}
+	return addr.Port, nil
 }
 
-func newTestClient(t testing.TB) *etcd.Client {
-	t.Helper()
-	endpoints := sharedEtcd(t)
+func newTestClient(tb testing.TB) *etcd.Client {
+	tb.Helper()
+	endpoints := sharedEtcd(tb)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	cli, err := etcd.New(ctx, etcd.Config{
 		Endpoints: endpoints,
-		Prefix:    "/test/" + t.Name(),
+		Prefix:    "/test/" + tb.Name(),
 	})
 	if err != nil {
-		t.Fatalf("etcd.New: %v", err)
+		tb.Fatalf("etcd.New: %v", err)
 	}
-	t.Cleanup(func() { _ = cli.Close() })
+	tb.Cleanup(func() { _ = cli.Close() })
 	return cli
 }

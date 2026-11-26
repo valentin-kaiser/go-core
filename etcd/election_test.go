@@ -47,7 +47,8 @@ func TestElectionLeadershipTransfer(t *testing.T) {
 	case <-time.After(300 * time.Millisecond):
 	}
 
-	if err := leader.Resign(ctx); err != nil {
+	err = leader.Resign(ctx)
+	if err != nil {
 		t.Fatalf("Resign node-1: %v", err)
 	}
 
