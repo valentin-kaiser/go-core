@@ -49,23 +49,19 @@ func TestEnvVarNameConcurrentRegistrationIsNotLost(t *testing.T) {
 	t.Cleanup(func() { flag.Prefix = oldPrefix })
 	flag.Prefix = ""
 
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		name := fmt.Sprintf("race.name-%d", i)
 		want := fmt.Sprintf("REGISTERED_%d", i)
 
 		var wg sync.WaitGroup
-		for r := 0; r < 4; r++ {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+		for range 4 {
+			wg.Go(func() {
 				_ = flag.EnvVarName(name)
-			}()
+			})
 		}
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			flag.RegisterEnvVar(name, fmt.Sprintf("registered.%d", i))
-		}()
+		})
 		wg.Wait()
 
 		if got := flag.EnvVarName(name); got != want {

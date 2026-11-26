@@ -196,11 +196,11 @@ func TestOverrideFlag(t *testing.T) {
 	pflag.CommandLine = pflag.NewFlagSet("", pflag.ContinueOnError)
 
 	// First register a flag
-	var originalFlag string = "original"
+	var originalFlag = "original"
 	flag.Register("override-test", &originalFlag, "Original description")
 
 	// Override it with new variable, value and description
-	var newFlag string = "new_default"
+	var newFlag = "new_default"
 	flag.Override("override-test", &newFlag, "New description")
 
 	// Test that the flag was overridden
@@ -299,7 +299,7 @@ func TestOverrideFlagAfterParse(t *testing.T) {
 	}()
 
 	// Try to override after parsing - should panic
-	var newFlag string = "new"
+	var newFlag = "new"
 	flag.Override("override-after-parse", &newFlag, "New description")
 }
 
