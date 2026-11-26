@@ -111,10 +111,18 @@ var (
 	}
 )
 
+// current is the active configuration, published by set. Get is called from hot paths on
+// many goroutines, and reading an atomic pointer does not contend on the manager mutex.
+var current atomic.Pointer[configBox]
+
 // Config is the interface that all configuration structs must implement
 // It should contain a Validate method that checks the configuration for errors
 type Config interface {
 	Validate() error
+}
+
+type configBox struct {
+	config Config
 }
 
 type manager struct {
@@ -215,14 +223,6 @@ func Get() Config {
 		return box.config
 	}
 	return nil
-}
-
-// current is the active configuration, published by set. Get is called from hot paths on
-// many goroutines, and reading an atomic pointer does not contend on the manager mutex.
-var current atomic.Pointer[configBox]
-
-type configBox struct {
-	config Config
 }
 
 // Read loads the configuration from the configured sources, validates it and
