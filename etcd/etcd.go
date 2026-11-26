@@ -77,6 +77,30 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
+const (
+	defaultPrefix = "/go-core"
+
+	keySeparator       = "/"
+	configKeySeparator = "."
+	trailingNewline    = "\n"
+	minKeySegments     = 2
+
+	configKeyGroup    = "config"
+	servicesKeyGroup  = "services"
+	locksKeyGroup     = "locks"
+	electionsKeyGroup = "elections"
+
+	defaultConfigName = "config"
+	sourceName        = "etcd"
+
+	defaultDialTimeout = 5 * time.Second
+
+	eventNameAdded    = "added"
+	eventNameModified = "modified"
+	eventNameRemoved  = "removed"
+	eventNameUnknown  = "unknown"
+)
+
 // Config holds the connection parameters for an etcd client.
 type Config struct {
 	// Endpoints is the list of etcd endpoints (e.g. "host:2379"). At least
@@ -118,30 +142,6 @@ func (c *Config) Validate() error {
 	}
 	return nil
 }
-
-const (
-	defaultPrefix = "/go-core"
-
-	keySeparator       = "/"
-	configKeySeparator = "."
-	trailingNewline    = "\n"
-	minKeySegments     = 2
-
-	configKeyGroup    = "config"
-	servicesKeyGroup  = "services"
-	locksKeyGroup     = "locks"
-	electionsKeyGroup = "elections"
-
-	defaultConfigName = "config"
-	sourceName        = "etcd"
-
-	defaultDialTimeout = 5 * time.Second
-
-	eventNameAdded    = "added"
-	eventNameModified = "modified"
-	eventNameRemoved  = "removed"
-	eventNameUnknown  = "unknown"
-)
 
 // Client wraps a *clientv3.Client together with the resolved key prefix and
 // a lifecycle context shared by all helpers in this package.

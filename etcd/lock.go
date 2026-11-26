@@ -11,6 +11,8 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
+const defaultLockTTL = 30 * time.Second
+
 // Lock represents an acquired distributed mutex. The underlying etcd session
 // keeps a lease alive for the lifetime of the lock; if the holding process
 // dies, the lock is released automatically once the lease expires.
@@ -19,8 +21,6 @@ type Lock struct {
 	mutex   *concurrency.Mutex
 	key     string
 }
-
-const defaultLockTTL = 30 * time.Second
 
 // Lock acquires a distributed mutex at the given key (resolved under the
 // client's configured prefix) and returns a handle the caller can use to
