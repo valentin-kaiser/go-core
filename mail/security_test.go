@@ -7,7 +7,7 @@ import (
 	"github.com/valentin-kaiser/go-core/v2/mail"
 )
 
-// TestSecurityManager tests the SecurityManager functionality
+// TestNewPolicy tests the Policy functionality
 func TestSecurityManager(t *testing.T) {
 	config := mail.SecurityConfig{
 		HeloValidation:      true,
@@ -22,10 +22,10 @@ func TestSecurityManager(t *testing.T) {
 		AuthFailureDelay:    time.Second,
 	}
 
-	sm := mail.NewSecurityManager(config)
+	sm := mail.NewPolicy(config)
 
 	if sm == nil {
-		t.Fatal("Expected SecurityManager to be created")
+		t.Fatal("Expected Policy to be created")
 	}
 }
 
@@ -80,7 +80,7 @@ func TestSecurityManager_ValidateConnection(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sm := mail.NewSecurityManager(tt.config)
+			sm := mail.NewPolicy(tt.config)
 			err := sm.ValidateConnection(tt.remoteAddr)
 
 			if (err != nil) != tt.wantError {
@@ -147,7 +147,7 @@ func TestSecurityManager_ValidateHelo(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			sm := mail.NewSecurityManager(tt.config)
+			sm := mail.NewPolicy(tt.config)
 			err := sm.ValidateHelo(tt.hostname, tt.remoteAddr)
 
 			if (err != nil) != tt.wantError {
@@ -164,7 +164,7 @@ func TestSecurityManager_AuthFailureTracking(t *testing.T) {
 		AuthFailureDelay:  time.Second,
 	}
 
-	sm := mail.NewSecurityManager(config)
+	sm := mail.NewPolicy(config)
 	remoteAddr := "192.168.1.1:12345"
 
 	// Record first failure
@@ -194,7 +194,7 @@ func TestSecurityManager_ConnectionTracking(t *testing.T) {
 		MaxConnectionsPerIP: 2,
 	}
 
-	sm := mail.NewSecurityManager(config)
+	sm := mail.NewPolicy(config)
 	remoteAddr := "192.168.1.1:12345"
 
 	// First connection should succeed
@@ -232,7 +232,7 @@ func TestSecurityManager_GetAuthFailureDelay(t *testing.T) {
 		AuthFailureDelay:  time.Second * 2,
 	}
 
-	sm := mail.NewSecurityManager(config)
+	sm := mail.NewPolicy(config)
 	delay := sm.GetAuthFailureDelay()
 
 	if delay <= 0 {
@@ -291,7 +291,7 @@ func TestSecurityManager_IPValidation(t *testing.T) {
 				MaxConnectionsPerIP: 5,
 			}
 
-			sm := mail.NewSecurityManager(config)
+			sm := mail.NewPolicy(config)
 			err := sm.ValidateConnection(tt.testIP + ":12345")
 
 			isAllowed := err == nil

@@ -35,8 +35,8 @@ func TestSMTPServer_Creation(t *testing.T) {
 
 	// Create a mail manager first
 	mailConfig := mail.DefaultConfig()
-	queueManager := queue.NewManager()
-	manager := mail.NewManager(mailConfig, queueManager)
+	queueManager := queue.NewScheduler()
+	manager := mail.NewMailer(mailConfig, queueManager)
 
 	server := mail.NewSMTPServer(config, manager)
 
@@ -59,8 +59,8 @@ func TestSMTPServer_AddHandler(t *testing.T) {
 	}
 
 	mailConfig := mail.DefaultConfig()
-	queueManager := queue.NewManager()
-	manager := mail.NewManager(mailConfig, queueManager)
+	queueManager := queue.NewScheduler()
+	manager := mail.NewMailer(mailConfig, queueManager)
 	server := mail.NewSMTPServer(config, manager)
 
 	// Create a test notification handler
@@ -100,8 +100,8 @@ func TestSMTPServer_StartStop(t *testing.T) {
 	}
 
 	mailConfig := mail.DefaultConfig()
-	queueManager := queue.NewManager()
-	manager := mail.NewManager(mailConfig, queueManager)
+	queueManager := queue.NewScheduler()
+	manager := mail.NewMailer(mailConfig, queueManager)
 	server := mail.NewSMTPServer(config, manager)
 
 	ctx := context.Background()
@@ -152,8 +152,8 @@ func TestSMTPServer_TLSConfiguration(t *testing.T) {
 	}
 
 	mailConfig := mail.DefaultConfig()
-	queueManager := queue.NewManager()
-	manager := mail.NewManager(mailConfig, queueManager)
+	queueManager := queue.NewScheduler()
+	manager := mail.NewMailer(mailConfig, queueManager)
 	server := mail.NewSMTPServer(config, manager)
 
 	// Just verify server was created with TLS config
@@ -176,8 +176,8 @@ func TestSMTPServer_AuthConfiguration(t *testing.T) {
 	}
 
 	mailConfig := mail.DefaultConfig()
-	queueManager := queue.NewManager()
-	manager := mail.NewManager(mailConfig, queueManager)
+	queueManager := queue.NewScheduler()
+	manager := mail.NewMailer(mailConfig, queueManager)
 	server := mail.NewSMTPServer(config, manager)
 
 	// Just verify server was created with auth config
@@ -206,8 +206,8 @@ func TestSMTPServer_SecurityConfiguration(t *testing.T) {
 	}
 
 	mailConfig := mail.DefaultConfig()
-	queueManager := queue.NewManager()
-	manager := mail.NewManager(mailConfig, queueManager)
+	queueManager := queue.NewScheduler()
+	manager := mail.NewMailer(mailConfig, queueManager)
 	server := mail.NewSMTPServer(config, manager)
 
 	// Just verify server was created with security config
@@ -226,8 +226,8 @@ func TestSMTPServer_MultipleHandlers(t *testing.T) {
 	}
 
 	mailConfig := mail.DefaultConfig()
-	queueManager := queue.NewManager()
-	manager := mail.NewManager(mailConfig, queueManager)
+	queueManager := queue.NewScheduler()
+	manager := mail.NewMailer(mailConfig, queueManager)
 	server := mail.NewSMTPServer(config, manager)
 
 	// Add multiple handlers
@@ -257,8 +257,8 @@ func TestSMTPServer_ConcurrentHandlerLimit(t *testing.T) {
 	}
 
 	mailConfig := mail.DefaultConfig()
-	queueManager := queue.NewManager()
-	manager := mail.NewManager(mailConfig, queueManager)
+	queueManager := queue.NewScheduler()
+	manager := mail.NewMailer(mailConfig, queueManager)
 	server := mail.NewSMTPServer(config, manager)
 
 	if server == nil {
@@ -277,8 +277,8 @@ func TestSMTPServer_DefaultMaxConcurrentHandlers(t *testing.T) {
 	}
 
 	mailConfig := mail.DefaultConfig()
-	queueManager := queue.NewManager()
-	manager := mail.NewManager(mailConfig, queueManager)
+	queueManager := queue.NewScheduler()
+	manager := mail.NewMailer(mailConfig, queueManager)
 	server := mail.NewSMTPServer(config, manager)
 
 	if server == nil {
@@ -296,8 +296,8 @@ func TestSMTPServer_ContextCancellation(t *testing.T) {
 	}
 
 	mailConfig := mail.DefaultConfig()
-	queueManager := queue.NewManager()
-	manager := mail.NewManager(mailConfig, queueManager)
+	queueManager := queue.NewScheduler()
+	manager := mail.NewMailer(mailConfig, queueManager)
 	server := mail.NewSMTPServer(config, manager)
 
 	if server == nil {
@@ -315,8 +315,8 @@ func TestSMTPServer_GracefulShutdown(t *testing.T) {
 	}
 
 	mailConfig := mail.DefaultConfig()
-	queueManager := queue.NewManager()
-	manager := mail.NewManager(mailConfig, queueManager)
+	queueManager := queue.NewScheduler()
+	manager := mail.NewMailer(mailConfig, queueManager)
 	server := mail.NewSMTPServer(config, manager)
 
 	if server == nil {

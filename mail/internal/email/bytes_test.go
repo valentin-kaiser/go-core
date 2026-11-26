@@ -51,7 +51,7 @@ func normalizeMessage(raw []byte) string {
 	return strings.Join(fields, "\r\n") + headerBodySep + body
 }
 
-func newFixedEmail(text, html string) *email.Email {
+func newFixedEmail(text, html string) *email.Message {
 	e := email.New()
 	e.From = "sender@example.test"
 	e.To = []string{"rcpt@example.test"}
@@ -68,7 +68,7 @@ func newFixedEmail(text, html string) *email.Email {
 }
 
 // withAttachment attaches a small text file to the email, reading from memory cannot fail.
-func withAttachment(e *email.Email, filename string, htmlRelated bool) *email.Email {
+func withAttachment(e *email.Message, filename string, htmlRelated bool) *email.Message {
 	a, err := e.Attach(strings.NewReader("data of "+filename), filename, "text/plain")
 	if err != nil {
 		panic(err)
@@ -83,48 +83,48 @@ func withAttachment(e *email.Email, filename string, htmlRelated bool) *email.Em
 func TestBytesLayouts(t *testing.T) {
 	tests := []struct {
 		name  string
-		build func() *email.Email
+		build func() *email.Message
 		want  string
 	}{
 		{
 			name:  "text only",
-			build: func() *email.Email { return newFixedEmail(textBody, "") },
+			build: func() *email.Message { return newFixedEmail(textBody, "") },
 			want:  "Content-Transfer-Encoding: quoted-printable\r\nContent-Type: text/plain; charset=UTF-8\r\nDate: Mon, 01 Jan 2024 12:00:00 +0000\r\nFrom: sender@example.test\r\nMessage-Id: <fixed@example.test>\r\nMime-Version: 1.0\r\nSubject: subject\r\nTo: rcpt@example.test\r\n\r\nplain text body",
 		},
 		{
 			name:  "html only",
-			build: func() *email.Email { return newFixedEmail("", htmlBody) },
+			build: func() *email.Message { return newFixedEmail("", htmlBody) },
 			want:  "Content-Transfer-Encoding: quoted-printable\r\nContent-Type: text/html; charset=UTF-8\r\nDate: Mon, 01 Jan 2024 12:00:00 +0000\r\nFrom: sender@example.test\r\nMessage-Id: <fixed@example.test>\r\nMime-Version: 1.0\r\nSubject: subject\r\nTo: rcpt@example.test\r\n\r\n<p>html body</p>",
 		},
 		{
 			name:  "text and html",
-			build: func() *email.Email { return newFixedEmail(textBody, htmlBody) },
+			build: func() *email.Message { return newFixedEmail(textBody, htmlBody) },
 			want:  "Content-Type: multipart/alternative;\r\n boundary=BOUNDARY1\r\nDate: Mon, 01 Jan 2024 12:00:00 +0000\r\nFrom: sender@example.test\r\nMessage-Id: <fixed@example.test>\r\nMime-Version: 1.0\r\nSubject: subject\r\nTo: rcpt@example.test\r\n\r\n--BOUNDARY1\r\nContent-Transfer-Encoding: quoted-printable\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nplain text body\r\n--BOUNDARY1\r\nContent-Transfer-Encoding: quoted-printable\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n<p>html body</p>\r\n--BOUNDARY1--\r\n",
 		},
 		{
 			name: "text and attachment",
-			build: func() *email.Email {
+			build: func() *email.Message {
 				return withAttachment(newFixedEmail(textBody, ""), attachedFile, false)
 			},
 			want: "Content-Type: multipart/mixed;\r\n boundary=BOUNDARY1\r\nDate: Mon, 01 Jan 2024 12:00:00 +0000\r\nFrom: sender@example.test\r\nMessage-Id: <fixed@example.test>\r\nMime-Version: 1.0\r\nSubject: subject\r\nTo: rcpt@example.test\r\n\r\n--BOUNDARY1\r\nContent-Transfer-Encoding: quoted-printable\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nplain text body\r\n--BOUNDARY1\r\nContent-Disposition: attachment;\r\n filename=\"a.txt\"\r\nContent-Id: <a.txt>\r\nContent-Transfer-Encoding: base64\r\nContent-Type: text/plain\r\n\r\nZGF0YSBvZiBhLnR4dA==\r\n\r\n--BOUNDARY1--\r\n",
 		},
 		{
 			name: "html and inline attachment",
-			build: func() *email.Email {
+			build: func() *email.Message {
 				return withAttachment(newFixedEmail("", htmlBody), inlineFile, true)
 			},
 			want: "Content-Type: multipart/related;\r\n boundary=BOUNDARY1\r\nDate: Mon, 01 Jan 2024 12:00:00 +0000\r\nFrom: sender@example.test\r\nMessage-Id: <fixed@example.test>\r\nMime-Version: 1.0\r\nSubject: subject\r\nTo: rcpt@example.test\r\n\r\n--BOUNDARY1\r\nContent-Transfer-Encoding: quoted-printable\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n<p>html body</p>\r\n--BOUNDARY1\r\nContent-Disposition: inline;\r\n filename=\"logo.png\"\r\nContent-Id: <logo.png>\r\nContent-Transfer-Encoding: base64\r\nContent-Type: text/plain\r\n\r\nZGF0YSBvZiBsb2dvLnBuZw==\r\n\r\n--BOUNDARY1--\r\n",
 		},
 		{
 			name: "text, html and attachment",
-			build: func() *email.Email {
+			build: func() *email.Message {
 				return withAttachment(newFixedEmail(textBody, htmlBody), attachedFile, false)
 			},
 			want: "Content-Type: multipart/mixed;\r\n boundary=BOUNDARY1\r\nDate: Mon, 01 Jan 2024 12:00:00 +0000\r\nFrom: sender@example.test\r\nMessage-Id: <fixed@example.test>\r\nMime-Version: 1.0\r\nSubject: subject\r\nTo: rcpt@example.test\r\n\r\n--BOUNDARY1\r\nContent-Type: multipart/alternative;\r\n boundary=BOUNDARY2\r\n\r\n--BOUNDARY2\r\nContent-Transfer-Encoding: quoted-printable\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nplain text body\r\n--BOUNDARY2\r\nContent-Transfer-Encoding: quoted-printable\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n<p>html body</p>\r\n--BOUNDARY2--\r\n\r\n--BOUNDARY1\r\nContent-Disposition: attachment;\r\n filename=\"a.txt\"\r\nContent-Id: <a.txt>\r\nContent-Transfer-Encoding: base64\r\nContent-Type: text/plain\r\n\r\nZGF0YSBvZiBhLnR4dA==\r\n\r\n--BOUNDARY1--\r\n",
 		},
 		{
 			name: "html, inline attachment and attachment",
-			build: func() *email.Email {
+			build: func() *email.Message {
 				e := withAttachment(newFixedEmail("", htmlBody), inlineFile, true)
 				return withAttachment(e, attachedFile, false)
 			},
@@ -132,14 +132,14 @@ func TestBytesLayouts(t *testing.T) {
 		},
 		{
 			name: "text, html and inline attachment",
-			build: func() *email.Email {
+			build: func() *email.Message {
 				return withAttachment(newFixedEmail(textBody, htmlBody), inlineFile, true)
 			},
 			want: "Content-Type: multipart/alternative;\r\n boundary=BOUNDARY1\r\nDate: Mon, 01 Jan 2024 12:00:00 +0000\r\nFrom: sender@example.test\r\nMessage-Id: <fixed@example.test>\r\nMime-Version: 1.0\r\nSubject: subject\r\nTo: rcpt@example.test\r\n\r\n--BOUNDARY1\r\nContent-Transfer-Encoding: quoted-printable\r\nContent-Type: text/plain; charset=UTF-8\r\n\r\nplain text body\r\n--BOUNDARY1\r\nContent-Type: multipart/related;\r\n boundary=BOUNDARY2\r\n\r\n\r\n--BOUNDARY1\r\nContent-Transfer-Encoding: quoted-printable\r\nContent-Type: text/html; charset=UTF-8\r\n\r\n<p>html body</p>\r\n--BOUNDARY1\r\nContent-Disposition: inline;\r\n filename=\"logo.png\"\r\nContent-Id: <logo.png>\r\nContent-Transfer-Encoding: base64\r\nContent-Type: text/plain\r\n\r\nZGF0YSBvZiBsb2dvLnBuZw==\r\n\r\n--BOUNDARY1--\r\n\r\n--BOUNDARY1--\r\n",
 		},
 		{
 			name: "text, html, inline attachment and attachment",
-			build: func() *email.Email {
+			build: func() *email.Message {
 				e := withAttachment(newFixedEmail(textBody, htmlBody), inlineFile, true)
 				return withAttachment(e, attachedFile, false)
 			},
@@ -147,7 +147,7 @@ func TestBytesLayouts(t *testing.T) {
 		},
 		{
 			name: "attachment only",
-			build: func() *email.Email {
+			build: func() *email.Message {
 				return withAttachment(newFixedEmail("", ""), attachedFile, false)
 			},
 			want: "Content-Type: multipart/mixed;\r\n boundary=BOUNDARY1\r\nDate: Mon, 01 Jan 2024 12:00:00 +0000\r\nFrom: sender@example.test\r\nMessage-Id: <fixed@example.test>\r\nMime-Version: 1.0\r\nSubject: subject\r\nTo: rcpt@example.test\r\n\r\n--BOUNDARY1\r\nContent-Disposition: attachment;\r\n filename=\"a.txt\"\r\nContent-Id: <a.txt>\r\nContent-Transfer-Encoding: base64\r\nContent-Type: text/plain\r\n\r\nZGF0YSBvZiBhLnR4dA==\r\n\r\n--BOUNDARY1--\r\n",
@@ -179,25 +179,25 @@ func TestBytesRejectsInlineAttachmentWithoutHTMLBody(t *testing.T) {
 func TestNewFromReaderParsesBytesOutput(t *testing.T) {
 	tests := []struct {
 		name            string
-		build           func() *email.Email
+		build           func() *email.Message
 		wantText        string
 		wantHTML        string
 		wantAttachments []string
 	}{
 		{
 			name:     "text only",
-			build:    func() *email.Email { return newFixedEmail(textBody, "") },
+			build:    func() *email.Message { return newFixedEmail(textBody, "") },
 			wantText: textBody,
 		},
 		{
 			name:     "text and html",
-			build:    func() *email.Email { return newFixedEmail(textBody, htmlBody) },
+			build:    func() *email.Message { return newFixedEmail(textBody, htmlBody) },
 			wantText: textBody,
 			wantHTML: htmlBody,
 		},
 		{
 			name: "text and attachment",
-			build: func() *email.Email {
+			build: func() *email.Message {
 				return withAttachment(newFixedEmail(textBody, ""), attachedFile, false)
 			},
 			wantText:        textBody,
@@ -205,7 +205,7 @@ func TestNewFromReaderParsesBytesOutput(t *testing.T) {
 		},
 		{
 			name: "text, html and attachment",
-			build: func() *email.Email {
+			build: func() *email.Message {
 				return withAttachment(newFixedEmail(textBody, htmlBody), attachedFile, false)
 			},
 			wantText:        textBody,

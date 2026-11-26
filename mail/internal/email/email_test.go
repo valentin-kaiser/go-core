@@ -200,19 +200,19 @@ func TestEmail_Bytes_WithAttachments(t *testing.T) {
 func TestEmail_Send_ValidationErrors(t *testing.T) {
 	tests := []struct {
 		name  string
-		email *email.Email
+		email *email.Message
 	}{
 		{
 			name:  "empty from",
-			email: &email.Email{To: []string{"test@example.com"}},
+			email: &email.Message{To: []string{"test@example.com"}},
 		},
 		{
 			name:  "empty to",
-			email: &email.Email{From: "sender@example.com"},
+			email: &email.Message{From: "sender@example.com"},
 		},
 		{
 			name:  "invalid to address",
-			email: &email.Email{From: "sender@example.com", To: []string{"invalid-email"}},
+			email: &email.Message{From: "sender@example.com", To: []string{"invalid-email"}},
 		},
 	}
 
@@ -227,7 +227,7 @@ func TestEmail_Send_ValidationErrors(t *testing.T) {
 }
 
 func TestEmail_SendWithTLS_ValidationErrors(t *testing.T) {
-	e := &email.Email{}
+	e := &email.Message{}
 	err := e.SendWithTLS("localhost:587", nil, &tls.Config{}, "")
 	if err == nil {
 		t.Fatal("Expected error for empty email")
@@ -235,7 +235,7 @@ func TestEmail_SendWithTLS_ValidationErrors(t *testing.T) {
 }
 
 func TestEmail_SendWithStartTLS_ValidationErrors(t *testing.T) {
-	e := &email.Email{}
+	e := &email.Message{}
 	err := e.SendWithStartTLS("localhost:587", nil, &tls.Config{}, "")
 	if err == nil {
 		t.Fatal("Expected error for empty email")

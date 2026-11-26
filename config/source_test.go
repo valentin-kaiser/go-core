@@ -43,7 +43,7 @@ func (m *mockSource) Load(_ context.Context) (map[string]any, error) {
 	return out, nil
 }
 
-func (m *mockSource) Save(_ context.Context, _ config.Config) error {
+func (m *mockSource) Save(_ context.Context, _ config.Schema) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.readOnly {
@@ -197,8 +197,8 @@ func TestStartWatchTriggersReload(t *testing.T) {
 		t.Fatalf("Read: %v", err)
 	}
 
-	changed := make(chan config.Config, 1)
-	config.OnChange(func(_, n config.Config) error {
+	changed := make(chan config.Schema, 1)
+	config.OnChange(func(_, n config.Schema) error {
 		select {
 		case changed <- n:
 		default:

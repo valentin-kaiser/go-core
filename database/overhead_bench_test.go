@@ -12,7 +12,7 @@ import (
 // (RLock, connected check, recover defer, reflective query-set construction).
 // The raw baseline is a direct call of the same constructor.
 
-func overheadDB(b *testing.B) *database.Database[TestQueries] {
+func overheadDB(b *testing.B) *database.Connection[TestQueries] {
 	b.Helper()
 	db := database.New[TestQueries](database.DriverSQLite, "overhead")
 	db.RegisterQueries(NewTestQueries)
@@ -83,7 +83,7 @@ func BenchmarkOverheadQueryTransactionNoop(b *testing.B) {
 	}
 }
 
-func typedOverheadDB(b *testing.B) *database.Database[TestQueries] {
+func typedOverheadDB(b *testing.B) *database.Connection[TestQueries] {
 	b.Helper()
 	db := database.New[TestQueries](database.DriverSQLite, "overhead-typed")
 	db.RegisterQueriesFunc(func(c database.DBTX) *TestQueries { return NewTestQueries(c) })

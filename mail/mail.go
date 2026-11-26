@@ -36,10 +36,10 @@
 //		config.Client.Encryption = "STARTTLS"
 //
 //		// Create queue manager
-//		queueManager := queue.NewManager()
+//		queueManager := queue.NewScheduler()
 //
 //		// Create mail manager
-//		mailManager := mail.NewManager(config, queueManager)
+//		mailManager := mail.NewMailer(config, queueManager)
 //
 //		// Start the manager
 //		ctx := context.Background()
@@ -85,7 +85,7 @@
 //	config.Server.Username = "admin"
 //	config.Server.Password = "password"
 //
-//	mailManager := mail.NewManager(config, nil)
+//	mailManager := mail.NewMailer(config, nil)
 //
 //	// Add notification handler
 //	mailManager.AddNotificationHandler(func(ctx context.Context, from string, to []string, data []byte) error {
@@ -165,13 +165,13 @@ type Stats struct {
 	LastReceived *time.Time `json:"last_received,omitempty"`
 }
 
-// Manager manages email sending and SMTP server functionality
-type Manager struct {
+// Mailer manages email sending and SMTP server functionality
+type Mailer struct {
 	config          *Config
 	sender          Sender
 	server          Server
-	TemplateManager *TemplateManager
-	queueManager    *queue.Manager
+	Templates *Templates
+	queueManager    *queue.Scheduler
 	stats           *Stats
 	statsMutex      sync.RWMutex
 	running         atomic.Int32
@@ -180,7 +180,7 @@ type Manager struct {
 	wg              sync.WaitGroup
 }
 
-// NewManager creates a new mail manager with the specified configuration and queue manager.
+// NewMailer creates a new mail manager with the specified configuration and queue manager.
 // The mail manager handles email sending operations, template processing, and integrates
 // with a queue system for asynchronous email delivery. It sets up SMTP senders,
 // template managers, and provides features like retry logic, delivery tracking, and statistics.
@@ -195,12 +195,12 @@ type Manager struct {
 //			Password: "your-password",
 //		},
 //	}
-//	queueMgr := queue.NewManager()
-//	mailMgr := mail.NewManager(config, queueMgr)
-func NewManager(config *Config, queueManager *queue.Manager) *Manager {
+//	queueMgr := queue.NewMailer()
+//	mailMgr := mail.NewMailer(config, queueMgr)
+func NewMailer(config *Config, queueManager *queue.Scheduler) *Mailer {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	manager := &Manager{
+	manager := &Mailer{
 		config:       config,
 		queueManager: queueManager,
 		stats:        &Stats{},
@@ -208,8 +208,8 @@ func NewManager(config *Config, queueManager *queue.Manager) *Manager {
 		cancel:       cancel,
 	}
 
-	manager.TemplateManager = NewTemplateManager(config.Templates)
-	manager.sender = NewSMTPSender(config.Client, manager.TemplateManager)
+	manager.Templates = NewTemplates(config.Templates)
+	manager.sender = NewSMTPSender(config.Client, manager.Templates)
 
 	if config.Server.Enabled {
 		manager.server = NewSMTPServer(config.Server, manager)
@@ -219,7 +219,7 @@ func NewManager(config *Config, queueManager *queue.Manager) *Manager {
 }
 
 // Start starts the mail manager
-func (m *Manager) Start() error {
+func (m *Mailer) Start() error {
 	if !m.running.CompareAndSwap(0, 1) {
 		return apperror.NewError("mail manager is already running")
 	}
@@ -247,7 +247,7 @@ func (m *Manager) Start() error {
 }
 
 // Stop stops the mail manager
-func (m *Manager) Stop(ctx context.Context) error {
+func (m *Mailer) Stop(ctx context.Context) error {
 	if !m.running.CompareAndSwap(1, 0) {
 		return apperror.NewError("mail manager is not running")
 	}
@@ -283,7 +283,7 @@ func (m *Manager) Stop(ctx context.Context) error {
 }
 
 // Send sends an email message synchronously
-func (m *Manager) Send(ctx context.Context, message *Message) error {
+func (m *Mailer) Send(ctx context.Context, message *Message) error {
 	if !m.IsRunning() {
 		return apperror.NewError("mail manager is not running")
 	}
@@ -317,7 +317,7 @@ func (m *Manager) Send(ctx context.Context, message *Message) error {
 }
 
 // SendAsync sends an email message asynchronously using the queue
-func (m *Manager) SendAsync(ctx context.Context, message *Message) error {
+func (m *Mailer) SendAsync(ctx context.Context, message *Message) error {
 	if !m.IsRunning() {
 		return apperror.NewError("mail manager is not running")
 	}
@@ -383,7 +383,7 @@ func (m *Manager) SendAsync(ctx context.Context, message *Message) error {
 }
 
 // AddNotificationHandler adds a notification handler to the SMTP server
-func (m *Manager) AddNotificationHandler(handler NotificationHandler) error {
+func (m *Mailer) AddNotificationHandler(handler NotificationHandler) error {
 	if m.server == nil {
 		return apperror.NewError("smtp server is not configured")
 	}
@@ -393,7 +393,7 @@ func (m *Manager) AddNotificationHandler(handler NotificationHandler) error {
 }
 
 // GetStats returns the current mail statistics
-func (m *Manager) GetStats() *Stats {
+func (m *Mailer) GetStats() *Stats {
 	m.statsMutex.RLock()
 	defer m.statsMutex.RUnlock()
 
@@ -419,12 +419,12 @@ func (m *Manager) GetStats() *Stats {
 }
 
 // IsRunning returns true if the mail manager is running
-func (m *Manager) IsRunning() bool {
+func (m *Mailer) IsRunning() bool {
 	return m.running.Load() == 1
 }
 
 // SendTestEmail sends a test email
-func (m *Manager) SendTestEmail(ctx context.Context, to string) error {
+func (m *Mailer) SendTestEmail(ctx context.Context, to string) error {
 	testMessage := &Message{
 		From:     m.config.Client.From,
 		To:       []string{to},
@@ -437,13 +437,13 @@ func (m *Manager) SendTestEmail(ctx context.Context, to string) error {
 }
 
 // NotifyMessageReceived notifies that a message was received by the SMTP server
-func (m *Manager) NotifyMessageReceived() {
+func (m *Mailer) NotifyMessageReceived() {
 	m.incrementReceivedCount()
 	m.updateLastReceived()
 }
 
 // handleMailJob handles queued mail jobs
-func (m *Manager) handleMailJob(ctx context.Context, job *queue.Job) error {
+func (m *Mailer) handleMailJob(ctx context.Context, job *queue.Job) error {
 	logger.Debug().Field("job_id", job.ID).Msg("processing mail job")
 
 	var jobData map[string]any
@@ -478,28 +478,28 @@ func (m *Manager) handleMailJob(ctx context.Context, job *queue.Job) error {
 }
 
 // incrementSentCount increments the sent count
-func (m *Manager) incrementSentCount() {
+func (m *Mailer) incrementSentCount() {
 	m.statsMutex.Lock()
 	defer m.statsMutex.Unlock()
 	m.stats.SentCount++
 }
 
 // incrementFailedCount increments the failed count
-func (m *Manager) incrementFailedCount() {
+func (m *Mailer) incrementFailedCount() {
 	m.statsMutex.Lock()
 	defer m.statsMutex.Unlock()
 	m.stats.FailedCount++
 }
 
 // incrementQueuedCount increments the queued count
-func (m *Manager) incrementQueuedCount() {
+func (m *Mailer) incrementQueuedCount() {
 	m.statsMutex.Lock()
 	defer m.statsMutex.Unlock()
 	m.stats.QueuedCount++
 }
 
 // decrementQueuedCount decrements the queued count
-func (m *Manager) decrementQueuedCount() {
+func (m *Mailer) decrementQueuedCount() {
 	m.statsMutex.Lock()
 	defer m.statsMutex.Unlock()
 	if m.stats.QueuedCount > 0 {
@@ -508,14 +508,14 @@ func (m *Manager) decrementQueuedCount() {
 }
 
 // incrementReceivedCount increments the received count
-func (m *Manager) incrementReceivedCount() {
+func (m *Mailer) incrementReceivedCount() {
 	m.statsMutex.Lock()
 	defer m.statsMutex.Unlock()
 	m.stats.ReceivedCount++
 }
 
 // updateLastSent updates the last sent timestamp
-func (m *Manager) updateLastSent() {
+func (m *Mailer) updateLastSent() {
 	m.statsMutex.Lock()
 	defer m.statsMutex.Unlock()
 	now := time.Now()
@@ -523,7 +523,7 @@ func (m *Manager) updateLastSent() {
 }
 
 // updateLastReceived updates the last received timestamp
-func (m *Manager) updateLastReceived() {
+func (m *Mailer) updateLastReceived() {
 	m.statsMutex.Lock()
 	defer m.statsMutex.Unlock()
 	now := time.Now()
@@ -531,7 +531,7 @@ func (m *Manager) updateLastReceived() {
 }
 
 // jobDataToMessage converts job data back to a Message
-func (m *Manager) jobDataToMessage(jobData map[string]any) (*Message, error) {
+func (m *Mailer) jobDataToMessage(jobData map[string]any) (*Message, error) {
 	message := &Message{}
 
 	id, ok := jobData[jobKeyID].(string)

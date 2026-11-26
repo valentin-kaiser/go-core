@@ -21,7 +21,7 @@ const (
 )
 
 // fillDumpTable creates a table of 20000 rows with text, a binary value and a timestamp
-func fillDumpTable(b *testing.B, db *database.Database[TestQueries], create string, placeholder func(int) string) {
+func fillDumpTable(b *testing.B, db *database.Connection[TestQueries], create string, placeholder func(int) string) {
 	b.Helper()
 	err := db.Execute(func(c *sql.DB) error {
 		for _, s := range []string{dropBenchTable, create} {
@@ -62,7 +62,7 @@ func fillDumpTable(b *testing.B, db *database.Database[TestQueries], create stri
 	})
 }
 
-func benchBackupRestore(b *testing.B, db *database.Database[TestQueries], schema string) {
+func benchBackupRestore(b *testing.B, db *database.Connection[TestQueries], schema string) {
 	b.Helper()
 	path := filepath.Join(b.TempDir(), "dump.sql")
 

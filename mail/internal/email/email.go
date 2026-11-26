@@ -153,8 +153,8 @@ func (tr *trimReader) Read(buf []byte) (int, error) {
 	return n, nil
 }
 
-// Email is the type used for email messages
-type Email struct {
+// Message is the type used for email messages
+type Message struct {
 	ReplyTo     []string
 	From        string
 	To          []string
@@ -170,14 +170,14 @@ type Email struct {
 }
 
 // New creates an Email, and returns the pointer to it.
-func New() *Email {
-	return &Email{Headers: textproto.MIMEHeader{}}
+func New() *Message {
+	return &Message{Headers: textproto.MIMEHeader{}}
 }
 
 // NewFromReader reads a stream of bytes from an io.Reader, r,
 // and returns an email struct containing the parsed data.
 // This function expects the data in RFC 5322 format.
-func NewFromReader(r io.Reader) (*Email, error) {
+func NewFromReader(r io.Reader) (*Message, error) {
 	msg := New()
 	tp := textproto.NewReader(bufio.NewReader(&trimReader{rd: r}))
 
@@ -234,7 +234,7 @@ func NewFromReader(r io.Reader) (*Email, error) {
 }
 
 // Attach is used to attach content from an io.Reader to the email.
-func (e *Email) Attach(r io.Reader, filename string, contentType string) (*Attachment, error) {
+func (e *Message) Attach(r io.Reader, filename string, contentType string) (*Attachment, error) {
 	var buffer bytes.Buffer
 	_, err := io.Copy(&buffer, r)
 	if err != nil {
@@ -252,7 +252,7 @@ func (e *Email) Attach(r io.Reader, filename string, contentType string) (*Attac
 
 // AttachFile is used to attach content to the email.
 // It attempts to open the file referenced by filename and, if successful, creates an Attachment.
-func (e *Email) AttachFile(filename string) (*Attachment, error) {
+func (e *Message) AttachFile(filename string) (*Attachment, error) {
 	f, err := os.Open(filepath.Clean(filename))
 	if err != nil {
 		return nil, apperror.NewError("opening attachment file failed").AddError(err)
@@ -269,7 +269,7 @@ func (e *Email) AttachFile(filename string) (*Attachment, error) {
 }
 
 // Bytes converts the Email object to a []byte representation, including all needed MIMEHeaders, boundaries, etc.
-func (e *Email) Bytes() ([]byte, error) {
+func (e *Message) Bytes() ([]byte, error) {
 	bufferSize := e.estimateSize()
 	buf := bytes.NewBuffer(make([]byte, 0, bufferSize))
 
@@ -327,7 +327,7 @@ func (e *Email) Bytes() ([]byte, error) {
 
 // Send an email using the given host and SMTP auth (optional), returns any error thrown by smtp.SendMail
 // This function merges the To, Cc, and Bcc fields and calls the smtp.SendMail function using the Email.Bytes() output as the message
-func (e *Email) Send(address string, auth smtp.Auth, helo string) error {
+func (e *Message) Send(address string, auth smtp.Auth, helo string) error {
 	to := make([]string, 0, len(e.To)+len(e.Cc)+len(e.Bcc))
 	to = append(append(append(to, e.To...), e.Cc...), e.Bcc...)
 	for i := 0; i < len(to); i++ {
@@ -410,7 +410,7 @@ func (e *Email) Send(address string, auth smtp.Auth, helo string) error {
 }
 
 // SendWithTLS sends an email over tls with an optional TLS config.
-func (e *Email) SendWithTLS(address string, auth smtp.Auth, config *tls.Config, helo string) error {
+func (e *Message) SendWithTLS(address string, auth smtp.Auth, config *tls.Config, helo string) error {
 	to := make([]string, 0, len(e.To)+len(e.Cc)+len(e.Bcc))
 	to = append(append(append(to, e.To...), e.Cc...), e.Bcc...)
 	for i := 0; i < len(to); i++ {
@@ -497,7 +497,7 @@ func (e *Email) SendWithTLS(address string, auth smtp.Auth, config *tls.Config, 
 }
 
 // SendWithStartTLS sends an email over TLS using STARTTLS with an optional TLS config.
-func (e *Email) SendWithStartTLS(address string, auth smtp.Auth, config *tls.Config, helo string) error {
+func (e *Message) SendWithStartTLS(address string, auth smtp.Auth, config *tls.Config, helo string) error {
 	to := make([]string, 0, len(e.To)+len(e.Cc)+len(e.Bcc))
 	to = append(append(append(to, e.To...), e.Cc...), e.Bcc...)
 	for i := 0; i < len(to); i++ {
@@ -572,7 +572,7 @@ func (e *Email) SendWithStartTLS(address string, auth smtp.Auth, config *tls.Con
 }
 
 // addPart attaches the part when its Content-Disposition marks it as an attachment and uses it as text or HTML body otherwise.
-func (e *Email) addPart(p *part) error {
+func (e *Message) addPart(p *part) error {
 	contentType := p.header.Get(headerContentType)
 	if contentType == "" {
 		return apperror.NewError("no Content-Type found for MIME entity")
@@ -598,7 +598,7 @@ func (e *Email) addPart(p *part) error {
 }
 
 // attachPart attaches the part if it is an attachment or an inline part with a file name and reports whether it did.
-func (e *Email) attachPart(p *part, contentType string) (bool, error) {
+func (e *Message) attachPart(p *part, contentType string) (bool, error) {
 	if p.header.Get(headerContentDisposition) == "" {
 		return false, nil
 	}
@@ -620,7 +620,7 @@ func (e *Email) attachPart(p *part, contentType string) (bool, error) {
 }
 
 // setContentHeaders sets the content type of the message, w provides the boundary of a multipart message.
-func (e *Email) setContentHeaders(headers textproto.MIMEHeader, layout multipartLayout, w *multipart.Writer) {
+func (e *Message) setContentHeaders(headers textproto.MIMEHeader, layout multipartLayout, w *multipart.Writer) {
 	switch {
 	case layout.mixed:
 		headers.Set(headerContentType, multipartMixedBoundary+w.Boundary())
@@ -638,7 +638,7 @@ func (e *Email) setContentHeaders(headers textproto.MIMEHeader, layout multipart
 }
 
 // writeBody writes the text and HTML parts, w is the outermost multipart writer of the message.
-func (e *Email) writeBody(buf io.Writer, w *multipart.Writer, layout multipartLayout, htmlAttachments []*Attachment) error {
+func (e *Message) writeBody(buf io.Writer, w *multipart.Writer, layout multipartLayout, htmlAttachments []*Attachment) error {
 	subWriter := w
 	if layout.mixed && layout.alternative {
 		subWriter = multipart.NewWriter(buf)
@@ -676,7 +676,7 @@ func (e *Email) writeBody(buf io.Writer, w *multipart.Writer, layout multipartLa
 
 // writeHTMLPart writes the HTML body followed by its inline attachments, w is the outermost multipart writer
 // and subWriter the one the HTML part belongs to.
-func (e *Email) writeHTMLPart(buf io.Writer, w, subWriter *multipart.Writer, layout multipartLayout, htmlAttachments []*Attachment) error {
+func (e *Message) writeHTMLPart(buf io.Writer, w, subWriter *multipart.Writer, layout multipartLayout, htmlAttachments []*Attachment) error {
 	messageWriter := subWriter
 	var relatedWriter *multipart.Writer
 	if (layout.mixed || layout.alternative) && len(htmlAttachments) > 0 {
@@ -724,7 +724,7 @@ func (e *Email) writeHTMLPart(buf io.Writer, w, subWriter *multipart.Writer, lay
 //
 // "e"'s fields To, Cc, From, Subject will be used unless they are present in
 // e.Headers. Unless set in e.Headers, "Date" will filled with the current time.
-func (e *Email) msgHeaders() (textproto.MIMEHeader, error) {
+func (e *Message) msgHeaders() (textproto.MIMEHeader, error) {
 	res := make(textproto.MIMEHeader, len(e.Headers)+6)
 	if e.Headers != nil {
 		for _, h := range []string{headerReplyTo, headerTo, headerCc, headerFrom, headerSubject, headerDate, headerMessageID, headerMIMEVersion} {
@@ -769,7 +769,7 @@ func (e *Email) msgHeaders() (textproto.MIMEHeader, error) {
 	return res, nil
 }
 
-func (e *Email) categorizeAttachments() (html []*Attachment, other []*Attachment) {
+func (e *Message) categorizeAttachments() (html []*Attachment, other []*Attachment) {
 	for _, a := range e.Attachments {
 		if a.HTMLRelated {
 			html = append(html, a)
@@ -781,7 +781,7 @@ func (e *Email) categorizeAttachments() (html []*Attachment, other []*Attachment
 }
 
 // Select and parse an SMTP envelope sender address.  Choose Email.Sender if set, or fallback to Email.From.
-func (e *Email) parseSender() (string, error) {
+func (e *Message) parseSender() (string, error) {
 	if e.Sender != "" {
 		sender, err := mail.ParseAddress(e.Sender)
 		if err != nil {
@@ -802,7 +802,7 @@ func (e *Email) parseSender() (string, error) {
 }
 
 // estimateSize estimates the buffer size needed for the email serialization
-func (e *Email) estimateSize() int {
+func (e *Message) estimateSize() int {
 	const (
 		headerOverhead = 1024 // Estimated overhead for headers and MIME boundaries
 		base64Overhead = 1.34 // Base64 encoding increases size by ~33%

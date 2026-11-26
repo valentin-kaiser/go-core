@@ -42,7 +42,7 @@ type Source interface {
 
 	// Save persists the given configuration. Implementations that are
 	// read-only must return ErrReadOnly.
-	Save(ctx context.Context, c Config) error
+	Save(ctx context.Context, c Schema) error
 
 	// Watch subscribes to changes in the source. The callback is invoked with
 	// the freshly loaded values on every change. The returned cancel function

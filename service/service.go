@@ -141,20 +141,20 @@ var (
 // It includes service name, display name, description, dependencies, and platform-specific settings.
 type Config = service.Config
 
-// Service wraps the kardianos/service.Service interface and provides additional
+// Runner wraps the kardianos/service.Runner interface and provides additional
 // functionality for managing application lifecycle with custom start and stop handlers.
 // It includes error handling and graceful shutdown capabilities.
-type Service struct {
+type Runner struct {
 	service.Service
 
 	err   chan error
-	start func(s *Service) error
-	stop  func(s *Service) error
+	start func(s *Runner) error
+	stop  func(s *Runner) error
 }
 
 // Start implements the service.Interface Start method and executes the custom start handler.
 // It is called by the service manager when the service should start.
-func (s *Service) Start(svc service.Service) error {
+func (s *Runner) Start(svc service.Service) error {
 	s.Service = svc
 	if s.start == nil {
 		return apperror.NewError("service start function is not defined")
@@ -167,7 +167,7 @@ func (s *Service) Start(svc service.Service) error {
 
 // Stop implements the service.Interface Stop method and executes the custom stop handler.
 // It is called by the service manager when the service should stop gracefully.
-func (s *Service) Stop(svc service.Service) error {
+func (s *Runner) Stop(svc service.Service) error {
 	s.Service = svc
 	if s.stop == nil {
 		return apperror.NewError("service stop function is not defined")
@@ -181,8 +181,8 @@ func (s *Service) Stop(svc service.Service) error {
 
 // Run starts a service with the provided configuration and start/stop functions.
 // It handles signal management and graceful shutdown.
-func Run(config *Config, start func(s *Service) error, stop func(s *Service) error) error {
-	s := &Service{
+func Run(config *Config, start func(s *Runner) error, stop func(s *Runner) error) error {
+	s := &Runner{
 		err:   make(chan error, 1),
 		start: start,
 		stop:  stop,

@@ -53,8 +53,8 @@ type authTracker struct {
 	blockedTime time.Time
 }
 
-// SecurityManager handles security validations and tracking for both SMTP client and server
-type SecurityManager struct {
+// Policy handles security validations and tracking for both SMTP client and server
+type Policy struct {
 	config        SecurityConfig
 	ipConnections map[string]int
 	ipRateLimit   map[string]struct {
@@ -68,9 +68,9 @@ type SecurityManager struct {
 	mutex           sync.RWMutex
 }
 
-// NewSecurityManager creates a new security manager
-func NewSecurityManager(config SecurityConfig) *SecurityManager {
-	sm := &SecurityManager{
+// NewPolicy creates a new security manager
+func NewPolicy(config SecurityConfig) *Policy {
+	sm := &Policy{
 		config:        config,
 		ipConnections: make(map[string]int),
 		ipRateLimit: make(map[string]struct {
@@ -91,7 +91,7 @@ func NewSecurityManager(config SecurityConfig) *SecurityManager {
 }
 
 // ValidateConnection checks if a connection from the given IP is allowed
-func (sm *SecurityManager) ValidateConnection(remoteAddr string) error {
+func (sm *Policy) ValidateConnection(remoteAddr string) error {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
 		host = remoteAddr
@@ -159,7 +159,7 @@ func (sm *SecurityManager) ValidateConnection(remoteAddr string) error {
 }
 
 // ValidateHelo validates HELO/EHLO hostname
-func (sm *SecurityManager) ValidateHelo(hostname, remoteAddr string) error {
+func (sm *Policy) ValidateHelo(hostname, remoteAddr string) error {
 	if !sm.config.HeloValidation {
 		return nil
 	}
@@ -205,7 +205,7 @@ func (sm *SecurityManager) ValidateHelo(hostname, remoteAddr string) error {
 }
 
 // CheckRateLimit checks if the IP has exceeded rate limits
-func (sm *SecurityManager) CheckRateLimit(remoteAddr string) error {
+func (sm *Policy) CheckRateLimit(remoteAddr string) error {
 	if sm.config.RateLimitPerIP <= 0 {
 		return nil
 	}
@@ -243,7 +243,7 @@ func (sm *SecurityManager) CheckRateLimit(remoteAddr string) error {
 }
 
 // RecordAuthFailure records an authentication failure
-func (sm *SecurityManager) RecordAuthFailure(remoteAddr string) {
+func (sm *Policy) RecordAuthFailure(remoteAddr string) {
 	if sm.config.MaxAuthFailures <= 0 {
 		return
 	}
@@ -285,7 +285,7 @@ func (sm *SecurityManager) RecordAuthFailure(remoteAddr string) {
 }
 
 // RecordAuthSuccess records a successful authentication
-func (sm *SecurityManager) RecordAuthSuccess(remoteAddr string) {
+func (sm *Policy) RecordAuthSuccess(remoteAddr string) {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
 		host = remoteAddr
@@ -301,7 +301,7 @@ func (sm *SecurityManager) RecordAuthSuccess(remoteAddr string) {
 }
 
 // CloseConnection decrements the connection count for an IP
-func (sm *SecurityManager) CloseConnection(remoteAddr string) {
+func (sm *Policy) CloseConnection(remoteAddr string) {
 	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
 		host = remoteAddr
@@ -323,12 +323,12 @@ func (sm *SecurityManager) CloseConnection(remoteAddr string) {
 }
 
 // GetAuthFailureDelay returns the delay to apply after auth failure
-func (sm *SecurityManager) GetAuthFailureDelay() time.Duration {
+func (sm *Policy) GetAuthFailureDelay() time.Duration {
 	return sm.config.AuthFailureDelay
 }
 
 // isIPAllowed checks if IP is in allowlist
-func (sm *SecurityManager) isIPAllowed(ip net.IP) bool {
+func (sm *Policy) isIPAllowed(ip net.IP) bool {
 	for _, network := range sm.allowedNetworks {
 		if network.Contains(ip) {
 			return true
@@ -338,7 +338,7 @@ func (sm *SecurityManager) isIPAllowed(ip net.IP) bool {
 }
 
 // isIPBlocked checks if IP is in blocklist
-func (sm *SecurityManager) isIPBlocked(ip net.IP) bool {
+func (sm *Policy) isIPBlocked(ip net.IP) bool {
 	for _, network := range sm.blockedNetworks {
 		if network.Contains(ip) {
 			return true
@@ -348,7 +348,7 @@ func (sm *SecurityManager) isIPBlocked(ip net.IP) bool {
 }
 
 // isValidFQDN validates if hostname is a proper FQDN
-func (sm *SecurityManager) isValidFQDN(hostname string) bool {
+func (sm *Policy) isValidFQDN(hostname string) bool {
 	if len(hostname) == 0 || len(hostname) > maxFQDNLength {
 		return false
 	}
@@ -365,7 +365,7 @@ func (sm *SecurityManager) isValidFQDN(hostname string) bool {
 }
 
 // cleanup periodically cleans up old entries
-func (sm *SecurityManager) cleanup() {
+func (sm *Policy) cleanup() {
 	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 

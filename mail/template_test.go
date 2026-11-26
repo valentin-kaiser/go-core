@@ -16,9 +16,9 @@ func TestTemplateManager_Comprehensive(t *testing.T) {
 		AutoReload:      true,
 	}
 
-	tm := mail.NewTemplateManager(config)
+	tm := mail.NewTemplates(config)
 	if tm == nil {
-		t.Fatal("Expected TemplateManager to be created")
+		t.Fatal("Expected Templates to be created")
 	}
 }
 
@@ -27,7 +27,7 @@ func TestTemplateManager_WithTemplateFunc(t *testing.T) {
 		DefaultTemplate: "test.html",
 	}
 
-	tm := mail.NewTemplateManager(config)
+	tm := mail.NewTemplates(config)
 
 	// Test adding custom template function
 	result := tm.WithTemplateFunc("uppercase", func(s string) string {
@@ -53,7 +53,7 @@ func TestTemplateManager_WithDefaultFuncs(t *testing.T) {
 		DefaultTemplate: "test.html",
 	}
 
-	tm := mail.NewTemplateManager(config)
+	tm := mail.NewTemplates(config)
 	result := tm.WithDefaultFuncs()
 
 	if result != tm {
@@ -69,7 +69,7 @@ func TestTemplateManager_LoadTemplate_NoSource(t *testing.T) {
 		DefaultTemplate: "test.html",
 	}
 
-	tm := mail.NewTemplateManager(config)
+	tm := mail.NewTemplates(config)
 
 	// Should fail when no filesystem or path is configured
 	_, err := tm.LoadTemplate("test.html")
@@ -83,7 +83,7 @@ func TestTemplateManager_RenderTemplate_NoSource(t *testing.T) {
 		DefaultTemplate: "test.html",
 	}
 
-	tm := mail.NewTemplateManager(config)
+	tm := mail.NewTemplates(config)
 
 	// Should fail when no template is loaded
 	_, err := tm.RenderTemplate("test.html", map[string]string{"name": "test"})
@@ -97,7 +97,7 @@ func TestTemplateManager_RenderTemplateContent(t *testing.T) {
 		WithDefaultFuncs: true,
 	}
 
-	tm := mail.NewTemplateManager(config)
+	tm := mail.NewTemplates(config)
 
 	templateContent := "<h1>Hello {{.Name}}</h1><p>Welcome to {{.Company}}!</p>"
 	data := map[string]any{
@@ -118,7 +118,7 @@ func TestTemplateManager_RenderTemplateContent(t *testing.T) {
 
 func TestTemplateManager_RenderTemplateContent_EmptyContent(t *testing.T) {
 	config := mail.TemplateConfig{}
-	tm := mail.NewTemplateManager(config)
+	tm := mail.NewTemplates(config)
 
 	_, err := tm.RenderTemplateContent("", map[string]string{"name": "test"})
 	if err == nil {
@@ -128,7 +128,7 @@ func TestTemplateManager_RenderTemplateContent_EmptyContent(t *testing.T) {
 
 func TestTemplateManager_RenderTemplateContent_WithCustomFuncs(t *testing.T) {
 	config := mail.TemplateConfig{}
-	tm := mail.NewTemplateManager(config)
+	tm := mail.NewTemplates(config)
 
 	templateContent := "<h1>{{uppercase .Name}}</h1>"
 	data := map[string]any{
@@ -155,7 +155,7 @@ func TestTemplateManager_WithFileServer_InvalidPath(t *testing.T) {
 		DefaultTemplate: "test.html",
 	}
 
-	tm := mail.NewTemplateManager(config)
+	tm := mail.NewTemplates(config)
 	result := tm.WithFileServer("/nonexistent/path")
 
 	if result != tm {
@@ -183,7 +183,7 @@ func TestTemplateManager_WithFileServer_ValidPath(t *testing.T) {
 		DefaultTemplate: "test.html",
 	}
 
-	tm := mail.NewTemplateManager(config)
+	tm := mail.NewTemplates(config)
 	result := tm.WithFileServer(tempDir)
 
 	if result != tm {
@@ -234,7 +234,7 @@ func TestTemplateManager_WithFS(t *testing.T) {
 		DefaultTemplate: "test.html",
 	}
 
-	tm := mail.NewTemplateManager(config)
+	tm := mail.NewTemplates(config)
 	result := tm.WithFS(nil) // Test with nil filesystem
 
 	if result != tm {
@@ -262,7 +262,7 @@ func TestTemplateManager_AutoReload(t *testing.T) {
 		AutoReload:      true,
 	}
 
-	tm := mail.NewTemplateManager(config).WithFileServer(tempDir)
+	tm := mail.NewTemplates(config).WithFileServer(tempDir)
 
 	if tm.Error != nil {
 		t.Fatalf("Unexpected error setting up template manager: %v", tm.Error)
@@ -330,7 +330,7 @@ func TestTemplateManager_NestedTemplates(t *testing.T) {
 		DefaultTemplate: "emails/nested.html",
 	}
 
-	tm := mail.NewTemplateManager(config).WithFileServer(tempDir)
+	tm := mail.NewTemplates(config).WithFileServer(tempDir)
 
 	if tm.Error != nil {
 		t.Fatalf("Unexpected error: %v", tm.Error)
@@ -374,7 +374,7 @@ func TestTemplateManager_ErrorHandling(t *testing.T) {
 		DefaultTemplate: "bad.html",
 	}
 
-	tm := mail.NewTemplateManager(config).WithFileServer(tempDir)
+	tm := mail.NewTemplates(config).WithFileServer(tempDir)
 
 	// Should handle template parsing error gracefully
 	_, err = tm.LoadTemplate("bad.html")
@@ -411,7 +411,7 @@ func TestTemplateManager_RenderWithComplexData(t *testing.T) {
 		DefaultTemplate: "complex.html",
 	}
 
-	tm := mail.NewTemplateManager(config).WithFileServer(tempDir)
+	tm := mail.NewTemplates(config).WithFileServer(tempDir)
 
 	if tm.Error != nil {
 		t.Fatalf("Unexpected error: %v", tm.Error)
@@ -462,7 +462,7 @@ func TestTemplateManager_DefaultTemplateFunctions(t *testing.T) {
 	}
 
 	// Create template manager and set up functions first
-	tm := mail.NewTemplateManager(config)
+	tm := mail.NewTemplates(config)
 	tm = tm.WithDefaultFuncs()      // Add functions first
 	tm = tm.WithFileServer(tempDir) // Then load templates
 
@@ -520,7 +520,7 @@ func TestTemplateManager_ChainedConfiguration(t *testing.T) {
 	}
 
 	// Test chained configuration - add custom function first, then default funcs
-	tm := mail.NewTemplateManager(config).
+	tm := mail.NewTemplates(config).
 		WithTemplateFunc("uppercase", func(s string) string {
 			// Simple uppercase implementation
 			return s + "_UPPER"

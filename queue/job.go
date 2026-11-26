@@ -227,32 +227,32 @@ func (jc *JobContext) GetMetadata(key string) (string, bool) {
 	return value, exists
 }
 
-// BatchManager manages job batches
-type BatchManager struct {
-	manager *Manager
+// Batcher manages job batches
+type Batcher struct {
+	manager *Scheduler
 	batches map[string]*Batch
 	mutex   sync.RWMutex
 }
 
-// NewBatchManager creates a new batch manager for handling grouped job operations.
+// NewBatcher creates a new batch manager for handling grouped job operations.
 // Batch managers allow you to group related jobs together and track their collective
 // progress, providing operations like creating batches, monitoring batch completion,
 // and handling batch-level callbacks.
 //
 // Example usage:
 //
-//	batchMgr := queue.NewBatchManager(manager)
+//	batchMgr := queue.NewBatcher(manager)
 //	batch := batchMgr.CreateBatch("user-emails")
 //	// Add jobs to batch...
-func NewBatchManager(manager *Manager) *BatchManager {
-	return &BatchManager{
+func NewBatcher(manager *Scheduler) *Batcher {
+	return &Batcher{
 		manager: manager,
 		batches: make(map[string]*Batch),
 	}
 }
 
 // CreateBatch creates a new batch of jobs
-func (bm *BatchManager) CreateBatch(ctx context.Context, name string, jobs []*Job) (*Batch, error) {
+func (bm *Batcher) CreateBatch(ctx context.Context, name string, jobs []*Job) (*Batch, error) {
 	bm.mutex.Lock()
 	defer bm.mutex.Unlock()
 
@@ -284,7 +284,7 @@ func (bm *BatchManager) CreateBatch(ctx context.Context, name string, jobs []*Jo
 }
 
 // GetBatch retrieves a batch by ID
-func (bm *BatchManager) GetBatch(id string) (*Batch, error) {
+func (bm *Batcher) GetBatch(id string) (*Batch, error) {
 	bm.mutex.RLock()
 	defer bm.mutex.RUnlock()
 
@@ -297,7 +297,7 @@ func (bm *BatchManager) GetBatch(id string) (*Batch, error) {
 }
 
 // UpdateBatchStatus updates the status of a batch based on its jobs
-func (bm *BatchManager) UpdateBatchStatus(ctx context.Context, batchID string) error {
+func (bm *Batcher) UpdateBatchStatus(ctx context.Context, batchID string) error {
 	bm.mutex.Lock()
 	defer bm.mutex.Unlock()
 
@@ -344,7 +344,7 @@ func (bm *BatchManager) UpdateBatchStatus(ctx context.Context, batchID string) e
 }
 
 // GetBatches returns all batches
-func (bm *BatchManager) GetBatches() []*Batch {
+func (bm *Batcher) GetBatches() []*Batch {
 	bm.mutex.RLock()
 	defer bm.mutex.RUnlock()
 
@@ -357,7 +357,7 @@ func (bm *BatchManager) GetBatches() []*Batch {
 }
 
 // DeleteBatch removes a batch
-func (bm *BatchManager) DeleteBatch(ctx context.Context, id string) error {
+func (bm *Batcher) DeleteBatch(ctx context.Context, id string) error {
 	bm.mutex.Lock()
 	defer bm.mutex.Unlock()
 
@@ -379,7 +379,7 @@ func (bm *BatchManager) DeleteBatch(ctx context.Context, id string) error {
 }
 
 // generateBatchID generates a unique batch ID
-func (bm *BatchManager) generateBatchID() string {
+func (bm *Batcher) generateBatchID() string {
 	return fmt.Sprintf("batch_%d_%d", time.Now().UnixNano(), time.Now().Nanosecond())
 }
 

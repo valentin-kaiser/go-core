@@ -21,8 +21,8 @@ const (
 type TieredCache struct {
 	*BaseCache
 
-	l1Cache Cache // Fast cache (e.g., memory)
-	l2Cache Cache // Slower but larger cache (e.g., Redis)
+	l1Cache Store // Fast cache (e.g., memory)
+	l2Cache Store // Slower but larger cache (e.g., Redis)
 }
 
 // NewTieredCache creates a new multi-tier cache with L1 and L2 cache implementations.
@@ -35,14 +35,14 @@ type TieredCache struct {
 //	memCache := cache.NewMemoryCache()
 //	redisCache := cache.NewRedisCache(redisConfig)
 //	tiered := cache.NewTieredCache(memCache, redisCache)
-func NewTieredCache(l1Cache, l2Cache Cache) *TieredCache {
+func NewTieredCache(l1Cache, l2Cache Store) *TieredCache {
 	return NewTieredCacheWithConfig(l1Cache, l2Cache, DefaultConfig())
 }
 
 // NewTieredCacheWithConfig creates a new tiered cache with custom configuration.
 // This allows fine-tuning of cache behavior across both tiers while maintaining
 // the performance benefits of multi-tier caching architecture.
-func NewTieredCacheWithConfig(l1Cache, l2Cache Cache, config Config) *TieredCache {
+func NewTieredCacheWithConfig(l1Cache, l2Cache Store, config Config) *TieredCache {
 	return &TieredCache{
 		BaseCache: NewBaseCache(config),
 		l1Cache:   l1Cache,
@@ -333,12 +333,12 @@ func (tc *TieredCache) Close() error {
 }
 
 // GetL1Cache returns the L1 (fast) cache instance
-func (tc *TieredCache) GetL1Cache() Cache {
+func (tc *TieredCache) GetL1Cache() Store {
 	return tc.l1Cache
 }
 
 // GetL2Cache returns the L2 (persistent) cache instance
-func (tc *TieredCache) GetL2Cache() Cache {
+func (tc *TieredCache) GetL2Cache() Store {
 	return tc.l2Cache
 }
 

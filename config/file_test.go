@@ -37,8 +37,8 @@ func TestFileSourceWatchReloadsOnWrite(t *testing.T) {
 		t.Fatalf("Read: %v", err)
 	}
 
-	changed := make(chan config.Config, 1)
-	config.OnChange(func(_, n config.Config) error {
+	changed := make(chan config.Schema, 1)
+	config.OnChange(func(_, n config.Schema) error {
 		select {
 		case changed <- n:
 		default:
@@ -87,8 +87,8 @@ func TestFileSourceWatchReloadsOnRenameOverwrite(t *testing.T) {
 		t.Fatalf("Read: %v", err)
 	}
 
-	changed := make(chan config.Config, 1)
-	config.OnChange(func(_, n config.Config) error {
+	changed := make(chan config.Schema, 1)
+	config.OnChange(func(_, n config.Schema) error {
 		select {
 		case changed <- n:
 		default:

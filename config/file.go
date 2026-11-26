@@ -60,7 +60,7 @@ func (s *fileSource) Load(_ context.Context) (map[string]any, error) {
 
 // Save implements Source. It writes the configuration to the YAML file,
 // creating the directory if necessary.
-func (s *fileSource) Save(_ context.Context, c Config) error {
+func (s *fileSource) Save(_ context.Context, c Schema) error {
 	err := os.MkdirAll(s.path, configDirMode)
 	if err != nil {
 		return apperror.NewError("creating configuration directory failed").AddError(err)

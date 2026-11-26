@@ -76,7 +76,7 @@
 //	    }
 //
 //	    // Register onChange handler to be called when Write() is used
-//	    config.OnChange(func(o, n config.Config) error {
+//	    config.OnChange(func(o, n config.Schema) error {
 //	        fmt.Println("Configuration changed")
 //	        return nil
 //	    })
@@ -115,25 +115,25 @@ var (
 // many goroutines, and reading an atomic pointer does not contend on the manager mutex.
 var current atomic.Pointer[configBox]
 
-// Config is the interface that all configuration structs must implement
+// Schema is the interface that all configuration structs must implement
 // It should contain a Validate method that checks the configuration for errors
-type Config interface {
+type Schema interface {
 	Validate() error
 }
 
 type configBox struct {
-	config Config
+	config Schema
 }
 
 type manager struct {
 	path         string
 	name         string
-	config       Config
+	config       Schema
 	prefix       string
 	defaults     map[string]any
 	values       map[string]any
 	flags        map[string]*pflag.Flag
-	onChange     []func(o Config, n Config) error
+	onChange     []func(o Schema, n Schema) error
 	base         Source
 	overlays     []Source
 	watchCancels []func()
@@ -192,7 +192,7 @@ func (m *manager) WithOverlay(s Source) *manager {
 
 // Register registers a configuration struct and parses its tags
 // The name is used as the name of the configuration file and the prefix for the environment variables
-func (m *manager) Register(c Config) error {
+func (m *manager) Register(c Schema) error {
 	if c == nil {
 		return apperror.NewError("the configuration provided is nil")
 	}
@@ -211,14 +211,14 @@ func (m *manager) Register(c Config) error {
 }
 
 // OnChange registers a function that is called when the configuration changes
-func OnChange(f func(o Config, n Config) error) {
+func OnChange(f func(o Schema, n Schema) error) {
 	mutex.Lock()
 	defer mutex.Unlock()
 	cm.onChange = append(cm.onChange, f)
 }
 
 // Get returns the current configuration
-func Get() Config {
+func Get() Schema {
 	if box := current.Load(); box != nil {
 		return box.config
 	}
@@ -243,7 +243,7 @@ func Read() error {
 // Write persists the configuration to the base source, validates it and
 // applies it in memory. OnChange handlers are triggered with the previous and
 // new configuration. If the base source is read-only, an error is returned.
-func Write(change Config) error {
+func Write(change Schema) error {
 	if change == nil {
 		return apperror.NewError("the configuration provided is nil")
 	}
@@ -344,7 +344,7 @@ func Changed(o, n any) bool {
 }
 
 // set applies the configuration to the global variable
-func (m *manager) set(appConfig Config) {
+func (m *manager) set(appConfig Schema) {
 	mutex.Lock()
 	defer mutex.Unlock()
 	m.config = appConfig
@@ -439,7 +439,7 @@ func (m *manager) reload(ctx context.Context) error {
 		return apperror.NewError("no configuration registered")
 	}
 
-	change, ok := reflect.TypeAssert[Config](reflect.New(reflect.TypeOf(m.config).Elem()))
+	change, ok := reflect.TypeAssert[Schema](reflect.New(reflect.TypeOf(m.config).Elem()))
 	if !ok {
 		return apperror.NewErrorf("creating new instance of %T failed", m.config)
 	}
@@ -457,7 +457,7 @@ func (m *manager) reload(ctx context.Context) error {
 	o := Get()
 	m.set(change)
 	mutex.RLock()
-	handlers := append([]func(Config, Config) error(nil), m.onChange...)
+	handlers := append([]func(Schema, Schema) error(nil), m.onChange...)
 	mutex.RUnlock()
 	for _, f := range handlers {
 		err := f(o, change)

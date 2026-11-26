@@ -217,10 +217,10 @@ const (
 // Driver is the name of a supported database/sql driver.
 type Driver string
 
-// Database represents a database connection instance with its own state and configuration.
+// Connection represents a database connection instance with its own state and configuration.
 // Multiple instances can be created to manage connections to different databases.
 // The generic type parameter Q represents the sqlc-generated Queries type.
-type Database[Q any] struct {
+type Connection[Q any] struct {
 	db               *sql.DB
 	dbMutex          sync.RWMutex
 	driver           Driver
@@ -239,14 +239,14 @@ type Database[Q any] struct {
 	queriesFunc      func(DBTX) *Q
 	queriesArg       atomic.Pointer[queriesArg]
 	debug            bool
-	parent           *Database[Q]
+	parent           *Connection[Q]
 }
 
 // New creates a new Database instance with the given name for logging purposes.
 // The name parameter is used to identify this database instance in logs.
 // The generic type parameter Q represents the sqlc-generated Queries type.
-func New[Q any](driver Driver, name string) *Database[Q] {
-	return &Database[Q]{
+func New[Q any](driver Driver, name string) *Connection[Q] {
+	return &Connection[Q]{
 		driver:           driver,
 		done:             make(chan bool),
 		logger:           logging.GetPackageLogger(loggerNamePrefix + name),
@@ -258,7 +258,7 @@ func New[Q any](driver Driver, name string) *Database[Q] {
 // Get returns the active database connection.
 // It will return nil if the database is not connected.
 // Use this function to get the database connection for executing queries with sqlc or raw SQL.
-func (d *Database[Q]) Get() *sql.DB {
+func (d *Connection[Q]) Get() *sql.DB {
 	d.dbMutex.RLock()
 	defer d.dbMutex.RUnlock()
 	return d.db
@@ -269,7 +269,7 @@ func (d *Database[Q]) Get() *sql.DB {
 // It temporarily enables debug-level logging for the specific query or execution that follows.
 // The debug handle shares the same underlying connection and configuration as the parent instance.
 // Example: db.Debug().Query(func(q *sqlc.Queries) error { return q.GetUser(ctx, id) })
-func (d *Database[Q]) Debug() *Database[Q] {
+func (d *Connection[Q]) Debug() *Connection[Q] {
 	if d.debug {
 		return d
 	}
@@ -280,7 +280,7 @@ func (d *Database[Q]) Debug() *Database[Q] {
 	}
 
 	// We don't copy the struct fields directly to avoid copying locks
-	return &Database[Q]{
+	return &Connection[Q]{
 		debug:  true,
 		parent: parent,
 	}
@@ -288,7 +288,7 @@ func (d *Database[Q]) Debug() *Database[Q] {
 
 // Execute executes a function with a database connection.
 // It will return an error if the database is not connected or if the function returns an error.
-func (d *Database[Q]) Execute(call func(db *sql.DB) error) error {
+func (d *Connection[Q]) Execute(call func(db *sql.DB) error) error {
 	defer interruption.Catch()
 
 	parent := d
@@ -325,7 +325,7 @@ func (d *Database[Q]) Execute(call func(db *sql.DB) error) error {
 // Query executes a function with sqlc-generated Queries instance.
 // It will return an error if the database is not connected or if the function returns an error.
 // Example: db.Query(func(q *sqlc.Queries) error { return q.GetUser(ctx, id) })
-func (d *Database[Q]) Query(call func(q *Q) error) error {
+func (d *Connection[Q]) Query(call func(q *Q) error) error {
 	defer interruption.Catch()
 
 	parent := d
@@ -371,7 +371,7 @@ func (d *Database[Q]) Query(call func(q *Q) error) error {
 // Transaction executes a function within a database transaction.
 // It will return an error if the database is not connected or if the function returns an error.
 // If the function returns an error, the transaction will be rolled back.
-func (d *Database[Q]) Transaction(call func(tx *sql.Tx) error) error {
+func (d *Connection[Q]) Transaction(call func(tx *sql.Tx) error) error {
 	d.dbMutex.RLock()
 	dbInstance := d.db
 	d.dbMutex.RUnlock()
@@ -410,7 +410,7 @@ func (d *Database[Q]) Transaction(call func(tx *sql.Tx) error) error {
 // It will return an error if the database is not connected or if the function returns an error.
 // If the function returns an error, the transaction will be rolled back.
 // Example: db.QueryTransaction(func(q *sqlc.Queries) error { return q.CreateUser(ctx, params) })
-func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
+func (d *Connection[Q]) QueryTransaction(call func(q *Q) error) error {
 	defer interruption.Catch()
 
 	parent := d
@@ -476,7 +476,7 @@ func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 }
 
 // TestConnection tests the database connection by attempting to connect and ping the database.
-func (d *Database[Q]) TestConnection(dsn string) error {
+func (d *Connection[Q]) TestConnection(dsn string) error {
 	instance, err := d.connect(d.driver, dsn)
 	if err != nil {
 		return apperror.NewError("connection test failed").AddError(err)
@@ -491,25 +491,25 @@ func (d *Database[Q]) TestConnection(dsn string) error {
 	return nil
 }
 
-func (d *Database[Q]) setDSN(dsn string) {
+func (d *Connection[Q]) setDSN(dsn string) {
 	d.dsnMutex.Lock()
 	d.dsn = dsn
 	d.dsnMutex.Unlock()
 }
 
-func (d *Database[Q]) getDSN() string {
+func (d *Connection[Q]) getDSN() string {
 	d.dsnMutex.RLock()
 	defer d.dsnMutex.RUnlock()
 	return d.dsn
 }
 
 // Connected returns true if the database is connected, false otherwise
-func (d *Database[Q]) Connected() bool {
+func (d *Connection[Q]) Connected() bool {
 	return d.connected.Load()
 }
 
 // Reconnect will set the connected state to false and trigger a reconnect
-func (d *Database[Q]) Reconnect(dsn string) {
+func (d *Connection[Q]) Reconnect(dsn string) {
 	d.setDSN(dsn)
 	d.logger.Trace().Msg("reconnecting...")
 	d.connected.Store(false)
@@ -517,7 +517,7 @@ func (d *Database[Q]) Reconnect(dsn string) {
 }
 
 // Disconnect will stop the database connection and wait for the connection to be closed
-func (d *Database[Q]) Disconnect() error {
+func (d *Connection[Q]) Disconnect() error {
 	d.logger.Trace().Msg("closing connection...")
 	d.cancel.Store(true)
 	if d.connected.Load() && d.db != nil {
@@ -532,7 +532,7 @@ func (d *Database[Q]) Disconnect() error {
 }
 
 // AwaitConnection will block until the database is connected
-func (d *Database[Q]) AwaitConnection() {
+func (d *Connection[Q]) AwaitConnection() {
 	for !d.connected.Load() {
 		time.Sleep(time.Second)
 	}
@@ -540,7 +540,7 @@ func (d *Database[Q]) AwaitConnection() {
 
 // Connect will try to connect to the database every interval until it is connected
 // It will also check if the connection is still alive every interval and reconnect if it is not
-func (d *Database[Q]) Connect(interval time.Duration, dsn string) {
+func (d *Connection[Q]) Connect(interval time.Duration, dsn string) {
 	d.setDSN(dsn)
 	go func() {
 		for {
@@ -553,7 +553,7 @@ func (d *Database[Q]) Connect(interval time.Duration, dsn string) {
 	}()
 }
 
-func (d *Database[Q]) maintainConnection(interval time.Duration) {
+func (d *Connection[Q]) maintainConnection(interval time.Duration) {
 	defer interruption.Catch()
 	defer time.Sleep(interval)
 
@@ -580,7 +580,7 @@ func (d *Database[Q]) maintainConnection(interval time.Duration) {
 	}
 }
 
-func (d *Database[Q]) establishConnection() {
+func (d *Connection[Q]) establishConnection() {
 	instance, err := d.connect(d.driver, d.getDSN())
 	if err != nil {
 		// Prevent spamming the logs with connection errors
@@ -651,7 +651,7 @@ func pingWithRetries(db *sql.DB, maxRetries int) error {
 }
 
 // RegisterOnConnectHandler registers a function that will be called when the database connection is established
-func (d *Database[Q]) RegisterOnConnectHandler(handler func(db *sql.DB) error) {
+func (d *Connection[Q]) RegisterOnConnectHandler(handler func(db *sql.DB) error) {
 	if handler == nil {
 		return
 	}
@@ -662,7 +662,7 @@ func (d *Database[Q]) RegisterOnConnectHandler(handler func(db *sql.DB) error) {
 }
 
 // RegisterMiddleware registers a middleware that will intercept and log SQL statements
-func (d *Database[Q]) RegisterMiddleware(middleware Middleware) *Database[Q] {
+func (d *Connection[Q]) RegisterMiddleware(middleware Middleware) *Connection[Q] {
 	if middleware == nil {
 		return d
 	}
@@ -676,7 +676,7 @@ func (d *Database[Q]) RegisterMiddleware(middleware Middleware) *Database[Q] {
 // RegisterQueries registers the sqlc Queries constructor function.
 // This allows you to set the queries constructor after creating the database instance.
 // Example: db.RegisterQueries(sqlc.New)
-func (d *Database[Q]) RegisterQueries(queries any) *Database[Q] {
+func (d *Connection[Q]) RegisterQueries(queries any) *Connection[Q] {
 	if queries == nil {
 		return d
 	}
@@ -688,7 +688,7 @@ func (d *Database[Q]) RegisterQueries(queries any) *Database[Q] {
 // Unlike RegisterQueries it is called directly, without reflection, which saves about a
 // microsecond per Query and Transaction call. sqlc generates its own DBTX type, so wrap the
 // constructor: db.RegisterQueriesFunc(func(c database.DBTX) *sqlc.Queries { return sqlc.New(c) })
-func (d *Database[Q]) RegisterQueriesFunc(queries func(DBTX) *Q) *Database[Q] {
+func (d *Connection[Q]) RegisterQueriesFunc(queries func(DBTX) *Q) *Connection[Q] {
 	if queries == nil {
 		return d
 	}
@@ -698,7 +698,7 @@ func (d *Database[Q]) RegisterQueriesFunc(queries func(DBTX) *Q) *Database[Q] {
 
 // findLoggingMiddleware finds the LoggingMiddleware in the parent's middleware list.
 // Returns nil if no LoggingMiddleware is registered.
-func (d *Database[Q]) findLoggingMiddleware() *LoggingMiddleware {
+func (d *Connection[Q]) findLoggingMiddleware() *LoggingMiddleware {
 	parent := d
 	if d.parent != nil {
 		parent = d.parent
@@ -717,7 +717,7 @@ func (d *Database[Q]) findLoggingMiddleware() *LoggingMiddleware {
 }
 
 // connect will try to connect to the database and return the connection
-func (d *Database[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
+func (d *Connection[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
 	d.middlewareMutex.RLock()
 	middlewares := make([]Middleware, len(d.middlewares))
 	copy(middlewares, d.middlewares)
@@ -750,7 +750,7 @@ func (d *Database[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
 // For MySQL/MariaDB: creates an SQL dump
 // For PostgreSQL: creates an SQL dump
 // Returns an error if the database is not connected or if the backup fails.
-func (d *Database[Q]) Backup(path string, schema string) error {
+func (d *Connection[Q]) Backup(path string, schema string) error {
 	if !d.connected.Load() {
 		return apperror.NewError("database is not connected")
 	}
@@ -822,7 +822,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 // For PostgreSQL: uses psql to restore from SQL dump
 // Returns an error if the database is not connected or if the restore fails.
 // WARNING: This will overwrite the current database. Ensure you have a backup before restoring.
-func (d *Database[Q]) Restore(backupPath string) error {
+func (d *Connection[Q]) Restore(backupPath string) error {
 	if !d.connected.Load() {
 		return apperror.NewError("database is not connected")
 	}
@@ -982,7 +982,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 	}
 }
 
-func (d *Database[Q]) removeStaleSQLiteFiles(databasePath string) {
+func (d *Connection[Q]) removeStaleSQLiteFiles(databasePath string) {
 	for _, suffix := range []string{sqliteWALSuffix, sqliteSHMSuffix} {
 		err := os.Remove(databasePath + suffix)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {

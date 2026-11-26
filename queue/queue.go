@@ -32,7 +32,7 @@
 //
 //	func main() {
 //		// Create a new queue manager
-//		manager := queue.NewManager()
+//		manager := queue.NewScheduler()
 //
 //		// Register a job handler
 //		manager.RegisterHandler("email", func(ctx context.Context, job *queue.Job) error {
@@ -129,8 +129,8 @@ import (
 	"github.com/valentin-kaiser/go-core/v2/apperror"
 )
 
-// Queue defines the interface for job queues
-type Queue interface {
+// Broker defines the interface for job queues
+type Broker interface {
 	Enqueue(ctx context.Context, job *Job) error
 	Dequeue(ctx context.Context, timeout time.Duration) (*Job, error)
 	Schedule(ctx context.Context, job *Job) error
@@ -200,9 +200,9 @@ type progressUpdate struct {
 	progress float64
 }
 
-// Manager manages the job queue and workers
-type Manager struct {
-	queue            Queue
+// Scheduler manages the job queue and workers
+type Scheduler struct {
+	queue            Broker
 	handlers         map[string]JobHandler
 	workerCount      int
 	maxRetries       int
@@ -219,8 +219,8 @@ type Manager struct {
 	progressChan     chan progressUpdate
 }
 
-// NewManager creates a new queue manager with default settings
-func NewManager() *Manager {
+// NewScheduler creates a new queue manager with default settings
+func NewScheduler() *Scheduler {
 	const (
 		defaultMaxRetries       = 3
 		defaultRetryDelay       = 2 * time.Second
@@ -229,7 +229,7 @@ func NewManager() *Manager {
 		progressChanSize        = 100
 	)
 
-	return &Manager{
+	return &Scheduler{
 		queue:            NewMemoryQueue(),
 		handlers:         make(map[string]JobHandler),
 		workerCount:      1,
@@ -244,7 +244,7 @@ func NewManager() *Manager {
 }
 
 // WithRabbitMQ sets the queue to use RabbitMQ with the given configuration
-func (m *Manager) WithRabbitMQ(config RabbitMQConfig) *Manager {
+func (m *Scheduler) WithRabbitMQ(config RabbitMQConfig) *Scheduler {
 	queue, err := NewRabbitMQ(config)
 	if err == nil {
 		m.queue = queue
@@ -253,7 +253,7 @@ func (m *Manager) WithRabbitMQ(config RabbitMQConfig) *Manager {
 }
 
 // WithRabbitMQFromURL sets the queue to use RabbitMQ with the given URL
-func (m *Manager) WithRabbitMQFromURL(url string) *Manager {
+func (m *Scheduler) WithRabbitMQFromURL(url string) *Scheduler {
 	queue, err := NewRabbitMQFromURL(url)
 	if err == nil {
 		m.queue = queue
@@ -262,13 +262,13 @@ func (m *Manager) WithRabbitMQFromURL(url string) *Manager {
 }
 
 // WithQueue sets the queue implementation
-func (m *Manager) WithQueue(queue Queue) *Manager {
+func (m *Scheduler) WithQueue(queue Broker) *Scheduler {
 	m.queue = queue
 	return m
 }
 
 // WithWorkers sets the number of workers
-func (m *Manager) WithWorkers(workers int) *Manager {
+func (m *Scheduler) WithWorkers(workers int) *Scheduler {
 	if workers > 0 {
 		m.workerCount = workers
 	}
@@ -276,7 +276,7 @@ func (m *Manager) WithWorkers(workers int) *Manager {
 }
 
 // WithRetryAttempts sets the maximum number of retry attempts
-func (m *Manager) WithRetryAttempts(attempts int) *Manager {
+func (m *Scheduler) WithRetryAttempts(attempts int) *Scheduler {
 	if attempts >= 0 {
 		m.maxRetries = attempts
 	}
@@ -284,7 +284,7 @@ func (m *Manager) WithRetryAttempts(attempts int) *Manager {
 }
 
 // WithRetryDelay sets the retry delay
-func (m *Manager) WithRetryDelay(delay time.Duration) *Manager {
+func (m *Scheduler) WithRetryDelay(delay time.Duration) *Scheduler {
 	if delay > 0 {
 		m.retryDelay = delay
 	}
@@ -292,7 +292,7 @@ func (m *Manager) WithRetryDelay(delay time.Duration) *Manager {
 }
 
 // WithRetryBackoff sets the retry backoff multiplier
-func (m *Manager) WithRetryBackoff(backoff float64) *Manager {
+func (m *Scheduler) WithRetryBackoff(backoff float64) *Scheduler {
 	if backoff > 0 {
 		m.retryBackoff = backoff
 	}
@@ -300,7 +300,7 @@ func (m *Manager) WithRetryBackoff(backoff float64) *Manager {
 }
 
 // WithScheduleInterval sets the interval for checking scheduled jobs
-func (m *Manager) WithScheduleInterval(interval time.Duration) *Manager {
+func (m *Scheduler) WithScheduleInterval(interval time.Duration) *Scheduler {
 	if interval > 0 {
 		m.scheduleInterval = interval
 	}
@@ -308,14 +308,14 @@ func (m *Manager) WithScheduleInterval(interval time.Duration) *Manager {
 }
 
 // RegisterHandler registers a job handler for a specific job type
-func (m *Manager) RegisterHandler(jobType string, handler JobHandler) {
+func (m *Scheduler) RegisterHandler(jobType string, handler JobHandler) {
 	m.handlerMutex.Lock()
 	defer m.handlerMutex.Unlock()
 	m.handlers[jobType] = handler
 }
 
 // Start starts the queue manager
-func (m *Manager) Start(ctx context.Context) error {
+func (m *Scheduler) Start(ctx context.Context) error {
 	if !m.running.CompareAndSwap(0, 1) {
 		return apperror.NewError("manager is already running")
 	}
@@ -340,7 +340,7 @@ func (m *Manager) Start(ctx context.Context) error {
 }
 
 // Stop stops the queue manager gracefully
-func (m *Manager) Stop() error {
+func (m *Scheduler) Stop() error {
 	if !m.running.CompareAndSwap(1, 0) {
 		return apperror.NewError("manager is not running")
 	}
@@ -371,7 +371,7 @@ func (m *Manager) Stop() error {
 }
 
 // Enqueue adds a job to the queue
-func (m *Manager) Enqueue(ctx context.Context, job *Job) error {
+func (m *Scheduler) Enqueue(ctx context.Context, job *Job) error {
 	if m.running.Load() == 0 {
 		return apperror.NewError("manager is not running")
 	}
@@ -390,7 +390,7 @@ func (m *Manager) Enqueue(ctx context.Context, job *Job) error {
 }
 
 // Schedule adds a scheduled job to the queue
-func (m *Manager) Schedule(ctx context.Context, job *Job) error {
+func (m *Scheduler) Schedule(ctx context.Context, job *Job) error {
 	if m.running.Load() == 0 {
 		return apperror.NewError("manager is not running")
 	}
@@ -409,17 +409,17 @@ func (m *Manager) Schedule(ctx context.Context, job *Job) error {
 }
 
 // GetJob retrieves a job by ID
-func (m *Manager) GetJob(ctx context.Context, id string) (*Job, error) {
+func (m *Scheduler) GetJob(ctx context.Context, id string) (*Job, error) {
 	return m.queue.GetJob(ctx, id)
 }
 
 // GetJobs retrieves jobs by status
-func (m *Manager) GetJobs(ctx context.Context, status Status, limit int) ([]*Job, error) {
+func (m *Scheduler) GetJobs(ctx context.Context, status Status, limit int) ([]*Job, error) {
 	return m.queue.GetJobs(ctx, status, limit)
 }
 
 // GetStats returns current queue statistics
-func (m *Manager) GetStats() *Stats {
+func (m *Scheduler) GetStats() *Stats {
 	m.statsMutex.RLock()
 	defer m.statsMutex.RUnlock()
 
@@ -443,12 +443,12 @@ func (m *Manager) GetStats() *Stats {
 }
 
 // IsRunning returns true if the manager is currently running
-func (m *Manager) IsRunning() bool {
+func (m *Scheduler) IsRunning() bool {
 	return m.running.Load() == 1
 }
 
 // worker processes jobs from the queue
-func (m *Manager) worker(ctx context.Context, workerID int) {
+func (m *Scheduler) worker(ctx context.Context, workerID int) {
 	const dequeueTimeout = 5 * time.Second
 
 	defer m.workerWg.Done()
@@ -481,7 +481,7 @@ func (m *Manager) worker(ctx context.Context, workerID int) {
 }
 
 // processJob processes a single job
-func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
+func (m *Scheduler) processJob(ctx context.Context, job *Job, workerID int) {
 	logger.Debug().
 		Field("job_id", job.ID).
 		Field("job_type", job.Type).
@@ -536,7 +536,7 @@ func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
 }
 
 // handleJobError retries a job that failed with a retryable error as long as attempts are left and fails it otherwise.
-func (m *Manager) handleJobError(ctx context.Context, job *Job, jobErr error) {
+func (m *Scheduler) handleJobError(ctx context.Context, job *Job, jobErr error) {
 	retryErr, ok := jobErr.(*RetryableError)
 	if ok && job.Attempts < job.MaxAttempts {
 		m.retryJob(ctx, job, retryErr)
@@ -547,7 +547,7 @@ func (m *Manager) handleJobError(ctx context.Context, job *Job, jobErr error) {
 }
 
 // retryJob marks a job for retry and enqueues it again after the retry delay.
-func (m *Manager) retryJob(ctx context.Context, job *Job, retryErr *RetryableError) {
+func (m *Scheduler) retryJob(ctx context.Context, job *Job, retryErr *RetryableError) {
 	job.Status = StatusRetrying
 	job.Error = retryErr.Error()
 	job.RetryAt = time.Now().Add(m.calculateRetryDelay(job.Attempts))
@@ -576,7 +576,7 @@ func (m *Manager) retryJob(ctx context.Context, job *Job, retryErr *RetryableErr
 }
 
 // failJob marks a job as permanently failed.
-func (m *Manager) failJob(ctx context.Context, job *Job, jobErr error) {
+func (m *Scheduler) failJob(ctx context.Context, job *Job, jobErr error) {
 	job.Status = StatusFailed
 	job.Error = jobErr.Error()
 	job.UpdatedAt = time.Now()
@@ -595,7 +595,7 @@ func (m *Manager) failJob(ctx context.Context, job *Job, jobErr error) {
 }
 
 // calculateRetryDelay calculates the retry delay with exponential backoff
-func (m *Manager) calculateRetryDelay(attempt int) time.Duration {
+func (m *Scheduler) calculateRetryDelay(attempt int) time.Duration {
 	if attempt <= 1 {
 		return m.retryDelay
 	}
@@ -606,7 +606,7 @@ func (m *Manager) calculateRetryDelay(attempt int) time.Duration {
 }
 
 // scheduleProcessor processes scheduled jobs
-func (m *Manager) scheduleProcessor(ctx context.Context) {
+func (m *Scheduler) scheduleProcessor(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -620,7 +620,7 @@ func (m *Manager) scheduleProcessor(ctx context.Context) {
 }
 
 // enqueueDueScheduledJobs moves every scheduled job whose time has come back into the queue.
-func (m *Manager) enqueueDueScheduledJobs(ctx context.Context) {
+func (m *Scheduler) enqueueDueScheduledJobs(ctx context.Context) {
 	// scheduledBatchSize is the maximum number of scheduled jobs fetched per tick.
 	const scheduledBatchSize = 100
 
@@ -645,7 +645,7 @@ func (m *Manager) enqueueDueScheduledJobs(ctx context.Context) {
 }
 
 // progressReporter handles job progress updates
-func (m *Manager) progressReporter() {
+func (m *Scheduler) progressReporter() {
 	for update := range m.progressChan {
 		logger.Debug().
 			Field("job_id", update.jobID).

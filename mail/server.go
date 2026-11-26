@@ -192,7 +192,7 @@ type Server interface {
 }
 
 // NewSMTPServer creates a new SMTP server
-func NewSMTPServer(config ServerConfig, manager *Manager) Server {
+func NewSMTPServer(config ServerConfig, manager *Mailer) Server {
 	if config.MaxConcurrentHandlers <= 0 {
 		config.MaxConcurrentHandlers = defaultServerMaxConcurrentHandlers
 	}
@@ -206,7 +206,7 @@ func NewSMTPServer(config ServerConfig, manager *Manager) Server {
 		handlerQueue:     make(chan handlerTask, config.MaxConcurrentHandlers*handlerQueueFactor),
 		ctx:              ctx,
 		cancel:           cancel,
-		security:         NewSecurityManager(config.Security),
+		security:         NewPolicy(config.Security),
 		shutdown:         make(chan struct{}),
 	}
 
@@ -402,7 +402,7 @@ func (s *session) receive(data []byte) error {
 // smtpServer manages SMTP server operations and handles incoming messages
 type smtpServer struct {
 	config           ServerConfig
-	manager          *Manager
+	manager          *Mailer
 	handlers         []NotificationHandler
 	running          atomic.Int32
 	mutex            sync.RWMutex
@@ -411,7 +411,7 @@ type smtpServer struct {
 	ctx              context.Context    // Context for server lifecycle
 	cancel           context.CancelFunc // Cancel function for server lifecycle
 	wg               sync.WaitGroup     // WaitGroup for graceful shutdown
-	security         *SecurityManager   // Security manager for validations
+	security         *Policy   // Security manager for validations
 
 	listener   net.Listener
 	shutdown   chan struct{}

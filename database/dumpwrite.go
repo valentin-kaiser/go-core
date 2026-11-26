@@ -252,7 +252,7 @@ func quotedColumns(columns []string, driver Driver) (string, error) {
 }
 
 // backupMySQL writes an SQL dump of the whole MySQL/MariaDB database
-func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
+func (d *Connection[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 	file, err := os.Create(filepath.Clean(path))
 	if err != nil {
 		return apperror.NewError("creating backup file failed").AddError(err)
@@ -358,7 +358,7 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 }
 
 // backupPostgres writes an SQL dump of the tables of a schema of a PostgreSQL database
-func (d *Database[Q]) backupPostgres(dbInstance *sql.DB, path string, schema string) (err error) {
+func (d *Connection[Q]) backupPostgres(dbInstance *sql.DB, path string, schema string) (err error) {
 	file, err := os.Create(filepath.Clean(path))
 	if err != nil {
 		return apperror.NewError("creating backup file failed").AddError(err)

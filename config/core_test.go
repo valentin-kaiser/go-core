@@ -124,8 +124,8 @@ func TestConfigWithErrorValidation(t *testing.T) {
 
 func TestConfigInterface(_ *testing.T) {
 	// Test that our test configs implement the Config interface
-	var _ config.Config = &TestConfig{}
-	var _ config.Config = &TestConfigWithError{}
+	var _ config.Schema = &TestConfig{}
+	var _ config.Schema = &TestConfigWithError{}
 }
 
 func TestWriteWithNilConfig(t *testing.T) {
@@ -191,7 +191,7 @@ func TestPackageConstants(_ *testing.T) {
 	_ = config.Get()
 
 	// Test that we can call OnChange (should not panic)
-	config.OnChange(func(_, _ config.Config) error {
+	config.OnChange(func(_, _ config.Schema) error {
 		return nil
 	})
 }
@@ -392,7 +392,7 @@ func TestRegisterWithNonPointer(t *testing.T) {
 
 	// Instead, test with an interface value that's not a pointer to struct
 	var iface any = "not a struct"
-	if c, ok := iface.(config.Config); ok {
+	if c, ok := iface.(config.Schema); ok {
 		err := config.Manager().WithName("non-pointer").Register(c)
 		if err == nil {
 			t.Error("Register() should return error for non-pointer")
@@ -639,8 +639,8 @@ func TestOnChangeCallbacks(t *testing.T) {
 	}
 
 	callbackCalled := false
-	var oldConfig, newConfig config.Config
-	config.OnChange(func(o, n config.Config) error {
+	var oldConfig, newConfig config.Schema
+	config.OnChange(func(o, n config.Schema) error {
 		callbackCalled = true
 		oldConfig = o
 		newConfig = n
@@ -699,7 +699,7 @@ func TestOnChangeCallbackError(t *testing.T) {
 		t.Fatalf("Register failed: %v", err)
 	}
 
-	config.OnChange(func(_, _ config.Config) error {
+	config.OnChange(func(_, _ config.Schema) error {
 		return errors.New("callback error")
 	})
 
@@ -1035,10 +1035,10 @@ func TestWriteTriggersOnChange(t *testing.T) {
 	}
 
 	callbackCalled := false
-	var receivedOldConfig, receivedNewConfig config.Config
+	var receivedOldConfig, receivedNewConfig config.Schema
 
 	// Register onChange handler
-	config.OnChange(func(oldConf, newConf config.Config) error {
+	config.OnChange(func(oldConf, newConf config.Schema) error {
 		callbackCalled = true
 		receivedOldConfig = oldConf
 		receivedNewConfig = newConf

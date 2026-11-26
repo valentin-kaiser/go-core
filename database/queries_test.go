@@ -9,7 +9,7 @@ import (
 
 const queryRounds = 2
 
-func connectedTyped(t *testing.T) *database.Database[TestQueries] {
+func connectedTyped(t *testing.T) *database.Connection[TestQueries] {
 	t.Helper()
 	db := database.New[TestQueries](database.DriverSQLite, "typed")
 	db.RegisterQueriesFunc(func(c database.DBTX) *TestQueries { return NewTestQueries(c) })

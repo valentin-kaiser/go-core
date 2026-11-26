@@ -114,8 +114,8 @@ const (
 	EventClear
 )
 
-// Cache defines the interface for cache implementations
-type Cache interface {
+// Store defines the interface for cache implementations
+type Store interface {
 	// Get retrieves a value from the cache and deserializes it into the provided destination
 	Get(ctx context.Context, key string, dest any) (bool, error)
 

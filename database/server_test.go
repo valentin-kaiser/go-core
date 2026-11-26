@@ -37,7 +37,7 @@ func serverDSN(env, fallback string) string {
 
 const dumpRoundtripQuery = "SELECT id, txt, bin, num, ts, flag FROM dump_roundtrip ORDER BY id"
 
-func connectServer(tb testing.TB, driver database.Driver, name, dsn string) *database.Database[TestQueries] {
+func connectServer(tb testing.TB, driver database.Driver, name, dsn string) *database.Connection[TestQueries] {
 	tb.Helper()
 	db := database.New[TestQueries](driver, name)
 	db.Connect(connectInterval, dsn)
@@ -47,13 +47,13 @@ func connectServer(tb testing.TB, driver database.Driver, name, dsn string) *dat
 	return db
 }
 
-func mysqlServer(tb testing.TB) *database.Database[TestQueries] {
+func mysqlServer(tb testing.TB) *database.Connection[TestQueries] {
 	tb.Helper()
 	return connectServer(tb, database.DriverMySQL, "mysql",
 		serverDSN("MYSQL_DSN", "root:bench@tcp(127.0.0.1:13306)/bench?parseTime=true&multiStatements=false"))
 }
 
-func postgresServer(tb testing.TB) *database.Database[TestQueries] {
+func postgresServer(tb testing.TB) *database.Connection[TestQueries] {
 	tb.Helper()
 	return connectServer(tb, database.DriverPostgres, "postgres",
 		serverDSN("POSTGRES_DSN", "postgres://postgres:bench@127.0.0.1:15432/bench?sslmode=disable"))
@@ -70,7 +70,7 @@ var trickyStrings = []string{
 	"tab\tand 'quotes' and ''double''",
 }
 
-func execAll(tb testing.TB, db *database.Database[TestQueries], statements ...string) {
+func execAll(tb testing.TB, db *database.Connection[TestQueries], statements ...string) {
 	tb.Helper()
 	err := db.Execute(func(c *sql.DB) error {
 		for _, s := range statements {
@@ -95,7 +95,7 @@ type dumpRow struct {
 	Flag sql.NullBool
 }
 
-func readRows(tb testing.TB, db *database.Database[TestQueries]) []dumpRow {
+func readRows(tb testing.TB, db *database.Connection[TestQueries]) []dumpRow {
 	tb.Helper()
 	var out []dumpRow
 	err := db.Execute(func(c *sql.DB) error {

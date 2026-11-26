@@ -35,7 +35,7 @@ func TestSMTPSender_Comprehensive(t *testing.T) {
 		DefaultTemplate: "default.html",
 	}
 
-	tm := mail.NewTemplateManager(templateConfig)
+	tm := mail.NewTemplates(templateConfig)
 	sender := mail.NewSMTPSender(config, tm)
 
 	if sender == nil {
@@ -54,7 +54,7 @@ func TestSMTPSender_MessageValidation(t *testing.T) {
 		RetryDelay: time.Millisecond,
 	}
 
-	tm := mail.NewTemplateManager(mail.TemplateConfig{})
+	tm := mail.NewTemplates(mail.TemplateConfig{})
 	sender := mail.NewSMTPSender(config, tm)
 
 	tests := []struct {
@@ -157,7 +157,7 @@ func TestSMTPSender_SendAsync_NotSupported(t *testing.T) {
 		Port: submissionPort,
 	}
 
-	tm := mail.NewTemplateManager(mail.TemplateConfig{})
+	tm := mail.NewTemplates(mail.TemplateConfig{})
 	sender := mail.NewSMTPSender(config, tm)
 
 	message := &mail.Message{
@@ -183,7 +183,7 @@ func TestSMTPSender_WithRetries(t *testing.T) {
 		RetryDelay: 10 * time.Millisecond, // Very short for testing
 	}
 
-	tm := mail.NewTemplateManager(mail.TemplateConfig{})
+	tm := mail.NewTemplates(mail.TemplateConfig{})
 	sender := mail.NewSMTPSender(config, tm)
 
 	message := &mail.Message{
@@ -231,7 +231,7 @@ func TestSMTPSender_WithTemplate(t *testing.T) {
 		DefaultTemplate: "test.html",
 	}
 
-	tm := mail.NewTemplateManager(templateConfig).WithFileServer(tempDir)
+	tm := mail.NewTemplates(templateConfig).WithFileServer(tempDir)
 	if tm.Error != nil {
 		t.Fatalf("Template manager error: %v", tm.Error)
 	}
@@ -284,7 +284,7 @@ func TestSMTPSender_AuthMethods(t *testing.T) {
 				MaxRetries: 0,
 			}
 
-			tm := mail.NewTemplateManager(mail.TemplateConfig{})
+			tm := mail.NewTemplates(mail.TemplateConfig{})
 			sender := mail.NewSMTPSender(config, tm)
 
 			if sender == nil {
@@ -314,7 +314,7 @@ func TestSMTPSender_EncryptionMethods(t *testing.T) {
 				MaxRetries: 0,
 			}
 
-			tm := mail.NewTemplateManager(mail.TemplateConfig{})
+			tm := mail.NewTemplates(mail.TemplateConfig{})
 			sender := mail.NewSMTPSender(config, tm)
 
 			if sender == nil {
@@ -332,7 +332,7 @@ func TestSMTPSender_MessageWithAttachments(t *testing.T) {
 		MaxRetries: 0,
 	}
 
-	tm := mail.NewTemplateManager(mail.TemplateConfig{})
+	tm := mail.NewTemplates(mail.TemplateConfig{})
 	sender := mail.NewSMTPSender(config, tm)
 
 	attachment := mail.Attachment{
@@ -367,7 +367,7 @@ func TestSMTPSender_MessageWithHeaders(t *testing.T) {
 		MaxRetries: 0,
 	}
 
-	tm := mail.NewTemplateManager(mail.TemplateConfig{})
+	tm := mail.NewTemplates(mail.TemplateConfig{})
 	sender := mail.NewSMTPSender(config, tm)
 
 	message := &mail.Message{
@@ -399,7 +399,7 @@ func TestSMTPSender_ContextCancellation(t *testing.T) {
 		RetryDelay: time.Second, // Long delay to test cancellation
 	}
 
-	tm := mail.NewTemplateManager(mail.TemplateConfig{})
+	tm := mail.NewTemplates(mail.TemplateConfig{})
 	sender := mail.NewSMTPSender(config, tm)
 
 	message := &mail.Message{
@@ -445,7 +445,7 @@ func TestSMTPSender_SendWithTemplateContent(t *testing.T) {
 		Enabled:          true, // Explicitly enable template processing
 	}
 
-	tm := mail.NewTemplateManager(templateConfig)
+	tm := mail.NewTemplates(templateConfig)
 	sender := mail.NewSMTPSender(config, tm)
 
 	templateContent := "<h1>Hello {{.Name}}</h1><p>Welcome to {{.Company}}!</p><p>Your order #{{.OrderID}} has been confirmed.</p>"

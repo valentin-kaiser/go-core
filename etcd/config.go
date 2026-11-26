@@ -69,7 +69,7 @@ func (s *source) Load(ctx context.Context) (map[string]any, error) {
 // Save implements config.Source. It marshals the configuration to a flat
 // dotted-key map and writes every leaf as an individual etcd key in a single
 // transaction so observers receive a consistent snapshot.
-func (s *source) Save(ctx context.Context, c config.Config) error {
+func (s *source) Save(ctx context.Context, c config.Schema) error {
 	flat, err := flattenConfig(c)
 	if err != nil {
 		return apperror.NewError("flattening configuration failed").AddError(err)
@@ -142,7 +142,7 @@ func (s *source) watchChanges(ctx context.Context, ch clientv3.WatchChan, onChan
 // flattenConfig marshals a Config to YAML and returns its flat dotted-key
 // representation, mirroring the encoding used by the file source so the
 // resulting map can be consumed directly by config.unmarshal.
-func flattenConfig(c config.Config) (map[string]any, error) {
+func flattenConfig(c config.Schema) (map[string]any, error) {
 	if c == nil {
 		return nil, apperror.NewError("configuration is nil")
 	}

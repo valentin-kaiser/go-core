@@ -26,7 +26,7 @@ type queriesArg struct {
 }
 
 // newQueries builds the Queries value for a connection, which is the *sql.DB or a *sql.Tx.
-func (d *Database[Q]) newQueries(conn DBTX) (*Q, error) {
+func (d *Connection[Q]) newQueries(conn DBTX) (*Q, error) {
 	if d.queriesFunc != nil {
 		queries := d.queriesFunc(conn)
 		if queries == nil {
@@ -62,7 +62,7 @@ func (d *Database[Q]) newQueries(conn DBTX) (*Q, error) {
 
 // queriesArgFor returns the connection as a value of the constructor's parameter type,
 // remembered for as long as the connection stays the same.
-func (d *Database[Q]) queriesArgFor(db *sql.DB, param reflect.Type) reflect.Value {
+func (d *Connection[Q]) queriesArgFor(db *sql.DB, param reflect.Type) reflect.Value {
 	if cached := d.queriesArg.Load(); cached != nil && cached.db == db && cached.param == param {
 		return cached.value
 	}

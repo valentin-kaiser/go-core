@@ -333,7 +333,7 @@ func TestMemoryQueuePriority(t *testing.T) {
 
 func TestManager(t *testing.T) {
 	ctx := t.Context()
-	manager := queue.NewManager().
+	manager := queue.NewScheduler().
 		WithWorkers(2).
 		WithRetryAttempts(2).
 		WithRetryDelay(time.Millisecond * 100)
@@ -399,7 +399,7 @@ func TestManager(t *testing.T) {
 
 func TestManagerRetry(t *testing.T) {
 	ctx := t.Context()
-	manager := queue.NewManager().
+	manager := queue.NewScheduler().
 		WithWorkers(1).
 		WithRetryAttempts(2).
 		WithRetryDelay(time.Millisecond * 50)
@@ -466,7 +466,7 @@ func TestManagerRetry(t *testing.T) {
 
 func TestManagerScheduled(t *testing.T) {
 	ctx := t.Context()
-	manager := queue.NewManager().
+	manager := queue.NewScheduler().
 		WithWorkers(1).
 		WithScheduleInterval(time.Millisecond * 50)
 
@@ -529,7 +529,7 @@ func TestManagerScheduled(t *testing.T) {
 
 func TestBatchManager(t *testing.T) {
 	ctx := t.Context()
-	manager := queue.NewManager().WithWorkers(2)
+	manager := queue.NewScheduler().WithWorkers(2)
 
 	// Register a test handler
 	processedJobs := make(map[string]bool)
@@ -548,7 +548,7 @@ func TestBatchManager(t *testing.T) {
 	}
 
 	// Create batch manager
-	batchManager := queue.NewBatchManager(manager)
+	batchManager := queue.NewBatcher(manager)
 
 	// Create batch of jobs
 	jobs := []*queue.Job{
@@ -807,7 +807,7 @@ func TestJobMetadataAndBasics(t *testing.T) {
 }
 
 func TestManagerBasics(t *testing.T) {
-	manager := queue.NewManager()
+	manager := queue.NewScheduler()
 	if manager == nil {
 		t.Error("Expected manager to be created")
 	}

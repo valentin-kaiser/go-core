@@ -99,7 +99,7 @@ func TestTemplateManager(t *testing.T) {
 		AutoReload:      true,
 	}
 
-	tm := mail.NewTemplateManager(config)
+	tm := mail.NewTemplates(config)
 
 	// Test that template manager is created
 	if tm == nil {
@@ -130,7 +130,7 @@ func TestTemplateManagerWithFS(t *testing.T) {
 		AutoReload:      true,
 	}
 
-	tm := mail.NewTemplateManager(config)
+	tm := mail.NewTemplates(config)
 
 	// Test that WithFS method works (we can't test with real filesystem without test data)
 	result := tm.WithFS(nil)
@@ -157,7 +157,7 @@ func TestTemplateManagerWithFileServer(t *testing.T) {
 		AutoReload:      true,
 	}
 
-	tm := mail.NewTemplateManager(config)
+	tm := mail.NewTemplates(config)
 
 	// Configure with file server
 	tm.WithFileServer(tempDir)
@@ -212,7 +212,7 @@ func TestSMTPSender(t *testing.T) {
 		DefaultTemplate: "default.html",
 	}
 
-	tm := mail.NewTemplateManager(templateConfig)
+	tm := mail.NewTemplates(templateConfig)
 	sender := mail.NewSMTPSender(config, tm)
 
 	if sender == nil {
@@ -232,8 +232,8 @@ func TestMailManager(t *testing.T) {
 	config := mail.DefaultConfig()
 	config.Queue.Enabled = false // Disable queue for this test
 
-	queueManager := queue.NewManager()
-	manager := mail.NewManager(config, queueManager)
+	queueManager := queue.NewScheduler()
+	manager := mail.NewMailer(config, queueManager)
 
 	if manager == nil {
 		t.Error("Expected manager to be created, got nil")
@@ -339,8 +339,8 @@ func TestManagerStartStop(t *testing.T) {
 	config.Queue.Enabled = false
 	config.Server.Enabled = false
 
-	queueManager := queue.NewManager()
-	manager := mail.NewManager(config, queueManager)
+	queueManager := queue.NewScheduler()
+	manager := mail.NewMailer(config, queueManager)
 
 	// Test start
 	err := manager.Start()
@@ -379,8 +379,8 @@ func TestManagerSendNotRunning(t *testing.T) {
 	config := mail.DefaultConfig()
 	config.Queue.Enabled = false
 
-	queueManager := queue.NewManager()
-	manager := mail.NewManager(config, queueManager)
+	queueManager := queue.NewScheduler()
+	manager := mail.NewMailer(config, queueManager)
 
 	message, err := mail.NewMessage().
 		From("sender@example.com").
@@ -403,9 +403,9 @@ func TestManagerSendAsync(t *testing.T) {
 	config := mail.DefaultConfig()
 	config.Queue.Enabled = true
 
-	queueManager := queue.NewManager()
+	queueManager := queue.NewScheduler()
 
-	manager := mail.NewManager(config, queueManager)
+	manager := mail.NewMailer(config, queueManager)
 
 	// Start manager (this will automatically start the queue manager)
 	err := manager.Start()
@@ -445,7 +445,7 @@ func TestManagerSendAsyncQueueDisabled(t *testing.T) {
 	config := mail.DefaultConfig()
 	config.Queue.Enabled = false
 
-	manager := mail.NewManager(config, nil)
+	manager := mail.NewMailer(config, nil)
 	err := manager.Start()
 	if err != nil {
 		t.Fatalf("Failed to start mail manager: %v", err)
@@ -477,7 +477,7 @@ func TestManagerSendAsyncQueueDisabled(t *testing.T) {
 func TestManagerAddNotificationHandler(t *testing.T) {
 	config := mail.DefaultConfig()
 	config.Server.Enabled = true
-	manager := mail.NewManager(config, nil)
+	manager := mail.NewMailer(config, nil)
 
 	handler := func(_ context.Context, _ string, _ []string, _ io.Reader) error {
 		return nil
@@ -505,7 +505,7 @@ func TestSenderValidation(t *testing.T) {
 		DefaultTemplate: "default.html",
 	}
 
-	tm := mail.NewTemplateManager(templateConfig)
+	tm := mail.NewTemplates(templateConfig)
 	sender := mail.NewSMTPSender(config, tm)
 
 	tests := []struct {
@@ -730,7 +730,7 @@ func BenchmarkTemplateRendering(b *testing.B) {
 		DefaultTemplate: "default.html",
 	}
 
-	tm := mail.NewTemplateManager(config)
+	tm := mail.NewTemplates(config)
 	data := map[string]any{
 		"Subject": "Benchmark Subject",
 		"Message": "Benchmark message content",
@@ -879,7 +879,7 @@ func TestSMTPSenderWithPerMessageTemplateFuncs(t *testing.T) {
 		DefaultTemplate: "permsg.html",
 	}
 
-	tm := mail.NewTemplateManager(templateConfig).WithDefaultFuncs().WithFileServer(tempDir)
+	tm := mail.NewTemplates(templateConfig).WithDefaultFuncs().WithFileServer(tempDir)
 	if tm.Error != nil {
 		t.Fatalf("Template manager error: %v", tm.Error)
 	}

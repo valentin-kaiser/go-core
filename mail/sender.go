@@ -67,7 +67,7 @@ type Sender interface {
 }
 
 // NewSMTPSender creates a new SMTP sender with configurable security
-func NewSMTPSender(config ClientConfig, templateManager *TemplateManager) Sender {
+func NewSMTPSender(config ClientConfig, templateManager *Templates) Sender {
 	if config.Enabled {
 		logger.Info().Field("host", config.Host).Field("port", config.Port).Field("encryption", config.Encryption).Msg("SMTP sender enabled")
 	}
@@ -81,7 +81,7 @@ func NewSMTPSender(config ClientConfig, templateManager *TemplateManager) Sender
 // smtpSender implements the Sender interface using internal email package
 type smtpSender struct {
 	config          ClientConfig
-	templateManager *TemplateManager
+	templateManager *Templates
 }
 
 // Send sends an email message via SMTP
@@ -164,7 +164,7 @@ func (s *smtpSender) processTemplate(message *Message) error {
 }
 
 // createEmail creates an email.Email from our Message
-func (s *smtpSender) createEmail(message *Message) (*email.Email, error) {
+func (s *smtpSender) createEmail(message *Message) (*email.Message, error) {
 	emailMsg := email.New()
 
 	from := message.From
@@ -218,7 +218,7 @@ func (s *smtpSender) createEmail(message *Message) (*email.Email, error) {
 }
 
 // addAttachment adds an attachment to the email
-func (s *smtpSender) addAttachment(emailMsg *email.Email, attachment Attachment) error {
+func (s *smtpSender) addAttachment(emailMsg *email.Message, attachment Attachment) error {
 	var reader io.Reader
 
 	switch {
@@ -250,7 +250,7 @@ func (s *smtpSender) addAttachment(emailMsg *email.Email, attachment Attachment)
 }
 
 // sendEmail sends the email using the appropriate method
-func (s *smtpSender) sendEmail(_ context.Context, emailMsg *email.Email) error {
+func (s *smtpSender) sendEmail(_ context.Context, emailMsg *email.Message) error {
 	var auth smtp.Auth
 	if s.config.Auth {
 		auth = s.createAuth()
@@ -281,19 +281,19 @@ func (s *smtpSender) createAuth() smtp.Auth {
 }
 
 // sendWithTLS sends email with TLS encryption
-func (s *smtpSender) sendWithTLS(emailMsg *email.Email, addr string, auth smtp.Auth) error {
+func (s *smtpSender) sendWithTLS(emailMsg *email.Message, addr string, auth smtp.Auth) error {
 	tlsConfig := s.config.TLSConfig()
 	return emailMsg.SendWithTLS(addr, auth, tlsConfig, s.config.FQDN)
 }
 
 // sendWithStartTLS sends email with STARTTLS encryption
-func (s *smtpSender) sendWithStartTLS(emailMsg *email.Email, addr string, auth smtp.Auth) error {
+func (s *smtpSender) sendWithStartTLS(emailMsg *email.Message, addr string, auth smtp.Auth) error {
 	tlsConfig := s.config.TLSConfig()
 	return emailMsg.SendWithStartTLS(addr, auth, tlsConfig, s.config.FQDN)
 }
 
 // sendPlain sends email without encryption
-func (s *smtpSender) sendPlain(emailMsg *email.Email, addr string, auth smtp.Auth) error {
+func (s *smtpSender) sendPlain(emailMsg *email.Message, addr string, auth smtp.Auth) error {
 	return emailMsg.Send(addr, auth, s.config.FQDN)
 }
 
