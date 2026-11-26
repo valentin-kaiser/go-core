@@ -134,7 +134,7 @@ type Client struct {
 func New(ctx context.Context, cfg Config) (*Client, error) {
 	err := cfg.Validate()
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("validating etcd configuration failed").AddError(err)
 	}
 
 	dialTimeout := cfg.DialTimeout

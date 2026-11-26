@@ -179,7 +179,7 @@ func Run(config *Config, start func(s *Service) error, stop func(s *Service) err
 	if interactive {
 		err := s.Start(nil)
 		if err != nil {
-			return err
+			return apperror.NewError("starting service failed").AddError(err)
 		}
 
 		return apperror.Wrap(<-s.err)

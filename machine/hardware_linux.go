@@ -8,12 +8,14 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/valentin-kaiser/go-core/apperror"
 )
 
 // collectHardwareIdentifiersWithOptions gathers Linux-specific hardware identifiers based on generator config
 func collectHardwareIdentifiersWithOptions(g *generator) ([]string, error) {
 	if g == nil {
-		return nil, fmt.Errorf("generator cannot be nil")
+		return nil, apperror.NewError("generator cannot be nil")
 	}
 
 	var collectors []func() []string
@@ -159,7 +161,7 @@ func readFirstValidFromLocations(locations []string, validator func(string) bool
 			}
 		}
 	}
-	return "", fmt.Errorf("valid value not found in any location")
+	return "", apperror.NewError("valid value not found in any location")
 }
 
 // isValidUUID checks if UUID is valid (not empty or null)
@@ -195,7 +197,7 @@ func getLinuxMACAddresses() ([]string, error) {
 	netDir := "/sys/class/net"
 	entries, err := os.ReadDir(netDir)
 	if err != nil {
-		return nil, err
+		return nil, apperror.NewErrorf("reading %s failed", netDir).AddError(err)
 	}
 
 	for _, entry := range entries {
@@ -235,7 +237,7 @@ func getLinuxDiskSerialsLSBLK() ([]string, error) {
 	cmd := exec.Command("lsblk", "-d", "-n", "-o", "SERIAL")
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, err
+		return nil, apperror.NewError("running lsblk failed").AddError(err)
 	}
 
 	var serials []string
@@ -257,7 +259,7 @@ func getLinuxDiskSerialsSys() ([]string, error) {
 	blockDir := "/sys/block"
 	entries, err := os.ReadDir(blockDir)
 	if err != nil {
-		return nil, err
+		return nil, apperror.NewErrorf("reading %s failed", blockDir).AddError(err)
 	}
 
 	for _, entry := range entries {
