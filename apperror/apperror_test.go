@@ -340,14 +340,37 @@ func TestErrorChaining(t *testing.T) {
 }
 
 func TestCatchFunction(t *testing.T) {
-	// Test normal error handling (Catch expects to panic)
+	original := apperror.CatchHandler
+	defer func() { apperror.CatchHandler = original }()
+
+	var gotMsg string
+	var gotErr error
+	apperror.CatchHandler = func(err error, msg string) {
+		gotErr = err
+		gotMsg = msg
+	}
+
+	wantErr := errors.New("test error")
+	apperror.Catch(func() error {
+		return wantErr
+	}, "operation failed")
+
+	if !errors.Is(gotErr, wantErr) {
+		t.Fatalf("CatchHandler error = %v, want %v", gotErr, wantErr)
+	}
+	if gotMsg != "operation failed" {
+		t.Fatalf("CatchHandler message = %q, want %q", gotMsg, "operation failed")
+	}
+}
+
+func TestCatchFunctionDoesNotPanic(t *testing.T) {
 	defer func() {
-		if r := recover(); r == nil {
-			t.Error("Expected Catch to panic on error")
+		r := recover()
+		if r != nil {
+			t.Fatalf("Catch panicked: %v", r)
 		}
 	}()
 
-	// This should panic
 	apperror.Catch(func() error {
 		return errors.New("test error")
 	}, "operation failed")

@@ -359,33 +359,29 @@ func HandleCustom(err error, msg string, handler func(error, string)) {
 }
 
 // Catch is a utility function to handle error checks for example in deferred functions
-// It takes an error and a message, and if the error is not nil,
-// it formats the message and panics with the error details.
+// It calls f and passes a non-nil error together with the message to CatchHandler,
+// which only logs by default. Use Handle if an error should panic.
 // defer apperror.Catch(funcWithError(), "an error occurred")
 func Catch(f func() error, msg string) {
-	if ErrorHandler != nil {
-		err := f()
-		if err != nil {
-			ErrorHandler(err, msg)
-		}
+	err := f()
+	if err != nil && CatchHandler != nil {
+		CatchHandler(err, msg)
 	}
 }
 
 // CatchCustom is a utility function to handle deferred error checks with a custom handler
 // It takes a function that returns an error, a message, and a custom handler.
 func CatchCustom(f func() error, msg string, handler func(error, string)) {
+	err := f()
+	if err == nil {
+		return
+	}
 	if handler != nil {
-		err := f()
-		if err != nil {
-			handler(err, msg)
-			return
-		}
+		handler(err, msg)
+		return
 	}
 	if ErrorHandler != nil {
-		err := f()
-		if err != nil {
-			ErrorHandler(err, msg)
-		}
+		ErrorHandler(err, msg)
 	}
 }
 
