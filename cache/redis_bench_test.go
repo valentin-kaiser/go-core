@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/cache"
+	"github.com/valentin-kaiser/go-core/v2/cache"
 )
 
 // Needs a Redis server: REDIS_URL, default redis://localhost:6379. The benchmarks fail without one.

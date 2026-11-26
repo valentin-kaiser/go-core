@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/internal/await"
-	"github.com/valentin-kaiser/go-core/queue"
+	"github.com/valentin-kaiser/go-core/v2/internal/await"
+	"github.com/valentin-kaiser/go-core/v2/queue"
 )
 
 // Login of the broker that test/compose.yaml starts for the integration tests.

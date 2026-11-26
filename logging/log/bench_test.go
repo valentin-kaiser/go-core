@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/rs/zerolog"
-	"github.com/valentin-kaiser/go-core/logging"
-	"github.com/valentin-kaiser/go-core/logging/log"
+	"github.com/valentin-kaiser/go-core/v2/logging"
+	"github.com/valentin-kaiser/go-core/v2/logging/log"
 )
 
 // Cost of a log call whose level is disabled. This is the common case on a hot

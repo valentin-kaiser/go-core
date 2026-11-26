@@ -11,7 +11,7 @@ import (
 	grpc_health_v1 "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
-	"github.com/valentin-kaiser/go-core/web/jrpc"
+	"github.com/valentin-kaiser/go-core/v2/web/jrpc"
 )
 
 type benchHealth struct{}

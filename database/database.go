@@ -34,9 +34,9 @@
 //		"fmt"
 //		"time"
 //
-//		"github.com/valentin-kaiser/go-core/database"
-//		"github.com/valentin-kaiser/go-core/flag"
-//		"github.com/valentin-kaiser/go-core/version"
+//		"github.com/valentin-kaiser/go-core/v2/database"
+//		"github.com/valentin-kaiser/go-core/v2/flag"
+//		"github.com/valentin-kaiser/go-core/v2/version"
 //		"your-project/internal/sqlc"
 //	)
 //
@@ -173,9 +173,9 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	// Registers the SQLite driver for DriverSQLite.
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/interruption"
-	"github.com/valentin-kaiser/go-core/logging"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
+	"github.com/valentin-kaiser/go-core/v2/interruption"
+	"github.com/valentin-kaiser/go-core/v2/logging"
 )
 
 // The supported database drivers.

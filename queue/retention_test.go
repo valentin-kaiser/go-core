@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/queue"
+	"github.com/valentin-kaiser/go-core/v2/queue"
 )
 
 const (

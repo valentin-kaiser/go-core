@@ -18,8 +18,8 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
-	"github.com/valentin-kaiser/go-core/internal/await"
-	"github.com/valentin-kaiser/go-core/web/jrpc"
+	"github.com/valentin-kaiser/go-core/v2/internal/await"
+	"github.com/valentin-kaiser/go-core/v2/web/jrpc"
 )
 
 const (

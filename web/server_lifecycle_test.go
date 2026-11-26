@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/web"
+	"github.com/valentin-kaiser/go-core/v2/web"
 )
 
 const (

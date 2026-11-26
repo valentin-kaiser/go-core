@@ -5,7 +5,7 @@ import (
 	"maps"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
 )
 
 // maxL1TTL limits the TTL of items in the L1 cache to prevent memory bloat.

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/logging"
+	"github.com/valentin-kaiser/go-core/v2/logging"
 )
 
 func TestNewSlogLogger_MapsLevelsAndFields(t *testing.T) {

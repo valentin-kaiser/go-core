@@ -6,7 +6,7 @@ package log
 import (
 	"log/slog"
 
-	"github.com/valentin-kaiser/go-core/logging"
+	"github.com/valentin-kaiser/go-core/v2/logging"
 )
 
 // noop is returned when the global adapter is unusable, so that case does not allocate

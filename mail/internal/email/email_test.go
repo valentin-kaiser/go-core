@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/mail/internal/email"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
+	"github.com/valentin-kaiser/go-core/v2/mail/internal/email"
 )
 
 func TestNew(t *testing.T) {

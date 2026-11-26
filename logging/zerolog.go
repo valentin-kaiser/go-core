@@ -11,7 +11,7 @@ import (
 
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 

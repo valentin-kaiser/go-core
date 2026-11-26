@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/mail"
+	"github.com/valentin-kaiser/go-core/v2/mail"
 )
 
 func TestTemplateManager_Comprehensive(t *testing.T) {

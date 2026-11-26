@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	"github.com/rs/zerolog"
-	"github.com/valentin-kaiser/go-core/logging"
+	"github.com/valentin-kaiser/go-core/v2/logging"
 )
 
 type benchWriter struct{ h http.Header }

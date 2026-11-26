@@ -22,7 +22,7 @@
 //		"context"
 //		"time"
 //
-//		"github.com/valentin-kaiser/go-core/cache"
+//		"github.com/valentin-kaiser/go-core/v2/cache"
 //	)
 //
 //	func main() {
@@ -73,8 +73,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/config"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
+	"github.com/valentin-kaiser/go-core/v2/config"
 )
 
 // Operation names reported in cache errors.

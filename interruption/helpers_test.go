@@ -3,7 +3,7 @@ package interruption_test
 import (
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/flag"
+	"github.com/valentin-kaiser/go-core/v2/flag"
 )
 
 // setDebug sets flag.Debug for the test and restores the previous value afterwards.

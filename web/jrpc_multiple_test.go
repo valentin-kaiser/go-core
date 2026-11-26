@@ -6,7 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/web/jrpc"
+	"github.com/valentin-kaiser/go-core/v2/web/jrpc"
 	grpc_health_v1 "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )

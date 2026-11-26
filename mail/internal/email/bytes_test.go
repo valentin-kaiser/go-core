@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/mail/internal/email"
+	"github.com/valentin-kaiser/go-core/v2/mail/internal/email"
 )
 
 const (

@@ -5,7 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/web"
+	"github.com/valentin-kaiser/go-core/v2/web"
 )
 
 type discardWriter struct{ h http.Header }

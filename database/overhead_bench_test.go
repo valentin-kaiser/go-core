@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/database"
+	"github.com/valentin-kaiser/go-core/v2/database"
 )
 
 // These benchmarks isolate what database.Query / Transaction add around a

@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/database"
-	"github.com/valentin-kaiser/go-core/internal/await"
+	"github.com/valentin-kaiser/go-core/v2/database"
+	"github.com/valentin-kaiser/go-core/v2/internal/await"
 )
 
 // These tests need a MySQL and a PostgreSQL server and fail without them. Start them with

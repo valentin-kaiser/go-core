@@ -74,7 +74,7 @@ import (
 
 	clientv3 "go.etcd.io/etcd/client/v3"
 
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
 )
 
 const (

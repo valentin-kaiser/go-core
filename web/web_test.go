@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/valentin-kaiser/go-core/security"
-	"github.com/valentin-kaiser/go-core/web"
+	"github.com/valentin-kaiser/go-core/v2/security"
+	"github.com/valentin-kaiser/go-core/v2/web"
 )
 
 func TestServerInstance(t *testing.T) {

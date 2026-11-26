@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
 	"google.golang.org/protobuf/proto"
 )
 

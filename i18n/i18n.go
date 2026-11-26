@@ -60,7 +60,7 @@
 //	    "embed"
 //	    "fmt"
 //
-//	    "github.com/valentin-kaiser/go-core/i18n"
+//	    "github.com/valentin-kaiser/go-core/v2/i18n"
 //	)
 //
 //	//go:embed locales/*.json

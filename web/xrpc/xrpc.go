@@ -38,9 +38,9 @@ import (
 	"sync"
 
 	"github.com/gorilla/websocket"
-	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/interruption"
-	"github.com/valentin-kaiser/go-core/logging"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
+	"github.com/valentin-kaiser/go-core/v2/interruption"
+	"github.com/valentin-kaiser/go-core/v2/logging"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )

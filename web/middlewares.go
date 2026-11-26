@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/flag"
-	"github.com/valentin-kaiser/go-core/logging"
-	"github.com/valentin-kaiser/go-core/version"
+	"github.com/valentin-kaiser/go-core/v2/flag"
+	"github.com/valentin-kaiser/go-core/v2/logging"
+	"github.com/valentin-kaiser/go-core/v2/version"
 )
 
 const (

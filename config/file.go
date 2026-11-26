@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
 
 	"gopkg.in/yaml.v2"
 )

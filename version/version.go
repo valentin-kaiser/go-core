@@ -48,7 +48,7 @@
 //	GIT_COMMIT := $(shell git rev-parse HEAD)
 //	GIT_SHORT := $(shell git rev-parse --short HEAD)
 //	BUILD_TIME := $(shell date +%FT%T%z)
-//	VERSION_PACKAGE := github.com/valentin-kaiser/go-core/version
+//	VERSION_PACKAGE := github.com/valentin-kaiser/go-core/v2/version
 //
 //	go build -ldflags "-X $(VERSION_PACKAGE).GitTag=$(GIT_TAG) \
 //	                 -X $(VERSION_PACKAGE).GitCommit=$(GIT_COMMIT) \
@@ -87,8 +87,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/logging"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
+	"github.com/valentin-kaiser/go-core/v2/logging"
 )
 
 const (

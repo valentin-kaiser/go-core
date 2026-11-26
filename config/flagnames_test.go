@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/spf13/pflag"
-	"github.com/valentin-kaiser/go-core/config"
+	"github.com/valentin-kaiser/go-core/v2/config"
 )
 
 type flagNameServer struct {

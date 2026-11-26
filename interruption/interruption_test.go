@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/internal/await"
-	"github.com/valentin-kaiser/go-core/interruption"
+	"github.com/valentin-kaiser/go-core/v2/internal/await"
+	"github.com/valentin-kaiser/go-core/v2/interruption"
 )
 
 const (

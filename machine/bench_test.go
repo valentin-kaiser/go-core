@@ -3,7 +3,7 @@ package machine_test
 import (
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/machine"
+	"github.com/valentin-kaiser/go-core/v2/machine"
 )
 
 // ID collects hardware facts by running OS commands; it is a startup cost, not a hot path.

@@ -35,7 +35,7 @@ import (
 	"path/filepath"
 
 	"github.com/cespare/xxhash/v2"
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
 )
 
 // Key and password constants.

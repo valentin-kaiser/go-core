@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
 )
 
 func traceHere() string { return apperror.Trace(2) }

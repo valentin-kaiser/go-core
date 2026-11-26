@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
 )
 
 // Cron expression constants.

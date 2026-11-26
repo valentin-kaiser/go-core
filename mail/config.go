@@ -6,8 +6,8 @@ import (
 	"io/fs"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/config"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
+	"github.com/valentin-kaiser/go-core/v2/config"
 )
 
 // maxPort is the highest valid TCP port number.

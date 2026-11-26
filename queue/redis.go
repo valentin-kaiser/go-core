@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
 )
 
 // Redis key and field constants.

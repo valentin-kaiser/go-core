@@ -4,7 +4,7 @@ import (
 	"bytes"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/security"
+	"github.com/valentin-kaiser/go-core/v2/security"
 )
 
 const (

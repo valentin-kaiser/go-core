@@ -20,8 +20,8 @@
 //		"context"
 //		"time"
 //
-//		"github.com/valentin-kaiser/go-core/mail"
-//		"github.com/valentin-kaiser/go-core/queue"
+//		"github.com/valentin-kaiser/go-core/v2/mail"
+//		"github.com/valentin-kaiser/go-core/v2/queue"
 //	)
 //
 //	func main() {
@@ -107,9 +107,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/logging"
-	"github.com/valentin-kaiser/go-core/queue"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
+	"github.com/valentin-kaiser/go-core/v2/logging"
+	"github.com/valentin-kaiser/go-core/v2/queue"
 )
 
 // Queue job constants.

@@ -1,6 +1,6 @@
 # go-core
 
-[![GoDoc](https://godoc.org/github.com/golang/gddo?status.svg)](http://godoc.org/github.com/valentin-kaiser/go-core)
+[![GoDoc](https://godoc.org/github.com/golang/gddo?status.svg)](http://godoc.org/github.com/valentin-kaiser/go-core/v2)
 [![License](https://img.shields.io/badge/License-BSD_3--Clause-blue.svg)](https://github.com/valentin-kaiser/go-core/blob/main/LICENSE)
 
 **go-core** is a comprehensive, modular collection of Go libraries designed to accelerate professional application development. It provides robust, production-grade utilities for error handling, configuration, logging, caching, database management, security, service orchestration, and more. Each package is crafted for extensibility, reliability, and seamless integration.
@@ -76,7 +76,7 @@
 ## Installation
 
 ```bash
-go get github.com/valentin-kaiser/go-core
+go get github.com/valentin-kaiser/go-core/v2
 ```
 
 ## Package Overview
@@ -103,7 +103,7 @@ go get github.com/valentin-kaiser/go-core
 
 ## Documentation
 
-See [GoDoc](http://godoc.org/github.com/valentin-kaiser/go-core) for full API documentation and usage details.
+See [GoDoc](http://godoc.org/github.com/valentin-kaiser/go-core/v2) for full API documentation and usage details.
 
 
 ## Contributing

@@ -7,7 +7,7 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/valentin-kaiser/go-core/i18n"
+	"github.com/valentin-kaiser/go-core/v2/i18n"
 )
 
 func TestParse(t *testing.T) {

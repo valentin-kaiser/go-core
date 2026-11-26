@@ -6,8 +6,8 @@ import (
 	stdlog "log"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/logging"
-	"github.com/valentin-kaiser/go-core/logging/log"
+	"github.com/valentin-kaiser/go-core/v2/logging"
+	"github.com/valentin-kaiser/go-core/v2/logging/log"
 )
 
 func TestLoggerSingleton(t *testing.T) {

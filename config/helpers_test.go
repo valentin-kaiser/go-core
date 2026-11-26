@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/flag"
+	"github.com/valentin-kaiser/go-core/v2/flag"
 )
 
 const watchTimeout = 5 * time.Second

@@ -13,7 +13,7 @@
 //	package main
 //
 //	import (
-//		"github.com/valentin-kaiser/go-core/interruption"
+//		"github.com/valentin-kaiser/go-core/v2/interruption"
 //		"fmt"
 //	)
 //
@@ -48,9 +48,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/flag"
-	"github.com/valentin-kaiser/go-core/logging"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
+	"github.com/valentin-kaiser/go-core/v2/flag"
+	"github.com/valentin-kaiser/go-core/v2/logging"
 )
 
 const (

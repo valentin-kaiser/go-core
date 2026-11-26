@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/logging"
+	"github.com/valentin-kaiser/go-core/v2/logging"
 )
 
 // stdout redirected to a regular file (command > app.log) still counts as interactive

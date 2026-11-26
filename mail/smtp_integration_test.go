@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/internal/await"
-	"github.com/valentin-kaiser/go-core/mail"
+	"github.com/valentin-kaiser/go-core/v2/internal/await"
+	"github.com/valentin-kaiser/go-core/v2/mail"
 )
 
 const (

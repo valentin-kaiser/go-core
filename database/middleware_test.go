@@ -7,8 +7,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/database"
-	"github.com/valentin-kaiser/go-core/logging"
+	"github.com/valentin-kaiser/go-core/v2/database"
+	"github.com/valentin-kaiser/go-core/v2/logging"
 )
 
 // mockMiddleware is a mock implementation of the Middleware interface

@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
-	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/config"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
+	"github.com/valentin-kaiser/go-core/v2/config"
 )
 
 // Redis INFO output parsing constants.

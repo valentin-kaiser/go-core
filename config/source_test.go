@@ -7,8 +7,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/config"
-	"github.com/valentin-kaiser/go-core/internal/await"
+	"github.com/valentin-kaiser/go-core/v2/config"
+	"github.com/valentin-kaiser/go-core/v2/internal/await"
 )
 
 // mockSource is an in-memory config.Source used to verify the manager's

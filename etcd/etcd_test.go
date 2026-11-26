@@ -12,8 +12,8 @@ import (
 	"go.etcd.io/etcd/server/v3/embed"
 	"go.uber.org/zap"
 
-	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/etcd"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
+	"github.com/valentin-kaiser/go-core/v2/etcd"
 )
 
 const (

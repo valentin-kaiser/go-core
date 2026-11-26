@@ -14,8 +14,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/logging"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
+	"github.com/valentin-kaiser/go-core/v2/logging"
 )
 
 // hashLength is the number of hex characters of the middleware hash used in the driver name.

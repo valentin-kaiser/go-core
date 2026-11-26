@@ -7,7 +7,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/web"
+	"github.com/valentin-kaiser/go-core/v2/web"
 )
 
 // Requests are served while routes, status hooks and middlewares are registered.

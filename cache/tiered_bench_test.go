@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/cache"
+	"github.com/valentin-kaiser/go-core/v2/cache"
 )
 
 // Tiered cache with two in-process layers, so only the tier logic is measured (no Redis).

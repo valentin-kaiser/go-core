@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/security"
+	"github.com/valentin-kaiser/go-core/v2/security"
 )
 
 // The cipher is cached per passphrase; a changed passphrase has to take effect.

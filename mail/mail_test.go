@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/mail"
-	"github.com/valentin-kaiser/go-core/queue"
+	"github.com/valentin-kaiser/go-core/v2/mail"
+	"github.com/valentin-kaiser/go-core/v2/queue"
 )
 
 func TestDefaultConfig(t *testing.T) {

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/flag"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
+	"github.com/valentin-kaiser/go-core/v2/flag"
 )
 
 func TestNewError(t *testing.T) {

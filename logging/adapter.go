@@ -9,7 +9,7 @@
 //
 // Example usage:
 //
-//	import "github.com/valentin-kaiser/go-core/logging"
+//	import "github.com/valentin-kaiser/go-core/v2/logging"
 //
 //	logger := logging.GetGlobalAdapter()
 //	logger.Info().Str("key", "value").Msg("Application started")

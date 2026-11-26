@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
 )
 
 // Wrap-at-every-return is a common pattern, so the cost that matters is

@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"reflect"
 
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
 )
 
 // DBTX is the interface a sqlc generated constructor takes. Both *sql.DB and *sql.Tx implement it.

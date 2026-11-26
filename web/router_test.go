@@ -6,7 +6,7 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/web"
+	"github.com/valentin-kaiser/go-core/v2/web"
 )
 
 func TestRouterUnregisterHandler(t *testing.T) {

@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/valentin-kaiser/go-core/web/xrpc"
+	"github.com/valentin-kaiser/go-core/v2/web/xrpc"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	rpb "google.golang.org/grpc/reflection/grpc_reflection_v1"

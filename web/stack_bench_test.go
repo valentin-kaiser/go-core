@@ -10,7 +10,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
-	"github.com/valentin-kaiser/go-core/internal/await"
+	"github.com/valentin-kaiser/go-core/v2/internal/await"
 )
 
 const (

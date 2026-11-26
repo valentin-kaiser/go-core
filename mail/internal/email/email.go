@@ -26,7 +26,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
 )
 
 // Header names, media types and encodings used while building and parsing messages.

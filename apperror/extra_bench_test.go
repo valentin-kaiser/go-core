@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
 )
 
 func BenchmarkWhere(b *testing.B) {

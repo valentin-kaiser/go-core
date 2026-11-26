@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/config"
-	"github.com/valentin-kaiser/go-core/internal/await"
+	"github.com/valentin-kaiser/go-core/v2/config"
+	"github.com/valentin-kaiser/go-core/v2/internal/await"
 )
 
 const (

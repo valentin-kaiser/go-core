@@ -12,7 +12,7 @@ import (
 	"encoding/pem"
 	"os"
 
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
 	"golang.org/x/crypto/pbkdf2"
 )
 

@@ -31,7 +31,7 @@
 //
 //	import (
 //		"fmt"
-//		"github.com/valentin-kaiser/go-core/flag"
+//		"github.com/valentin-kaiser/go-core/v2/flag"
 //	)
 //
 //	var CustomFlag string

@@ -11,9 +11,9 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
-	"github.com/valentin-kaiser/go-core/database"
-	"github.com/valentin-kaiser/go-core/internal/await"
-	"github.com/valentin-kaiser/go-core/logging"
+	"github.com/valentin-kaiser/go-core/v2/database"
+	"github.com/valentin-kaiser/go-core/v2/internal/await"
+	"github.com/valentin-kaiser/go-core/v2/logging"
 )
 
 const (

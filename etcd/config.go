@@ -7,8 +7,8 @@ import (
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"gopkg.in/yaml.v2"
 
-	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/config"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
+	"github.com/valentin-kaiser/go-core/v2/config"
 )
 
 // source is a config.Source backed by etcd. Each leaf configuration

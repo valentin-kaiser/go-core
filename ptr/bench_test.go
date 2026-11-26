@@ -3,7 +3,7 @@ package ptr_test
 import (
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/ptr"
+	"github.com/valentin-kaiser/go-core/v2/ptr"
 )
 
 var sinkInt *int

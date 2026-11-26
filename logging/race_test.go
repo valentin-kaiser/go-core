@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/rs/zerolog"
-	"github.com/valentin-kaiser/go-core/logging"
-	logpkg "github.com/valentin-kaiser/go-core/logging/log"
+	"github.com/valentin-kaiser/go-core/v2/logging"
+	logpkg "github.com/valentin-kaiser/go-core/v2/logging/log"
 )
 
 const (

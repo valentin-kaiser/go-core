@@ -42,8 +42,8 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/valentin-kaiser/go-core/flag"
-	"github.com/valentin-kaiser/go-core/i18n"
+	"github.com/valentin-kaiser/go-core/v2/flag"
+	"github.com/valentin-kaiser/go-core/v2/i18n"
 )
 
 const (

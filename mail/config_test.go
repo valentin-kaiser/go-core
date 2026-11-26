@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/mail"
+	"github.com/valentin-kaiser/go-core/v2/mail"
 )
 
 func TestDefaultConfig_Comprehensive(t *testing.T) {

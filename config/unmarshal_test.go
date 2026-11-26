@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/config"
+	"github.com/valentin-kaiser/go-core/v2/config"
 )
 
 const (

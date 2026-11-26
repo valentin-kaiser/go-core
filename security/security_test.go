@@ -10,8 +10,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/security"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
+	"github.com/valentin-kaiser/go-core/v2/security"
 )
 
 const (

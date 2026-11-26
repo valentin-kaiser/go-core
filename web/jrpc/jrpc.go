@@ -33,8 +33,8 @@
 //		     "context"
 //	      "log"
 //	      "net/http"
-//	  	 "github.com/valentin-kaiser/go-core/web"
-//	      "github.com/valentin-kaiser/go-core/web/jrpc"
+//	  	 "github.com/valentin-kaiser/go-core/v2/web"
+//	      "github.com/valentin-kaiser/go-core/v2/web/jrpc"
 //	  )
 //
 //	  type MyService struct {
@@ -73,10 +73,10 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/interruption"
-	"github.com/valentin-kaiser/go-core/logging"
-	"github.com/valentin-kaiser/go-core/logging/log"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
+	"github.com/valentin-kaiser/go-core/v2/interruption"
+	"github.com/valentin-kaiser/go-core/v2/logging"
+	"github.com/valentin-kaiser/go-core/v2/logging/log"
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"

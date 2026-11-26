@@ -9,7 +9,7 @@ import (
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
 )
 
 // maxDequeuePause is the longest pause between two polls of an empty queue

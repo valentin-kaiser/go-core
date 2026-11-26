@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/spf13/pflag"
-	"github.com/valentin-kaiser/go-core/flag"
+	"github.com/valentin-kaiser/go-core/v2/flag"
 )
 
 func TestDefaultFlags(t *testing.T) {

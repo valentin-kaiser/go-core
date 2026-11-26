@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/machine"
+	"github.com/valentin-kaiser/go-core/v2/machine"
 )
 
 // idLength is the length of the hex encoded SHA-256 digest.

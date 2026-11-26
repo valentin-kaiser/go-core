@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/queue"
+	"github.com/valentin-kaiser/go-core/v2/queue"
 )
 
 // Nothing consumes the jobs, so the queue grows during the run and a large part of the time is

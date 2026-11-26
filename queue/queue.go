@@ -27,7 +27,7 @@
 //		"fmt"
 //		"time"
 //
-//		"github.com/valentin-kaiser/go-core/queue"
+//		"github.com/valentin-kaiser/go-core/v2/queue"
 //	)
 //
 //	func main() {
@@ -71,7 +71,7 @@
 //		"fmt"
 //		"time"
 //
-//		"github.com/valentin-kaiser/go-core/queue"
+//		"github.com/valentin-kaiser/go-core/v2/queue"
 //	)
 //
 //	func main() {
@@ -126,7 +126,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
 )
 
 // Queue defines the interface for job queues

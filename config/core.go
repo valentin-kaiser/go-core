@@ -27,8 +27,8 @@
 //
 //	import (
 //	    "fmt"
-//	    "github.com/valentin-kaiser/go-core/config"
-//	    "github.com/valentin-kaiser/go-core/flag"
+//	    "github.com/valentin-kaiser/go-core/v2/config"
+//	    "github.com/valentin-kaiser/go-core/v2/flag"
 //	)
 //
 //	type ServerConfig struct {
@@ -97,8 +97,8 @@ import (
 	"sync/atomic"
 
 	"github.com/spf13/pflag"
-	"github.com/valentin-kaiser/go-core/apperror"
-	"github.com/valentin-kaiser/go-core/flag"
+	"github.com/valentin-kaiser/go-core/v2/apperror"
+	"github.com/valentin-kaiser/go-core/v2/flag"
 )
 
 var (
