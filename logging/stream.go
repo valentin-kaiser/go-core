@@ -6,6 +6,9 @@ import (
 	"sync"
 )
 
+// defaultBufferSize is the number of entries a StreamWriter keeps when no size is given.
+const defaultBufferSize = 100
+
 // StreamWriter is an io.Writer that streams log entries to listeners
 type StreamWriter struct {
 	mu        sync.RWMutex
@@ -19,7 +22,7 @@ type StreamWriter struct {
 // NewStreamWriter creates a new StreamWriter with optional buffer size
 func NewStreamWriter(bufferMax int) *StreamWriter {
 	if bufferMax <= 0 {
-		bufferMax = 100 // default buffer size
+		bufferMax = defaultBufferSize
 	}
 	return &StreamWriter{
 		listeners: make([]chan string, 0),

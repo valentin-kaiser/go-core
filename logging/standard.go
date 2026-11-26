@@ -8,6 +8,25 @@ import (
 	"sync/atomic"
 )
 
+// Formatting constants of the standard adapter.
+const (
+	// callerSkipFrames is the number of stack frames between callerInfo and the logging call site.
+	callerSkipFrames = 4
+
+	// messageOverheadBytes and fieldOverheadBytes estimate the buffer needed to format an event.
+	messageOverheadBytes = 48
+	fieldOverheadBytes   = 24
+	// scratchBufferBytes holds the digits of a formatted number.
+	scratchBufferBytes = 32
+
+	decimalBase  = 10
+	floatBitSize = 64
+
+	callerSuffix = " > "
+	pkgPrefix    = " pkg="
+	errorPrefix  = " error="
+)
+
 // StandardAdapter implements LogAdapter using Go's standard log package
 type StandardAdapter struct {
 	logger *log.Logger
@@ -92,7 +111,7 @@ func (e *StandardEvent) shouldLog() bool {
 // formatMessage formats the message with level, fields, and error
 func (e *StandardEvent) formatMessage(msg string) string {
 	var b strings.Builder
-	b.Grow(len(msg) + 48 + 24*len(e.fields))
+	b.Grow(len(msg) + messageOverheadBytes + fieldOverheadBytes*len(e.fields))
 
 	// Level prefix
 	b.WriteByte('[')
@@ -102,7 +121,7 @@ func (e *StandardEvent) formatMessage(msg string) string {
 	if e.caller != "" {
 		b.WriteByte(' ')
 		b.WriteString(e.caller)
-		b.WriteString(" > ")
+		b.WriteString(callerSuffix)
 	}
 
 	// The main message
@@ -111,7 +130,7 @@ func (e *StandardEvent) formatMessage(msg string) string {
 
 	// Package name if set
 	if e.adapter.pkg != "" {
-		b.WriteString(" pkg=")
+		b.WriteString(pkgPrefix)
 		b.WriteString(e.adapter.pkg)
 	}
 
@@ -123,7 +142,7 @@ func (e *StandardEvent) formatMessage(msg string) string {
 	}
 
 	if e.err != nil {
-		b.WriteString(" error=")
+		b.WriteString(errorPrefix)
 		writeValue(&b, e.err)
 	}
 
@@ -159,26 +178,26 @@ func upperLevelName(l Level) string {
 // writeValue writes the value like fmt.Sprintf("%v") would, without going through fmt for
 // the common types
 func writeValue(b *strings.Builder, v any) {
-	var scratch [32]byte
+	var scratch [scratchBufferBytes]byte
 	switch x := v.(type) {
 	case string:
 		b.WriteString(x)
 	case int:
-		b.Write(strconv.AppendInt(scratch[:0], int64(x), 10))
+		b.Write(strconv.AppendInt(scratch[:0], int64(x), decimalBase))
 	case int64:
-		b.Write(strconv.AppendInt(scratch[:0], x, 10))
+		b.Write(strconv.AppendInt(scratch[:0], x, decimalBase))
 	case int32:
-		b.Write(strconv.AppendInt(scratch[:0], int64(x), 10))
+		b.Write(strconv.AppendInt(scratch[:0], int64(x), decimalBase))
 	case uint:
-		b.Write(strconv.AppendUint(scratch[:0], uint64(x), 10))
+		b.Write(strconv.AppendUint(scratch[:0], uint64(x), decimalBase))
 	case uint64:
-		b.Write(strconv.AppendUint(scratch[:0], x, 10))
+		b.Write(strconv.AppendUint(scratch[:0], x, decimalBase))
 	case uint32:
-		b.Write(strconv.AppendUint(scratch[:0], uint64(x), 10))
+		b.Write(strconv.AppendUint(scratch[:0], uint64(x), decimalBase))
 	case bool:
 		b.Write(strconv.AppendBool(scratch[:0], x))
 	case float64:
-		b.Write(strconv.AppendFloat(scratch[:0], x, 'g', -1, 64))
+		b.Write(strconv.AppendFloat(scratch[:0], x, 'g', -1, floatBitSize))
 	case error:
 		b.WriteString(x.Error())
 	default:
@@ -201,7 +220,7 @@ func (s *StandardAdapter) GetLevel() Level {
 func (s *StandardAdapter) event(level Level) Event {
 	e := &StandardEvent{adapter: s, level: level}
 	if debug.Load() && e.shouldLog() {
-		e.caller = callerInfo(4)
+		e.caller = callerInfo(callerSkipFrames)
 	}
 	return e
 }
