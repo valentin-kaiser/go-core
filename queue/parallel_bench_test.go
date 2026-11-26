@@ -1,6 +1,8 @@
 package queue_test
 
 import (
+	"context"
+	"errors"
 	"strconv"
 	"sync/atomic"
 	"testing"
@@ -20,7 +22,10 @@ func BenchmarkMemoryQueueEnqueueParallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			job := queue.NewJob("bench").WithID("job-" + strconv.FormatInt(n.Add(1), 10)).Build()
-			_ = q.Enqueue(ctx, job)
+			err := q.Enqueue(ctx, job)
+			if err != nil {
+				b.Error(err)
+			}
 		}
 	})
 }
@@ -34,8 +39,14 @@ func BenchmarkMemoryQueueEnqueueDequeueParallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
 			job := queue.NewJob("bench").WithID("job-" + strconv.FormatInt(n.Add(1), 10)).Build()
-			_ = q.Enqueue(ctx, job)
-			_, _ = q.Dequeue(ctx, 10*time.Millisecond)
+			err := q.Enqueue(ctx, job)
+			if err != nil {
+				b.Error(err)
+			}
+			_, err = q.Dequeue(ctx, 10*time.Millisecond)
+			if err != nil && !errors.Is(err, context.DeadlineExceeded) {
+				b.Error(err)
+			}
 		}
 	})
 }

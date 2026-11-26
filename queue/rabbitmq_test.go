@@ -272,7 +272,7 @@ func TestRabbitMQReconnection(t *testing.T) {
 	if err != nil {
 		t.Skipf("Skipping RabbitMQ reconnection test: %v", err)
 	}
-	defer apperror.Handle(queue.Close(), "failed to close queue")
+	defer apperror.Catch(queue.Close, "closing queue failed")
 
 	err = queue.Reconnect(config)
 	if err != nil {
@@ -353,7 +353,7 @@ func BenchmarkRabbitMQEnqueue(b *testing.B) {
 	if err != nil {
 		b.Skipf("Skipping RabbitMQ benchmark: %v", err)
 	}
-	defer func() { apperror.Handle(q.Close(), "failed to close queue") }()
+	defer apperror.Catch(q.Close, "closing queue failed")
 
 	ctx := b.Context()
 
@@ -389,7 +389,7 @@ func BenchmarkRabbitMQDequeue(b *testing.B) {
 	if err != nil {
 		b.Skipf("Skipping RabbitMQ dequeue benchmark: %v", err)
 	}
-	defer func() { apperror.Handle(q.Close(), "failed to close queue") }()
+	defer apperror.Catch(q.Close, "closing queue failed")
 
 	ctx := b.Context()
 
@@ -440,8 +440,14 @@ func newTestRabbitMQ(t *testing.T, name string) *queue.RabbitMQ {
 		t.Skipf("Skipping RabbitMQ test: %v", err)
 	}
 	t.Cleanup(func() {
-		_ = q.PurgeQueue(context.Background())
-		_ = q.Close()
+		err := q.PurgeQueue(context.Background())
+		if err != nil {
+			t.Logf("purging queue failed: %v", err)
+		}
+		err = q.Close()
+		if err != nil {
+			t.Logf("closing queue failed: %v", err)
+		}
 	})
 	return q
 }
@@ -467,7 +473,10 @@ func TestRabbitMQDequeueWakesOnNewJob(t *testing.T) {
 
 	go func() {
 		time.Sleep(150 * time.Millisecond)
-		_ = q.Enqueue(context.Background(), queue.NewJob("wake").WithID("wake-1").Build())
+		err := q.Enqueue(context.Background(), queue.NewJob("wake").WithID("wake-1").Build())
+		if err != nil {
+			t.Error(err)
+		}
 	}()
 
 	start := time.Now()
@@ -518,7 +527,10 @@ func TestRabbitMQCloseDoesNotWaitForDequeue(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		_, _ = q.Dequeue(context.Background(), 5*time.Second)
+		_, err := q.Dequeue(context.Background(), 5*time.Second)
+		if err != nil {
+			t.Logf("dequeue ended: %v", err)
+		}
 		close(done)
 	}()
 	time.Sleep(100 * time.Millisecond)
@@ -554,8 +566,14 @@ func newPrefetchRabbitMQ(tb testing.TB, name string, prefetch int) *queue.Rabbit
 		tb.Skipf("Skipping RabbitMQ test: %v", err)
 	}
 	tb.Cleanup(func() {
-		_ = q.PurgeQueue(context.Background())
-		_ = q.Close()
+		err := q.PurgeQueue(context.Background())
+		if err != nil {
+			tb.Logf("purging queue failed: %v", err)
+		}
+		err = q.Close()
+		if err != nil {
+			tb.Logf("closing queue failed: %v", err)
+		}
 	})
 	return q
 }
@@ -602,7 +620,10 @@ func TestRabbitMQConsumerModeWakesImmediately(t *testing.T) {
 	q := newPrefetchRabbitMQ(t, "consumerwake", 1)
 	go func() {
 		time.Sleep(100 * time.Millisecond)
-		_ = q.Enqueue(context.Background(), queue.NewJob("w").WithID("w-1").Build())
+		err := q.Enqueue(context.Background(), queue.NewJob("w").WithID("w-1").Build())
+		if err != nil {
+			t.Error(err)
+		}
 	}()
 
 	start := time.Now()
@@ -642,7 +663,10 @@ func TestRabbitMQConsumerModeConcurrentWorkers(t *testing.T) {
 				seen[job.ID]++
 				mu.Unlock()
 				job.Status = queue.StatusCompleted
-				_ = q.UpdateJob(ctx, job)
+				err = q.UpdateJob(ctx, job)
+				if err != nil {
+					t.Error(err)
+				}
 			}
 		})
 	}
@@ -774,7 +798,7 @@ func TestRabbitMQReconnectDeclaresAutoDeleteQueue(t *testing.T) {
 	if err != nil {
 		t.Skipf("Skipping RabbitMQ test: %v", err)
 	}
-	t.Cleanup(func() { _ = q.Close() })
+	t.Cleanup(func() { apperror.Catch(q.Close, "closing queue failed") })
 	ctx := t.Context()
 
 	_, err = q.Dequeue(ctx, 100*time.Millisecond)

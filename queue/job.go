@@ -185,7 +185,7 @@ func (bm *BatchManager) CreateBatch(ctx context.Context, name string, jobs []*Jo
 
 		err := bm.manager.Enqueue(ctx, job)
 		if err != nil {
-			return nil, apperror.Wrap(err)
+			return nil, apperror.NewErrorf("enqueuing job %s of batch %s failed", job.ID, batch.ID).AddError(err)
 		}
 
 		batch.JobIDs = append(batch.JobIDs, job.ID)
@@ -283,7 +283,7 @@ func (bm *BatchManager) DeleteBatch(ctx context.Context, id string) error {
 		err := bm.manager.queue.DeleteJob(ctx, jobID)
 		if err != nil {
 			// Log the error but continue with other jobs
-			logger.Error().Err(err).Field("job_id", jobID).Msg("Failed to delete job from batch")
+			logger.Error().Err(err).Field("job_id", jobID).Msg("deleting job from batch failed")
 		}
 	}
 
