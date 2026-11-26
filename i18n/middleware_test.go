@@ -125,7 +125,7 @@ func TestGlobalMiddleware(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer resetBundle(t)
+	t.Cleanup(func() { resetBundle(t) })
 
 	var captured string
 	handler := i18n.GlobalMiddleware()(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {

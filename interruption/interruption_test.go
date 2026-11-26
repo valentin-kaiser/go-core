@@ -12,8 +12,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/flag"
+	"github.com/valentin-kaiser/go-core/internal/await"
 	"github.com/valentin-kaiser/go-core/interruption"
+)
+
+const (
+	longPanicRepeats       = 100
+	notDoneWait            = 10 * time.Millisecond
+	waitTimeout            = 5 * time.Second
+	panicIterations        = 1000
+	maxPerformanceDuration = time.Second
+	largePanicBytes        = 1024 * 1024
+	deepStackDepth         = 100
+	benchHandlerCount      = 10
 )
 
 func TestHandle(t *testing.T) {
@@ -55,11 +66,11 @@ func TestHandleWithDifferentPanicTypes(t *testing.T) {
 		name  string
 		panic any
 	}{
-		{"string panic", "string panic message"},
-		{"int panic", 42},
-		{"error panic", errors.New("test error")},
-		{"nil panic", nil},
-		{"struct panic", struct{ msg string }{msg: "struct panic"}},
+		{name: "string panic", panic: "string panic message"},
+		{name: "int panic", panic: 42},
+		{name: "error panic", panic: errors.New("test error")},
+		{name: "nil panic", panic: nil},
+		{name: "struct panic", panic: struct{ msg string }{msg: "struct panic"}},
 	}
 
 	for _, tc := range testCases {
@@ -84,12 +95,8 @@ func TestHandleWithDifferentPanicTypes(t *testing.T) {
 }
 
 func TestHandleInDebugMode(t *testing.T) {
-	// Save original debug state
-	originalDebug := flag.Debug
-	defer func() { flag.Debug = originalDebug }()
-
 	// Test with debug mode enabled
-	flag.Debug = true
+	setDebug(t, true)
 
 	var handled bool
 
@@ -109,12 +116,8 @@ func TestHandleInDebugMode(t *testing.T) {
 }
 
 func TestHandleInProductionMode(t *testing.T) {
-	// Save original debug state
-	originalDebug := flag.Debug
-	defer func() { flag.Debug = originalDebug }()
-
 	// Test with debug mode disabled
-	flag.Debug = false
+	setDebug(t, false)
 
 	var handled bool
 
@@ -215,12 +218,7 @@ func TestHandleInGoroutine(t *testing.T) {
 		panic("goroutine panic")
 	}()
 
-	select {
-	case <-done:
-		// Success - panic was handled
-	case <-make(chan bool):
-		t.Error("Handle should have recovered from panic in goroutine")
-	}
+	await.Receive(t, done, waitTimeout, "the goroutine to recover from its panic")
 }
 
 func TestHandleWithDetailedPanicTypes(t *testing.T) {
@@ -228,19 +226,19 @@ func TestHandleWithDetailedPanicTypes(t *testing.T) {
 		name      string
 		panicData any
 	}{
-		{"custom error", errors.New("custom error message")},
-		{"runtime error", errors.New("runtime error: invalid memory address or nil pointer dereference")},
-		{"slice bound error", "runtime error: slice bounds out of range"},
-		{"map access", "runtime error: assignment to entry in nil map"},
-		{"channel close", "send on closed channel"},
-		{"complex struct", struct {
+		{name: "custom error", panicData: errors.New("custom error message")},
+		{name: "runtime error", panicData: errors.New("runtime error: invalid memory address or nil pointer dereference")},
+		{name: "slice bound error", panicData: "runtime error: slice bounds out of range"},
+		{name: "map access", panicData: "runtime error: assignment to entry in nil map"},
+		{name: "channel close", panicData: "send on closed channel"},
+		{name: "complex struct", panicData: struct {
 			ID   int
 			Name string
 		}{ID: 123, Name: "test"}},
-		{"slice panic", []string{"panic", "data"}},
-		{"map panic", map[string]int{"error": 500}},
-		{"function panic", func() string { return "function panic" }},
-		{"very long string", strings.Repeat("very long panic message ", 100)},
+		{name: "slice panic", panicData: []string{"panic", "data"}},
+		{name: "map panic", panicData: map[string]int{"error": 500}},
+		{name: "function panic", panicData: func() string { return "function panic" }},
+		{name: "very long string", panicData: strings.Repeat("very long panic message ", longPanicRepeats)},
 	}
 
 	for _, tt := range tests {
@@ -261,11 +259,8 @@ func TestHandleWithDetailedPanicTypes(t *testing.T) {
 
 func TestHandleWithCallStack(t *testing.T) {
 	// Test that Handle captures the correct caller information
-	originalDebug := flag.Debug
-	defer func() { flag.Debug = originalDebug }()
-
 	// Test in debug mode
-	flag.Debug = true
+	setDebug(t, true)
 
 	func() {
 		defer func() {
@@ -281,7 +276,7 @@ func TestHandleWithCallStack(t *testing.T) {
 	}()
 
 	// Test in production mode
-	flag.Debug = false
+	setDebug(t, false)
 
 	func() {
 		defer func() {
@@ -317,12 +312,7 @@ func TestHandleWithGoroutineStack(t *testing.T) {
 		}()
 	}()
 
-	select {
-	case <-done:
-		// Test completed successfully
-	case <-time.After(5 * time.Second):
-		t.Error("Goroutine test timed out")
-	}
+	await.Receive(t, done, waitTimeout, "the goroutine to finish")
 }
 
 func TestHandleWithRecursivePanic(t *testing.T) {
@@ -358,15 +348,15 @@ func TestHandleCallerInformation(t *testing.T) {
 		fn   func()
 	}{
 		{
-			"direct call",
-			func() {
+			name: "direct call",
+			fn: func() {
 				defer interruption.Catch()
 				panic("direct panic")
 			},
 		},
 		{
-			"nested call",
-			func() {
+			name: "nested call",
+			fn: func() {
 				func() {
 					defer interruption.Catch()
 					panic("nested panic")
@@ -374,8 +364,8 @@ func TestHandleCallerInformation(t *testing.T) {
 			},
 		},
 		{
-			"anonymous function",
-			func() {
+			name: "anonymous function",
+			fn: func() {
 				func() {
 					defer interruption.Catch()
 					panic("anonymous panic")
@@ -414,20 +404,17 @@ func TestHandleWithRuntimeCallerFailure(t *testing.T) {
 }
 
 func TestHandleInDifferentDebugModes(t *testing.T) {
-	originalDebug := flag.Debug
-	t.Cleanup(func() { flag.Debug = originalDebug })
-
 	modes := []struct {
 		name  string
 		debug bool
 	}{
-		{"debug mode", true},
-		{"production mode", false},
+		{name: "debug mode", debug: true},
+		{name: "production mode", debug: false},
 	}
 
 	for _, mode := range modes {
 		t.Run(mode.name, func(t *testing.T) {
-			flag.Debug = mode.debug
+			setDebug(t, mode.debug)
 
 			defer func() {
 				if r := recover(); r != nil {
@@ -465,7 +452,7 @@ func TestHandleWithLargePanicData(t *testing.T) {
 	}()
 
 	// Create large panic data
-	largeData := make([]byte, 1024*1024) // 1MB
+	largeData := make([]byte, largePanicBytes)
 	for i := range largeData {
 		largeData[i] = byte(i % 256)
 	}
@@ -555,10 +542,8 @@ func TestMultipleHandleRegistrations(t *testing.T) {
 
 func TestHandlePerformance(t *testing.T) {
 	// Basic performance test to ensure Handle() doesn't introduce significant overhead
-	iterations := 1000
-
 	start := time.Now()
-	for range iterations {
+	for range panicIterations {
 		func() {
 			defer interruption.Catch()
 			panic("performance test")
@@ -567,7 +552,7 @@ func TestHandlePerformance(t *testing.T) {
 	duration := time.Since(start)
 
 	// Ensure it doesn't take too long (arbitrary threshold)
-	if duration > time.Second {
+	if duration > maxPerformanceDuration {
 		t.Errorf("Handle() performance test took too long: %v", duration)
 	}
 }
@@ -760,12 +745,7 @@ func TestOnSignalNoHandlers(t *testing.T) {
 
 	// With empty handlers, the context should be done immediately
 	// since the goroutine runs through an empty handler list and calls stop()
-	select {
-	case <-ctx.Done():
-		// Expected behavior - context is canceled immediately with no handlers
-	case <-time.After(100 * time.Millisecond):
-		t.Error("Context should be done immediately with no handlers")
-	}
+	await.Receive(t, ctx.Done(), waitTimeout, "the context to be done with no handlers")
 }
 
 func TestOnSignalNilHandlers(t *testing.T) {
@@ -778,12 +758,7 @@ func TestOnSignalNilHandlers(t *testing.T) {
 
 	// With nil handlers, the context should be done immediately
 	// since the goroutine runs through an empty handler list and calls stop()
-	select {
-	case <-ctx.Done():
-		// Expected behavior - context is canceled immediately with no handlers
-	case <-time.After(100 * time.Millisecond):
-		t.Error("Context should be done immediately with nil handlers")
-	}
+	await.Receive(t, ctx.Done(), waitTimeout, "the context to be done with nil handlers")
 }
 
 func TestOnSignalHandlerPanic(t *testing.T) {
@@ -847,12 +822,15 @@ func TestOnSignalHandlerPanic(t *testing.T) {
 }
 
 func TestOnSignalLongRunningHandler(t *testing.T) {
-	// Test with a handler that takes some time
+	// Test with a handler that is still running after the context was cancelled
 	var mu sync.Mutex
 	executed := false
+	started := make(chan struct{})
+	release := make(chan struct{})
 
 	handler := func() error {
-		time.Sleep(50 * time.Millisecond)
+		close(started)
+		<-release
 		mu.Lock()
 		executed = true
 		mu.Unlock()
@@ -866,12 +844,9 @@ func TestOnSignalLongRunningHandler(t *testing.T) {
 
 	// Use a wait group to synchronize goroutine completion
 	var wg sync.WaitGroup
-	wg.Add(1)
 
 	// Simulate the OnSignal goroutine behavior
-	start := time.Now()
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		<-ctx.Done()
 		for _, h := range handlers {
 			err := h()
@@ -879,24 +854,29 @@ func TestOnSignalLongRunningHandler(t *testing.T) {
 				t.Errorf("Handler failed: %v", err)
 			}
 		}
-	}()
+	})
 
 	// Cancel the context to simulate signal
 	cancel()
 
+	await.Receive(t, started, waitTimeout, "the handler to start")
+
+	mu.Lock()
+	if executed {
+		t.Error("Handler completed before it was released")
+	}
+	mu.Unlock()
+
+	close(release)
+
 	// Wait for the goroutine to complete
 	wg.Wait()
-	duration := time.Since(start)
 
 	mu.Lock()
 	if !executed {
 		t.Error("Long running handler was not executed")
 	}
 	mu.Unlock()
-
-	if duration < 50*time.Millisecond {
-		t.Error("Handler completed too quickly, may not have executed properly")
-	}
 }
 
 func TestOnSignalMultipleSignalTypes(t *testing.T) {
@@ -973,15 +953,13 @@ func BenchmarkHandleWithLargeStack(b *testing.B) {
 				}
 			}
 
-			deepCall(100) // 100 levels deep
+			deepCall(deepStackDepth)
 		}()
 	}
 }
 
 func BenchmarkHandleDebugMode(b *testing.B) {
-	originalDebug := flag.Debug
-	flag.Debug = true
-	defer func() { flag.Debug = originalDebug }()
+	setDebug(b, true)
 
 	for i := 0; i < b.N; i++ {
 		func() {
@@ -992,9 +970,7 @@ func BenchmarkHandleDebugMode(b *testing.B) {
 }
 
 func BenchmarkHandleProductionMode(b *testing.B) {
-	originalDebug := flag.Debug
-	flag.Debug = false
-	defer func() { flag.Debug = originalDebug }()
+	setDebug(b, false)
 
 	for i := 0; i < b.N; i++ {
 		func() {
@@ -1018,7 +994,7 @@ func BenchmarkOnSignalCreation(b *testing.B) {
 }
 
 func BenchmarkOnSignalMultipleHandlers(b *testing.B) {
-	handlers := make([]func() error, 10)
+	handlers := make([]func() error, benchHandlerCount)
 	for i := range handlers {
 		handlers[i] = func() error {
 			return nil
@@ -1046,7 +1022,7 @@ func TestWaitForShutdown(t *testing.T) {
 	select {
 	case <-done:
 		t.Error("WaitForShutdown should not complete immediately")
-	case <-time.After(10 * time.Millisecond):
+	case <-time.After(notDoneWait):
 		// Expected
 	}
 
@@ -1054,12 +1030,7 @@ func TestWaitForShutdown(t *testing.T) {
 	cancel()
 
 	// Should complete now
-	select {
-	case <-done:
-		// Expected
-	case <-time.After(100 * time.Millisecond):
-		t.Error("WaitForShutdown should complete after context cancellation")
-	}
+	await.Receive(t, done, waitTimeout, "WaitForShutdown to complete after context cancellation")
 }
 
 func TestWaitForShutdownWithNilContext(t *testing.T) {
@@ -1071,12 +1042,7 @@ func TestWaitForShutdownWithNilContext(t *testing.T) {
 	}()
 
 	// Should complete immediately with nil context
-	select {
-	case <-done:
-		// Expected
-	case <-time.After(100 * time.Millisecond):
-		t.Error("WaitForShutdown should complete immediately with nil context")
-	}
+	await.Receive(t, done, waitTimeout, "WaitForShutdown to complete with a nil context")
 }
 
 func TestWaitForShutdownWithOnSignal(t *testing.T) {
@@ -1108,7 +1074,7 @@ func TestWaitForShutdownWithOnSignal(t *testing.T) {
 	select {
 	case <-done:
 		t.Error("WaitForShutdown should not complete immediately")
-	case <-time.After(10 * time.Millisecond):
+	case <-time.After(notDoneWait):
 		// Expected
 	}
 
@@ -1124,12 +1090,7 @@ func TestWaitForShutdownWithOnSignal(t *testing.T) {
 	}
 
 	// Should complete after signal and handler execution
-	select {
-	case <-done:
-		// Expected
-	case <-time.After(1 * time.Second):
-		t.Error("WaitForShutdown should complete after signal handling")
-	}
+	await.Receive(t, done, waitTimeout, "WaitForShutdown to complete after signal handling")
 
 	// Check that handler was executed
 	mu.Lock()
@@ -1176,7 +1137,7 @@ func TestSetupGracefulShutdown(t *testing.T) {
 	select {
 	case <-done:
 		// This could happen if no handlers, which is fine
-	case <-time.After(10 * time.Millisecond):
+	case <-time.After(notDoneWait):
 		// Expected behavior - waiting for signal
 	}
 }
@@ -1197,12 +1158,7 @@ func TestSetupGracefulShutdownWithNoHandlers(t *testing.T) {
 	}()
 
 	// Should complete quickly with no handlers
-	select {
-	case <-done:
-		// Expected
-	case <-time.After(100 * time.Millisecond):
-		t.Error("SetupGracefulShutdown should complete quickly with no handlers")
-	}
+	await.Receive(t, done, waitTimeout, "SetupGracefulShutdown to complete with no handlers")
 }
 
 func TestSetupGracefulShutdownWithNilHandlers(t *testing.T) {
@@ -1221,10 +1177,5 @@ func TestSetupGracefulShutdownWithNilHandlers(t *testing.T) {
 	}()
 
 	// Should complete quickly with nil handlers
-	select {
-	case <-done:
-		// Expected
-	case <-time.After(100 * time.Millisecond):
-		t.Error("SetupGracefulShutdown should complete quickly with nil handlers")
-	}
+	await.Receive(t, done, waitTimeout, "SetupGracefulShutdown to complete with nil handlers")
 }

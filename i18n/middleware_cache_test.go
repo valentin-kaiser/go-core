@@ -12,7 +12,11 @@ func resolve(t *testing.T, b *i18n.Bundle, accept string) i18n.Language {
 	t.Helper()
 	var got i18n.Language
 	h := i18n.Middleware(b)(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		got, _ = i18n.LanguageFromContext(r.Context())
+		var ok bool
+		got, ok = i18n.LanguageFromContext(r.Context())
+		if !ok {
+			t.Errorf("no language in the request context for Accept-Language %q", accept)
+		}
 	}))
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
 	req.Header.Set("Accept-Language", accept)
@@ -49,15 +53,16 @@ func TestMiddlewareConcurrentRegister(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	const rounds = 200
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for range 200 {
+		for range rounds {
 			b.Register(i18n.German, map[string]string{"k": "v"})
 			b.Register(i18n.Language("fr"), map[string]string{"k": "v"})
 		}
 	}()
-	for range 200 {
+	for range rounds {
 		_ = resolve(t, b, "de,fr;q=0.8")
 	}
 	<-done
