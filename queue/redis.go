@@ -259,46 +259,6 @@ func (rq *RedisQueue) GetJobs(ctx context.Context, status Status, limit int) ([]
 	return jobs, nil
 }
 
-// scanJobsByStatus scans through all jobs to find ones with a specific status
-func (rq *RedisQueue) scanJobsByStatus(ctx context.Context, status Status, limit int) ([]*Job, error) {
-	var jobs []*Job
-	var cursor uint64
-	count := 0
-
-	for {
-		keys, nextCursor, err := rq.client.Scan(ctx, cursor, rq.keyPrefix+jobKeySegment+"*", scanBatchSize).Result()
-		if err != nil {
-			return nil, apperror.NewError("scanning jobs failed").AddError(err)
-		}
-		for _, key := range keys {
-			if count >= limit {
-				break
-			}
-			jobData, err := rq.client.HGet(ctx, key, jobDataField).Result()
-			if err != nil {
-				logger.Warn().Err(err).Field("key", key).Msg("reading job while scanning failed")
-				continue
-			}
-			var job Job
-			unmarshalErr := json.Unmarshal([]byte(jobData), &job)
-			if unmarshalErr != nil {
-				logger.Warn().Err(unmarshalErr).Field("key", key).Msg("unmarshaling job while scanning failed")
-				continue
-			}
-			if job.Status == status {
-				jobs = append(jobs, &job)
-				count++
-			}
-		}
-		cursor = nextCursor
-		if cursor == 0 || count >= limit {
-			break
-		}
-	}
-
-	return jobs, nil
-}
-
 // GetStats returns queue statistics
 func (rq *RedisQueue) GetStats(ctx context.Context) (*Stats, error) {
 	if rq.closed {
@@ -370,19 +330,6 @@ func (rq *RedisQueue) Close() error {
 	return nil
 }
 
-// Key generation helpers
-func (rq *RedisQueue) jobKey(id string) string {
-	return rq.keyPrefix + jobKeySegment + id
-}
-
-func (rq *RedisQueue) pendingKey() string {
-	return rq.keyPrefix + pendingSuffix
-}
-
-func (rq *RedisQueue) scheduledKey() string {
-	return rq.keyPrefix + scheduledSuffix
-}
-
 // MoveScheduledToPending moves scheduled jobs that are ready to be processed
 func (rq *RedisQueue) MoveScheduledToPending(ctx context.Context) error {
 	if rq.closed {
@@ -415,4 +362,57 @@ func (rq *RedisQueue) MoveScheduledToPending(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// scanJobsByStatus scans through all jobs to find ones with a specific status
+func (rq *RedisQueue) scanJobsByStatus(ctx context.Context, status Status, limit int) ([]*Job, error) {
+	var jobs []*Job
+	var cursor uint64
+	count := 0
+
+	for {
+		keys, nextCursor, err := rq.client.Scan(ctx, cursor, rq.keyPrefix+jobKeySegment+"*", scanBatchSize).Result()
+		if err != nil {
+			return nil, apperror.NewError("scanning jobs failed").AddError(err)
+		}
+		for _, key := range keys {
+			if count >= limit {
+				break
+			}
+			jobData, err := rq.client.HGet(ctx, key, jobDataField).Result()
+			if err != nil {
+				logger.Warn().Err(err).Field("key", key).Msg("reading job while scanning failed")
+				continue
+			}
+			var job Job
+			unmarshalErr := json.Unmarshal([]byte(jobData), &job)
+			if unmarshalErr != nil {
+				logger.Warn().Err(unmarshalErr).Field("key", key).Msg("unmarshaling job while scanning failed")
+				continue
+			}
+			if job.Status == status {
+				jobs = append(jobs, &job)
+				count++
+			}
+		}
+		cursor = nextCursor
+		if cursor == 0 || count >= limit {
+			break
+		}
+	}
+
+	return jobs, nil
+}
+
+// Key generation helpers
+func (rq *RedisQueue) jobKey(id string) string {
+	return rq.keyPrefix + jobKeySegment + id
+}
+
+func (rq *RedisQueue) pendingKey() string {
+	return rq.keyPrefix + pendingSuffix
+}
+
+func (rq *RedisQueue) scheduledKey() string {
+	return rq.keyPrefix + scheduledSuffix
 }

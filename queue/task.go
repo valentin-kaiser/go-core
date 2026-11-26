@@ -11,6 +11,13 @@ import (
 	"github.com/valentin-kaiser/go-core/logging"
 )
 
+const (
+	// TaskTypeCron represents cron-based task scheduling
+	TaskTypeCron TaskType = iota
+	// TaskTypeInterval represents interval-based task scheduling
+	TaskTypeInterval
+)
+
 var logger = logging.GetPackageLogger("queue")
 
 // TaskFunc represents a task function that can be executed
@@ -18,13 +25,6 @@ type TaskFunc func(ctx context.Context) error
 
 // TaskType represents the type of task scheduling
 type TaskType int
-
-const (
-	// TaskTypeCron represents cron-based task scheduling
-	TaskTypeCron TaskType = iota
-	// TaskTypeInterval represents interval-based task scheduling
-	TaskTypeInterval
-)
 
 // String returns the string representation of the task type
 func (t TaskType) String() string {
@@ -62,6 +62,22 @@ type Task struct {
 	CreatedAt           time.Time     `json:"created_at"`
 	UpdatedAt           time.Time     `json:"updated_at"`
 	mutex               sync.RWMutex  `json:"-"`
+}
+
+// TaskOptions provides configuration options for tasks
+type TaskOptions struct {
+	// MaxRetries specifies the maximum number of retries for a task default is 0 (no retries)
+	MaxRetries int
+	// RetryDelay specifies the delay between retries (default is 5 seconds)
+	RetryDelay time.Duration
+	// Timeout specifies the maximum duration for task execution (default is 5 minutes)
+	Timeout time.Duration
+	// Concurrent specifies whether the task can run concurrently (default is false)
+	Concurrent bool
+	// Immediately specifies whether the task should run immediately upon registration (default is false)
+	Immediately bool
+	// Quiet specifies whether to log only the first failure in a series of consecutive failures (default is false)
+	Quiet bool
 }
 
 // TaskScheduler manages background tasks
@@ -128,22 +144,6 @@ func (s *TaskScheduler) RegisterIntervalTask(name string, interval time.Duration
 	return s.RegisterIntervalTaskWithOptions(name, interval, fn, TaskOptions{
 		Immediately: true,
 	})
-}
-
-// TaskOptions provides configuration options for tasks
-type TaskOptions struct {
-	// MaxRetries specifies the maximum number of retries for a task default is 0 (no retries)
-	MaxRetries int
-	// RetryDelay specifies the delay between retries (default is 5 seconds)
-	RetryDelay time.Duration
-	// Timeout specifies the maximum duration for task execution (default is 5 minutes)
-	Timeout time.Duration
-	// Concurrent specifies whether the task can run concurrently (default is false)
-	Concurrent bool
-	// Immediately specifies whether the task should run immediately upon registration (default is false)
-	Immediately bool
-	// Quiet specifies whether to log only the first failure in a series of consecutive failures (default is false)
-	Quiet bool
 }
 
 // RegisterCronTaskWithOptions registers a new cron-based task with options
@@ -504,220 +504,6 @@ func (s *TaskScheduler) Stop() {
 	logger.Debug().Msg("task scheduler stopped")
 }
 
-// schedulerLoop is the main scheduler loop
-func (s *TaskScheduler) schedulerLoop(ctx context.Context) {
-	defer s.workerWg.Done()
-
-	ticker := time.NewTicker(s.checkInterval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-s.shutdownChan:
-			return
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			s.checkAndRunTasks(ctx)
-		}
-	}
-}
-
-// checkAndRunTasks checks for tasks that need to be executed and runs them
-func (s *TaskScheduler) checkAndRunTasks(ctx context.Context) {
-	s.tasksMutex.RLock()
-	var tasksToRun []*Task
-	now := time.Now()
-
-	for _, task := range s.tasks {
-		task.mutex.RLock()
-		enabled := task.Enabled
-		nextRun := task.NextRun
-		isRunning := task.IsRunning
-		allowConcurrent := task.AllowConcurrent
-		task.mutex.RUnlock()
-		if enabled && now.After(nextRun) && (!isRunning || allowConcurrent) {
-			tasksToRun = append(tasksToRun, task)
-		}
-	}
-	s.tasksMutex.RUnlock()
-
-	for _, task := range tasksToRun {
-		s.workerWg.Add(1)
-		go s.runTask(ctx, task)
-	}
-}
-
-// runTask executes a single task
-func (s *TaskScheduler) runTask(ctx context.Context, task *Task) {
-	defer s.workerWg.Done()
-
-	// For concurrent tasks, update next run time immediately so next instance can be scheduled
-	// For non-concurrent tasks, set running state to prevent overlapping executions
-	if task.AllowConcurrent {
-		err := s.updateNextRun(task)
-		if err != nil {
-			logger.Error().
-				Err(err).
-				Field("task_name", task.Name).
-				Msg("updating next run time before execution failed")
-		}
-	}
-
-	if !task.AllowConcurrent {
-		task.mutex.Lock()
-		task.IsRunning = true
-		task.UpdatedAt = time.Now()
-		task.mutex.Unlock()
-	}
-
-	if task.AllowConcurrent {
-		task.mutex.Lock()
-		task.UpdatedAt = time.Now()
-		task.mutex.Unlock()
-	}
-
-	taskCtx, cancel := context.WithTimeout(ctx, task.Timeout)
-	defer cancel()
-
-	var lastError error
-	for attempt := 0; attempt <= task.MaxRetries; attempt++ {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		logger.Trace().
-			Field("task_name", task.Name).
-			Field("attempt", attempt+1).
-			Field("max_retries", task.MaxRetries+1).
-			Msg("executing task")
-		err := task.Function(taskCtx)
-		if err == nil {
-			s.recordTaskSuccess(task)
-			return
-		}
-		lastError = err
-		if attempt < task.MaxRetries {
-			select {
-			case <-taskCtx.Done():
-				return
-			case <-time.After(task.RetryDelay):
-			}
-		}
-	}
-
-	s.recordTaskFailure(task, lastError)
-}
-
-// recordTaskSuccess updates the task statistics after a successful run.
-//
-// Non-concurrent tasks get their next run time after completion, concurrent tasks got it before the run started.
-func (s *TaskScheduler) recordTaskSuccess(task *Task) {
-	task.mutex.Lock()
-	if !task.AllowConcurrent {
-		task.IsRunning = false
-	}
-	task.LastRun = time.Now()
-	task.RunCount++
-	task.ConsecutiveFailures = 0
-	task.LastError = ""
-	task.UpdatedAt = time.Now()
-
-	var nextRunTime time.Time
-	var runCount int64
-	if !task.AllowConcurrent {
-		task.mutex.Unlock()
-		err := s.updateNextRun(task)
-		if err != nil {
-			logger.Error().
-				Err(err).
-				Field("task_name", task.Name).
-				Msg("updating next run time failed")
-		}
-		task.mutex.RLock()
-		nextRunTime = task.NextRun
-		runCount = task.RunCount
-		task.mutex.RUnlock()
-	}
-
-	if task.AllowConcurrent {
-		nextRunTime = task.NextRun
-		runCount = task.RunCount
-		task.mutex.Unlock()
-	}
-
-	logger.Trace().
-		Field("task_name", task.Name).
-		Field("run_count", runCount).
-		Field("next_run", nextRunTime).
-		Msg("task executed successfully")
-}
-
-// recordTaskFailure updates the task statistics after all retries of a run failed.
-//
-// Non-concurrent tasks get their next run time after completion, concurrent tasks got it before the run started.
-func (s *TaskScheduler) recordTaskFailure(task *Task, lastError error) {
-	task.mutex.Lock()
-	if !task.AllowConcurrent {
-		task.IsRunning = false
-	}
-	task.ErrorCount++
-	task.LastRun = time.Now()
-	task.ConsecutiveFailures++
-	task.LastError = lastError.Error()
-	task.UpdatedAt = time.Now()
-
-	errorCount := task.ErrorCount
-	consecutiveFailures := task.ConsecutiveFailures
-	var nextRunTime time.Time
-
-	if !task.AllowConcurrent {
-		task.mutex.Unlock()
-		err := s.updateNextRun(task)
-		if err != nil {
-			logger.Error().
-				Err(err).
-				Field("task_name", task.Name).
-				Msg("updating next run time after retries failed")
-		}
-		task.mutex.RLock()
-		nextRunTime = task.NextRun
-		task.mutex.RUnlock()
-	}
-
-	if task.AllowConcurrent {
-		nextRunTime = task.NextRun
-		task.mutex.Unlock()
-	}
-
-	if !task.Quiet || consecutiveFailures == 1 {
-		logger.Error().
-			Err(lastError).
-			Field("task_name", task.Name).
-			Field("error_count", errorCount).
-			Field("next_run", nextRunTime).
-			Msg("task execution failed")
-	}
-}
-
-func (s *TaskScheduler) updateNextRun(task *Task) error {
-	task.mutex.Lock()
-	defer task.mutex.Unlock()
-
-	switch task.Type {
-	case TaskTypeCron:
-		nextRun, err := s.calculateNextCronRun(task.CronSpec, time.Now())
-		if err != nil {
-			return apperror.NewError("calculating next run time failed").AddError(err)
-		}
-		task.NextRun = nextRun
-	case TaskTypeInterval:
-		task.NextRun = time.Now().Add(task.Interval)
-	}
-	return nil
-}
-
 // GetTask returns a task by name
 func (s *TaskScheduler) GetTask(name string) (*Task, error) {
 	s.tasksMutex.RLock()
@@ -939,6 +725,220 @@ func (s *TaskScheduler) RescheduleTaskWithInterval(name string, interval time.Du
 // IsRunning returns true if the scheduler is running
 func (s *TaskScheduler) IsRunning() bool {
 	return s.running.Load() == 1
+}
+
+// schedulerLoop is the main scheduler loop
+func (s *TaskScheduler) schedulerLoop(ctx context.Context) {
+	defer s.workerWg.Done()
+
+	ticker := time.NewTicker(s.checkInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.shutdownChan:
+			return
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.checkAndRunTasks(ctx)
+		}
+	}
+}
+
+// checkAndRunTasks checks for tasks that need to be executed and runs them
+func (s *TaskScheduler) checkAndRunTasks(ctx context.Context) {
+	s.tasksMutex.RLock()
+	var tasksToRun []*Task
+	now := time.Now()
+
+	for _, task := range s.tasks {
+		task.mutex.RLock()
+		enabled := task.Enabled
+		nextRun := task.NextRun
+		isRunning := task.IsRunning
+		allowConcurrent := task.AllowConcurrent
+		task.mutex.RUnlock()
+		if enabled && now.After(nextRun) && (!isRunning || allowConcurrent) {
+			tasksToRun = append(tasksToRun, task)
+		}
+	}
+	s.tasksMutex.RUnlock()
+
+	for _, task := range tasksToRun {
+		s.workerWg.Add(1)
+		go s.runTask(ctx, task)
+	}
+}
+
+// runTask executes a single task
+func (s *TaskScheduler) runTask(ctx context.Context, task *Task) {
+	defer s.workerWg.Done()
+
+	// For concurrent tasks, update next run time immediately so next instance can be scheduled
+	// For non-concurrent tasks, set running state to prevent overlapping executions
+	if task.AllowConcurrent {
+		err := s.updateNextRun(task)
+		if err != nil {
+			logger.Error().
+				Err(err).
+				Field("task_name", task.Name).
+				Msg("updating next run time before execution failed")
+		}
+	}
+
+	if !task.AllowConcurrent {
+		task.mutex.Lock()
+		task.IsRunning = true
+		task.UpdatedAt = time.Now()
+		task.mutex.Unlock()
+	}
+
+	if task.AllowConcurrent {
+		task.mutex.Lock()
+		task.UpdatedAt = time.Now()
+		task.mutex.Unlock()
+	}
+
+	taskCtx, cancel := context.WithTimeout(ctx, task.Timeout)
+	defer cancel()
+
+	var lastError error
+	for attempt := 0; attempt <= task.MaxRetries; attempt++ {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		logger.Trace().
+			Field("task_name", task.Name).
+			Field("attempt", attempt+1).
+			Field("max_retries", task.MaxRetries+1).
+			Msg("executing task")
+		err := task.Function(taskCtx)
+		if err == nil {
+			s.recordTaskSuccess(task)
+			return
+		}
+		lastError = err
+		if attempt < task.MaxRetries {
+			select {
+			case <-taskCtx.Done():
+				return
+			case <-time.After(task.RetryDelay):
+			}
+		}
+	}
+
+	s.recordTaskFailure(task, lastError)
+}
+
+// recordTaskSuccess updates the task statistics after a successful run.
+//
+// Non-concurrent tasks get their next run time after completion, concurrent tasks got it before the run started.
+func (s *TaskScheduler) recordTaskSuccess(task *Task) {
+	task.mutex.Lock()
+	if !task.AllowConcurrent {
+		task.IsRunning = false
+	}
+	task.LastRun = time.Now()
+	task.RunCount++
+	task.ConsecutiveFailures = 0
+	task.LastError = ""
+	task.UpdatedAt = time.Now()
+
+	var nextRunTime time.Time
+	var runCount int64
+	if !task.AllowConcurrent {
+		task.mutex.Unlock()
+		err := s.updateNextRun(task)
+		if err != nil {
+			logger.Error().
+				Err(err).
+				Field("task_name", task.Name).
+				Msg("updating next run time failed")
+		}
+		task.mutex.RLock()
+		nextRunTime = task.NextRun
+		runCount = task.RunCount
+		task.mutex.RUnlock()
+	}
+
+	if task.AllowConcurrent {
+		nextRunTime = task.NextRun
+		runCount = task.RunCount
+		task.mutex.Unlock()
+	}
+
+	logger.Trace().
+		Field("task_name", task.Name).
+		Field("run_count", runCount).
+		Field("next_run", nextRunTime).
+		Msg("task executed successfully")
+}
+
+// recordTaskFailure updates the task statistics after all retries of a run failed.
+//
+// Non-concurrent tasks get their next run time after completion, concurrent tasks got it before the run started.
+func (s *TaskScheduler) recordTaskFailure(task *Task, lastError error) {
+	task.mutex.Lock()
+	if !task.AllowConcurrent {
+		task.IsRunning = false
+	}
+	task.ErrorCount++
+	task.LastRun = time.Now()
+	task.ConsecutiveFailures++
+	task.LastError = lastError.Error()
+	task.UpdatedAt = time.Now()
+
+	errorCount := task.ErrorCount
+	consecutiveFailures := task.ConsecutiveFailures
+	var nextRunTime time.Time
+
+	if !task.AllowConcurrent {
+		task.mutex.Unlock()
+		err := s.updateNextRun(task)
+		if err != nil {
+			logger.Error().
+				Err(err).
+				Field("task_name", task.Name).
+				Msg("updating next run time after retries failed")
+		}
+		task.mutex.RLock()
+		nextRunTime = task.NextRun
+		task.mutex.RUnlock()
+	}
+
+	if task.AllowConcurrent {
+		nextRunTime = task.NextRun
+		task.mutex.Unlock()
+	}
+
+	if !task.Quiet || consecutiveFailures == 1 {
+		logger.Error().
+			Err(lastError).
+			Field("task_name", task.Name).
+			Field("error_count", errorCount).
+			Field("next_run", nextRunTime).
+			Msg("task execution failed")
+	}
+}
+
+func (s *TaskScheduler) updateNextRun(task *Task) error {
+	task.mutex.Lock()
+	defer task.mutex.Unlock()
+
+	switch task.Type {
+	case TaskTypeCron:
+		nextRun, err := s.calculateNextCronRun(task.CronSpec, time.Now())
+		if err != nil {
+			return apperror.NewError("calculating next run time failed").AddError(err)
+		}
+		task.NextRun = nextRun
+	case TaskTypeInterval:
+		task.NextRun = time.Now().Add(task.Interval)
+	}
+	return nil
 }
 
 // generateTaskID generates a unique task ID
