@@ -6,7 +6,11 @@ import (
 	"time"
 
 	"github.com/valentin-kaiser/go-core/config"
-	"github.com/valentin-kaiser/go-core/flag"
+)
+
+const (
+	benchHost  = "localhost"
+	benchLimit = 1.5
 )
 
 // A configuration of the size a real service has: nested sections, slices and maps.
@@ -37,7 +41,7 @@ type benchLargeConfig struct {
 func (c *benchLargeConfig) Validate() error { return nil }
 
 func newBenchLarge() *benchLargeConfig {
-	section := benchSection{Host: "localhost", Port: 8080, Enabled: true, Timeout: time.Second, Name: "x", Limit: 1.5}
+	section := benchSection{Host: benchHost, Port: testPort, Enabled: true, Timeout: time.Second, Name: "x", Limit: benchLimit}
 	return &benchLargeConfig{
 		Name: "bench-large", Web: section, Database: section, Cache: section, Queue: section,
 		Mail: section, Auth: section, Metrics: section, Tracing: section,
@@ -49,9 +53,8 @@ func newBenchLarge() *benchLargeConfig {
 func setupLarge(b *testing.B, name string) {
 	b.Helper()
 	tempDir := b.TempDir()
-	original := flag.Path
-	flag.Path = tempDir
-	b.Cleanup(func() { flag.Path = original; config.Reset() })
+	setFlagPath(b, tempDir)
+	b.Cleanup(config.Reset)
 
 	config.Reset()
 	cfg := newBenchLarge()
@@ -68,9 +71,8 @@ func setupLarge(b *testing.B, name string) {
 // Register walks the struct tags with reflection and builds the key and flag tables.
 func BenchmarkRegisterLarge(b *testing.B) {
 	tempDir := b.TempDir()
-	original := flag.Path
-	flag.Path = tempDir
-	b.Cleanup(func() { flag.Path = original; config.Reset() })
+	setFlagPath(b, tempDir)
+	b.Cleanup(config.Reset)
 
 	b.ReportAllocs()
 	b.ResetTimer()
