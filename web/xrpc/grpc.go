@@ -12,43 +12,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func (s *Service) grpcServer() *grpc.Server {
-	s.grpcOnce.Do(func() {
-		srv := grpc.NewServer(s.grpcOpts...)
-		descs := make(map[string]*grpc.ServiceDesc)
-		var order []string
-		for _, m := range s.list {
-			d := descs[m.full]
-			if d == nil {
-				d = &grpc.ServiceDesc{ServiceName: m.full, HandlerType: (*any)(nil), Metadata: m.desc.ParentFile().Path()}
-				descs[m.full] = d
-				order = append(order, m.full)
-			}
-			if m.kind == kindUnary {
-				d.Methods = append(d.Methods, grpc.MethodDesc{MethodName: m.name, Handler: unaryHandler(m)})
-				continue
-			}
-			d.Streams = append(d.Streams, grpc.StreamDesc{
-				StreamName:    m.name,
-				Handler:       streamHandler(m),
-				ServerStreams: m.kind == kindServerStream || m.kind == kindBidi,
-				ClientStreams: m.kind == kindClientStream || m.kind == kindBidi,
-			})
-		}
-		for _, name := range order {
-			srv.RegisterService(descs[name], nil)
-		}
-		if s.reflect {
-			reflection.Register(srv)
-		}
-		s.grpcSrv = srv
-	})
-	return s.grpcSrv
-}
-
-func (s *Service) serveGRPC(w http.ResponseWriter, r *http.Request) {
-	ctx := withProtocol(WithHTTPContext(r.Context(), w, r), ProtocolGRPC)
-	s.grpcServer().ServeHTTP(w, r.WithContext(ctx)) //nolint:contextcheck // grpc derives each stream context from the request passed here
+// reflectionPaths are the request paths of the gRPC reflection services registered by WithGRPCReflection.
+var reflectionPaths = []string{
+	"/grpc.reflection.v1.ServerReflection/ServerReflectionInfo",
+	"/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo",
 }
 
 func unaryHandler(m *method) func(any, context.Context, func(any) error, grpc.UnaryServerInterceptor) (any, error) {
@@ -108,8 +75,41 @@ func streamHandler(m *method) grpc.StreamHandler {
 	}
 }
 
-// reflectionPaths are the request paths of the gRPC reflection services registered by WithGRPCReflection.
-var reflectionPaths = []string{
-	"/grpc.reflection.v1.ServerReflection/ServerReflectionInfo",
-	"/grpc.reflection.v1alpha.ServerReflection/ServerReflectionInfo",
+func (s *Service) grpcServer() *grpc.Server {
+	s.grpcOnce.Do(func() {
+		srv := grpc.NewServer(s.grpcOpts...)
+		descs := make(map[string]*grpc.ServiceDesc)
+		var order []string
+		for _, m := range s.list {
+			d := descs[m.full]
+			if d == nil {
+				d = &grpc.ServiceDesc{ServiceName: m.full, HandlerType: (*any)(nil), Metadata: m.desc.ParentFile().Path()}
+				descs[m.full] = d
+				order = append(order, m.full)
+			}
+			if m.kind == kindUnary {
+				d.Methods = append(d.Methods, grpc.MethodDesc{MethodName: m.name, Handler: unaryHandler(m)})
+				continue
+			}
+			d.Streams = append(d.Streams, grpc.StreamDesc{
+				StreamName:    m.name,
+				Handler:       streamHandler(m),
+				ServerStreams: m.kind == kindServerStream || m.kind == kindBidi,
+				ClientStreams: m.kind == kindClientStream || m.kind == kindBidi,
+			})
+		}
+		for _, name := range order {
+			srv.RegisterService(descs[name], nil)
+		}
+		if s.reflect {
+			reflection.Register(srv)
+		}
+		s.grpcSrv = srv
+	})
+	return s.grpcSrv
+}
+
+func (s *Service) serveGRPC(w http.ResponseWriter, r *http.Request) {
+	ctx := withProtocol(WithHTTPContext(r.Context(), w, r), ProtocolGRPC)
+	s.grpcServer().ServeHTTP(w, r.WithContext(ctx)) //nolint:contextcheck // grpc derives each stream context from the request passed here
 }

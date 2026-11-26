@@ -35,6 +35,7 @@ const (
 type xmlWire struct{ c codec }
 
 func (xmlWire) protocol() Protocol  { return ProtocolXML }
+
 func (xmlWire) contentType() string { return mediaTypeXML }
 
 func (w xmlWire) parse(data []byte) ([]*envelope, bool, *Error) {
@@ -123,31 +124,6 @@ func (w xmlWire) parseResponse(n *xmlNode, e *envelope) {
 		}
 		return w.c.readXMLFields(result, m.ProtoReflect(), 0)
 	}
-}
-
-func writeIDAttr(b *bytes.Buffer, id rpcID) error {
-	if !id.set || id.null {
-		return nil
-	}
-	b.WriteString(` id="`)
-	err := xml.EscapeText(b, []byte(id.text))
-	if err != nil {
-		return apperror.NewError("escaping id attribute failed").AddError(err)
-	}
-	b.WriteByte('"')
-	return nil
-}
-
-func writeAttr(b *bytes.Buffer, name, value string) error {
-	b.WriteByte(' ')
-	b.WriteString(name)
-	b.WriteString(`="`)
-	err := xml.EscapeText(b, []byte(value))
-	if err != nil {
-		return apperror.NewError("escaping attribute value failed").AddError(err)
-	}
-	b.WriteByte('"')
-	return nil
 }
 
 func (w xmlWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
@@ -268,4 +244,29 @@ func (w xmlWire) encodeEvent(method string, id rpcID, data proto.Message) ([]byt
 	}
 	b.WriteString("</params></request>")
 	return b.Bytes(), nil
+}
+
+func writeIDAttr(b *bytes.Buffer, id rpcID) error {
+	if !id.set || id.null {
+		return nil
+	}
+	b.WriteString(` id="`)
+	err := xml.EscapeText(b, []byte(id.text))
+	if err != nil {
+		return apperror.NewError("escaping id attribute failed").AddError(err)
+	}
+	b.WriteByte('"')
+	return nil
+}
+
+func writeAttr(b *bytes.Buffer, name, value string) error {
+	b.WriteByte(' ')
+	b.WriteString(name)
+	b.WriteString(`="`)
+	err := xml.EscapeText(b, []byte(value))
+	if err != nil {
+		return apperror.NewError("escaping attribute value failed").AddError(err)
+	}
+	b.WriteByte('"')
+	return nil
 }

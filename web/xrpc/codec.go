@@ -45,6 +45,10 @@ const (
 	xmlEncodingBase64 = "b64"
 )
 
+const hexDigits = "0123456789abcdef"
+
+const maxXMLNodes = 1 << 20
+
 var errDepth = apperror.NewError("message nesting too deep")
 
 // wkt lists well-known types whose canonical JSON form differs from the generic object form.
@@ -68,18 +72,438 @@ var wkt = map[protoreflect.FullName]bool{
 	"google.protobuf.BytesValue":  true,
 }
 
-func isWKT(md protoreflect.MessageDescriptor) bool { return wkt[md.FullName()] }
-
 // codec encodes protobuf messages with field numbers as keys (or field names if names is set).
 // Decoding accepts both forms.
 type codec struct {
 	names bool
 }
 
+func (c codec) jsonKey(fd protoreflect.FieldDescriptor) string {
+	if c.names {
+		return fd.JSONName()
+	}
+	return strconv.Itoa(int(fd.Number()))
+}
+
+func (c codec) xmlName(fd protoreflect.FieldDescriptor) string {
+	if c.names {
+		return fd.JSONName()
+	}
+	return "_" + strconv.Itoa(int(fd.Number()))
+}
+
+// JSON
+
+func (c codec) marshalJSON(m proto.Message) ([]byte, error) {
+	return c.appendJSON(nil, m.ProtoReflect(), 0)
+}
+
+func (c codec) unmarshalJSON(data []byte, m proto.Message) error {
+	return c.readJSON(data, m.ProtoReflect(), 0)
+}
+
+func (c codec) appendJSON(b []byte, m protoreflect.Message, depth int) ([]byte, error) {
+	if depth > maxDepth {
+		return nil, errDepth
+	}
+	if isWKT(m.Descriptor()) {
+		raw, err := marshalWKT(m)
+		if err != nil {
+			return nil, err
+		}
+		return append(b, raw...), nil
+	}
+
+	b = append(b, '{')
+	for i, f := range setFields(m) {
+		if i > 0 {
+			b = append(b, ',')
+		}
+		b = appendString(b, c.jsonKey(f.fd))
+		b = append(b, ':')
+		var err error
+		b, err = c.appendJSONField(b, f.fd, f.v, depth)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return append(b, '}'), nil
+}
+
+func (c codec) appendJSONField(b []byte, fd protoreflect.FieldDescriptor, v protoreflect.Value, depth int) ([]byte, error) {
+	var err error
+	switch {
+	case fd.IsList():
+		l := v.List()
+		b = append(b, '[')
+		for i := 0; i < l.Len(); i++ {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			b, err = c.appendJSONValue(b, fd, l.Get(i), depth)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return append(b, ']'), nil
+	case fd.IsMap():
+		mp := v.Map()
+		b = append(b, '{')
+		for i, k := range sortedMapKeys(mp) {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			b = appendString(b, k.String())
+			b = append(b, ':')
+			b, err = c.appendJSONValue(b, fd.MapValue(), mp.Get(k), depth)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return append(b, '}'), nil
+	}
+	return c.appendJSONValue(b, fd, v, depth)
+}
+
+func (c codec) appendJSONValue(b []byte, fd protoreflect.FieldDescriptor, v protoreflect.Value, depth int) ([]byte, error) {
+	switch fd.Kind() {
+	case protoreflect.MessageKind, protoreflect.GroupKind:
+		return c.appendJSON(b, v.Message(), depth+1)
+	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind,
+		protoreflect.Uint64Kind, protoreflect.Fixed64Kind, protoreflect.StringKind, protoreflect.BytesKind:
+		return appendString(b, scalarText(fd, v)), nil
+	case protoreflect.FloatKind, protoreflect.DoubleKind:
+		f := v.Float()
+		if math.IsNaN(f) || math.IsInf(f, 0) {
+			return appendString(b, scalarText(fd, v)), nil
+		}
+	}
+	return append(b, scalarText(fd, v)...), nil
+}
+
+func (c codec) readJSON(data []byte, m protoreflect.Message, depth int) error {
+	if depth > maxDepth {
+		return errDepth
+	}
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || isNull(data) {
+		return nil
+	}
+	if isWKT(m.Descriptor()) {
+		return unmarshalWKT(data, m)
+	}
+
+	var obj map[string]json.RawMessage
+	err := json.Unmarshal(data, &obj)
+	if err != nil {
+		return err
+	}
+	for key, raw := range obj {
+		fd := lookupField(m.Descriptor(), key)
+		if fd == nil || isNull(raw) {
+			continue
+		}
+		err := c.readJSONField(m, fd, raw, depth)
+		if err != nil {
+			return apperror.NewErrorf("field %q", key).AddError(err)
+		}
+	}
+	return nil
+}
+
+func (c codec) readJSONField(m protoreflect.Message, fd protoreflect.FieldDescriptor, raw json.RawMessage, depth int) error {
+	switch {
+	case fd.IsList():
+		var items []json.RawMessage
+		err := json.Unmarshal(raw, &items)
+		if err != nil {
+			return err
+		}
+		list := m.Mutable(fd).List()
+		for _, it := range items {
+			v, err := c.readJSONValue(fd, it, list.NewElement(), depth)
+			if err != nil {
+				return err
+			}
+			list.Append(v)
+		}
+		return nil
+	case fd.IsMap():
+		var items map[string]json.RawMessage
+		err := json.Unmarshal(raw, &items)
+		if err != nil {
+			return err
+		}
+		mp := m.Mutable(fd).Map()
+		for k, it := range items {
+			key, err := parseScalar(fd.MapKey(), k)
+			if err != nil {
+				return err
+			}
+			v, err := c.readJSONValue(fd.MapValue(), it, mp.NewValue(), depth)
+			if err != nil {
+				return err
+			}
+			mp.Set(key.MapKey(), v)
+		}
+		return nil
+	}
+
+	if fd.Message() != nil {
+		_, err := c.readJSONValue(fd, raw, m.Mutable(fd), depth)
+		return err
+	}
+	v, err := c.readJSONValue(fd, raw, protoreflect.Value{}, depth)
+	if err != nil {
+		return err
+	}
+	m.Set(fd, v)
+	return nil
+}
+
+func (c codec) readJSONValue(fd protoreflect.FieldDescriptor, raw []byte, cur protoreflect.Value, depth int) (protoreflect.Value, error) {
+	if fd.Message() != nil {
+		return cur, c.readJSON(raw, cur.Message(), depth+1)
+	}
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return protoreflect.Value{}, apperror.NewError("empty value")
+	}
+	var text string
+	switch raw[0] {
+	case '"':
+		if s, ok := simpleString(raw); ok {
+			text = s
+		} else {
+			err := json.Unmarshal(raw, &text)
+			if err != nil {
+				return protoreflect.Value{}, err
+			}
+		}
+	case '{', '[':
+		return protoreflect.Value{}, apperror.NewError("unexpected object or array")
+	default:
+		text = string(raw)
+	}
+	return parseScalar(fd, text)
+}
+
+func (c codec) writeXMLFields(b *bytes.Buffer, m protoreflect.Message, depth int) error {
+	if depth > maxDepth {
+		return errDepth
+	}
+	if md := m.Descriptor(); isWKT(md) {
+		if md.FullName() == "google.protobuf.Empty" {
+			return nil
+		}
+		raw, err := marshalWKT(m)
+		if err != nil {
+			return err
+		}
+		return xml.EscapeText(b, raw)
+	}
+
+	for _, f := range setFields(m) {
+		err := c.writeXMLField(b, f, depth)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// writeXMLField writes every element of one set field: one per list entry, one per map entry or a single one.
+func (c codec) writeXMLField(b *bytes.Buffer, f fieldValue, depth int) error {
+	name := c.xmlName(f.fd)
+	switch {
+	case f.fd.IsList():
+		l := f.v.List()
+		for i := 0; i < l.Len(); i++ {
+			err := c.writeXMLElem(b, name, nil, f.fd, l.Get(i), depth)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	case f.fd.IsMap():
+		mp := f.v.Map()
+		for _, k := range sortedMapKeys(mp) {
+			key := k.String()
+			err := c.writeXMLElem(b, name, &key, f.fd.MapValue(), mp.Get(k), depth)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return c.writeXMLElem(b, name, nil, f.fd, f.v, depth)
+	}
+}
+
+func (c codec) writeXMLElem(b *bytes.Buffer, name string, key *string, fd protoreflect.FieldDescriptor, v protoreflect.Value, depth int) error {
+	b.WriteByte('<')
+	b.WriteString(name)
+	if key != nil {
+		if !validXMLString(*key) {
+			return apperror.NewError("map key contains characters not representable in XML")
+		}
+		b.WriteString(` k="`)
+		err := xml.EscapeText(b, []byte(*key))
+		if err != nil {
+			return err
+		}
+		b.WriteByte('"')
+	}
+
+	text := ""
+	if fd.Message() == nil {
+		text = scalarText(fd, v)
+		if fd.Kind() == protoreflect.StringKind && !validXMLString(text) {
+			b.WriteString(` enc="b64"`)
+			text = base64.StdEncoding.EncodeToString([]byte(text))
+		}
+	}
+	b.WriteByte('>')
+	if fd.Message() != nil {
+		err := c.writeXMLFields(b, v.Message(), depth+1)
+		if err != nil {
+			return err
+		}
+	} else {
+		err := xml.EscapeText(b, []byte(text))
+		if err != nil {
+			return err
+		}
+	}
+	b.WriteString("</")
+	b.WriteString(name)
+	b.WriteByte('>')
+	return nil
+}
+
+func (c codec) readXMLFields(n *xmlNode, m protoreflect.Message, depth int) error {
+	if depth > maxDepth {
+		return errDepth
+	}
+	if isWKT(m.Descriptor()) {
+		text := strings.TrimSpace(n.text)
+		if text == "" {
+			return nil
+		}
+		return unmarshalWKT([]byte(text), m)
+	}
+
+	for _, k := range n.kids {
+		fd := lookupField(m.Descriptor(), k.name)
+		if fd == nil {
+			continue
+		}
+		err := c.readXMLField(m, fd, k, depth)
+		if err != nil {
+			return apperror.NewErrorf("field %q", k.name).AddError(err)
+		}
+	}
+	return nil
+}
+
+func (c codec) readXMLField(m protoreflect.Message, fd protoreflect.FieldDescriptor, n *xmlNode, depth int) error {
+	switch {
+	case fd.IsList():
+		list := m.Mutable(fd).List()
+		v, err := c.readXMLValue(fd, n, list.NewElement(), depth)
+		if err != nil {
+			return err
+		}
+		list.Append(v)
+		return nil
+	case fd.IsMap():
+		ks, ok := n.attr(xmlAttrKey)
+		if !ok {
+			return apperror.NewError("map entry without key attribute")
+		}
+		key, err := parseScalar(fd.MapKey(), ks)
+		if err != nil {
+			return err
+		}
+		mp := m.Mutable(fd).Map()
+		v, err := c.readXMLValue(fd.MapValue(), n, mp.NewValue(), depth)
+		if err != nil {
+			return err
+		}
+		mp.Set(key.MapKey(), v)
+		return nil
+	}
+
+	if fd.Message() != nil {
+		_, err := c.readXMLValue(fd, n, m.Mutable(fd), depth)
+		return err
+	}
+	v, err := c.readXMLValue(fd, n, protoreflect.Value{}, depth)
+	if err != nil {
+		return err
+	}
+	m.Set(fd, v)
+	return nil
+}
+
+func (c codec) readXMLValue(fd protoreflect.FieldDescriptor, n *xmlNode, cur protoreflect.Value, depth int) (protoreflect.Value, error) {
+	if fd.Message() != nil {
+		return cur, c.readXMLFields(n, cur.Message(), depth+1)
+	}
+	text := n.text
+	switch {
+	case fd.Kind() == protoreflect.StringKind && n.attrs[xmlAttrEncoding] == xmlEncodingBase64:
+		raw, err := decodeBase64(strings.TrimSpace(text))
+		if err != nil {
+			return protoreflect.Value{}, err
+		}
+		text = string(raw)
+	case fd.Kind() != protoreflect.StringKind:
+		text = strings.TrimSpace(text)
+	}
+	return parseScalar(fd, text)
+}
+
 type fieldValue struct {
 	fd protoreflect.FieldDescriptor
 	v  protoreflect.Value
 }
+
+// XML
+
+type xmlNode struct {
+	name  string
+	attrs map[string]string
+	text  string
+	kids  []*xmlNode
+}
+
+func newXMLNode(t xml.StartElement) *xmlNode {
+	n := &xmlNode{name: t.Name.Local}
+	if len(t.Attr) > 0 {
+		n.attrs = make(map[string]string, len(t.Attr))
+		for _, a := range t.Attr {
+			n.attrs[a.Name.Local] = a.Value
+		}
+	}
+	return n
+}
+
+func (n *xmlNode) attr(name string) (string, bool) {
+	v, ok := n.attrs[name]
+	return v, ok
+}
+
+func (n *xmlNode) child(name string) *xmlNode {
+	for _, k := range n.kids {
+		if k.name == name {
+			return k
+		}
+	}
+	return nil
+}
+
+func isWKT(md protoreflect.MessageDescriptor) bool { return wkt[md.FullName()] }
 
 func setFields(m protoreflect.Message) []fieldValue {
 	var out []fieldValue
@@ -101,20 +525,6 @@ func sortedMapKeys(mp protoreflect.Map) []protoreflect.MapKey {
 	})
 	sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
 	return keys
-}
-
-func (c codec) jsonKey(fd protoreflect.FieldDescriptor) string {
-	if c.names {
-		return fd.JSONName()
-	}
-	return strconv.Itoa(int(fd.Number()))
-}
-
-func (c codec) xmlName(fd protoreflect.FieldDescriptor) string {
-	if c.names {
-		return fd.JSONName()
-	}
-	return "_" + strconv.Itoa(int(fd.Number()))
 }
 
 func lookupField(md protoreflect.MessageDescriptor, key string) protoreflect.FieldDescriptor {
@@ -242,97 +652,6 @@ func unmarshalWKT(data []byte, m protoreflect.Message) error {
 	return protojson.UnmarshalOptions{DiscardUnknown: true}.Unmarshal(data, m.Interface())
 }
 
-// JSON
-
-func (c codec) marshalJSON(m proto.Message) ([]byte, error) {
-	return c.appendJSON(nil, m.ProtoReflect(), 0)
-}
-
-func (c codec) unmarshalJSON(data []byte, m proto.Message) error {
-	return c.readJSON(data, m.ProtoReflect(), 0)
-}
-
-func (c codec) appendJSON(b []byte, m protoreflect.Message, depth int) ([]byte, error) {
-	if depth > maxDepth {
-		return nil, errDepth
-	}
-	if isWKT(m.Descriptor()) {
-		raw, err := marshalWKT(m)
-		if err != nil {
-			return nil, err
-		}
-		return append(b, raw...), nil
-	}
-
-	b = append(b, '{')
-	for i, f := range setFields(m) {
-		if i > 0 {
-			b = append(b, ',')
-		}
-		b = appendString(b, c.jsonKey(f.fd))
-		b = append(b, ':')
-		var err error
-		b, err = c.appendJSONField(b, f.fd, f.v, depth)
-		if err != nil {
-			return nil, err
-		}
-	}
-	return append(b, '}'), nil
-}
-
-func (c codec) appendJSONField(b []byte, fd protoreflect.FieldDescriptor, v protoreflect.Value, depth int) ([]byte, error) {
-	var err error
-	switch {
-	case fd.IsList():
-		l := v.List()
-		b = append(b, '[')
-		for i := 0; i < l.Len(); i++ {
-			if i > 0 {
-				b = append(b, ',')
-			}
-			b, err = c.appendJSONValue(b, fd, l.Get(i), depth)
-			if err != nil {
-				return nil, err
-			}
-		}
-		return append(b, ']'), nil
-	case fd.IsMap():
-		mp := v.Map()
-		b = append(b, '{')
-		for i, k := range sortedMapKeys(mp) {
-			if i > 0 {
-				b = append(b, ',')
-			}
-			b = appendString(b, k.String())
-			b = append(b, ':')
-			b, err = c.appendJSONValue(b, fd.MapValue(), mp.Get(k), depth)
-			if err != nil {
-				return nil, err
-			}
-		}
-		return append(b, '}'), nil
-	}
-	return c.appendJSONValue(b, fd, v, depth)
-}
-
-func (c codec) appendJSONValue(b []byte, fd protoreflect.FieldDescriptor, v protoreflect.Value, depth int) ([]byte, error) {
-	switch fd.Kind() {
-	case protoreflect.MessageKind, protoreflect.GroupKind:
-		return c.appendJSON(b, v.Message(), depth+1)
-	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind,
-		protoreflect.Uint64Kind, protoreflect.Fixed64Kind, protoreflect.StringKind, protoreflect.BytesKind:
-		return appendString(b, scalarText(fd, v)), nil
-	case protoreflect.FloatKind, protoreflect.DoubleKind:
-		f := v.Float()
-		if math.IsNaN(f) || math.IsInf(f, 0) {
-			return appendString(b, scalarText(fd, v)), nil
-		}
-	}
-	return append(b, scalarText(fd, v)...), nil
-}
-
-const hexDigits = "0123456789abcdef"
-
 func appendString(b []byte, s string) []byte {
 	b = append(b, '"')
 	for i := 0; i < len(s); i++ {
@@ -357,86 +676,6 @@ func appendString(b []byte, s string) []byte {
 
 func isNull(raw []byte) bool { return bytes.Equal(bytes.TrimSpace(raw), []byte(textNull)) }
 
-func (c codec) readJSON(data []byte, m protoreflect.Message, depth int) error {
-	if depth > maxDepth {
-		return errDepth
-	}
-	data = bytes.TrimSpace(data)
-	if len(data) == 0 || isNull(data) {
-		return nil
-	}
-	if isWKT(m.Descriptor()) {
-		return unmarshalWKT(data, m)
-	}
-
-	var obj map[string]json.RawMessage
-	err := json.Unmarshal(data, &obj)
-	if err != nil {
-		return err
-	}
-	for key, raw := range obj {
-		fd := lookupField(m.Descriptor(), key)
-		if fd == nil || isNull(raw) {
-			continue
-		}
-		err := c.readJSONField(m, fd, raw, depth)
-		if err != nil {
-			return apperror.NewErrorf("field %q", key).AddError(err)
-		}
-	}
-	return nil
-}
-
-func (c codec) readJSONField(m protoreflect.Message, fd protoreflect.FieldDescriptor, raw json.RawMessage, depth int) error {
-	switch {
-	case fd.IsList():
-		var items []json.RawMessage
-		err := json.Unmarshal(raw, &items)
-		if err != nil {
-			return err
-		}
-		list := m.Mutable(fd).List()
-		for _, it := range items {
-			v, err := c.readJSONValue(fd, it, list.NewElement(), depth)
-			if err != nil {
-				return err
-			}
-			list.Append(v)
-		}
-		return nil
-	case fd.IsMap():
-		var items map[string]json.RawMessage
-		err := json.Unmarshal(raw, &items)
-		if err != nil {
-			return err
-		}
-		mp := m.Mutable(fd).Map()
-		for k, it := range items {
-			key, err := parseScalar(fd.MapKey(), k)
-			if err != nil {
-				return err
-			}
-			v, err := c.readJSONValue(fd.MapValue(), it, mp.NewValue(), depth)
-			if err != nil {
-				return err
-			}
-			mp.Set(key.MapKey(), v)
-		}
-		return nil
-	}
-
-	if fd.Message() != nil {
-		_, err := c.readJSONValue(fd, raw, m.Mutable(fd), depth)
-		return err
-	}
-	v, err := c.readJSONValue(fd, raw, protoreflect.Value{}, depth)
-	if err != nil {
-		return err
-	}
-	m.Set(fd, v)
-	return nil
-}
-
 // simpleString returns the contents of a JSON string made only of printable ASCII without escapes,
 // which is nearly all identifiers, numbers sent as strings and enum names. Anything else goes
 // through encoding/json, which handles escapes and invalid UTF-8.
@@ -452,58 +691,6 @@ func simpleString(raw []byte) (string, bool) {
 	}
 	return string(body), true
 }
-
-func (c codec) readJSONValue(fd protoreflect.FieldDescriptor, raw []byte, cur protoreflect.Value, depth int) (protoreflect.Value, error) {
-	if fd.Message() != nil {
-		return cur, c.readJSON(raw, cur.Message(), depth+1)
-	}
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 {
-		return protoreflect.Value{}, apperror.NewError("empty value")
-	}
-	var text string
-	switch raw[0] {
-	case '"':
-		if s, ok := simpleString(raw); ok {
-			text = s
-		} else {
-			err := json.Unmarshal(raw, &text)
-			if err != nil {
-				return protoreflect.Value{}, err
-			}
-		}
-	case '{', '[':
-		return protoreflect.Value{}, apperror.NewError("unexpected object or array")
-	default:
-		text = string(raw)
-	}
-	return parseScalar(fd, text)
-}
-
-// XML
-
-type xmlNode struct {
-	name  string
-	attrs map[string]string
-	text  string
-	kids  []*xmlNode
-}
-
-func (n *xmlNode) attr(name string) (string, bool) {
-	v, ok := n.attrs[name]
-	return v, ok
-}
-
-func (n *xmlNode) child(name string) *xmlNode {
-	for _, k := range n.kids {
-		if k.name == name {
-			return k
-		}
-	}
-	return nil
-}
-
-const maxXMLNodes = 1 << 20
 
 func parseXML(data []byte) (*xmlNode, error) {
 	dec := xml.NewDecoder(bytes.NewReader(data))
@@ -548,110 +735,6 @@ func parseXML(data []byte) (*xmlNode, error) {
 	}
 }
 
-func newXMLNode(t xml.StartElement) *xmlNode {
-	n := &xmlNode{name: t.Name.Local}
-	if len(t.Attr) > 0 {
-		n.attrs = make(map[string]string, len(t.Attr))
-		for _, a := range t.Attr {
-			n.attrs[a.Name.Local] = a.Value
-		}
-	}
-	return n
-}
-
-func (c codec) writeXMLFields(b *bytes.Buffer, m protoreflect.Message, depth int) error {
-	if depth > maxDepth {
-		return errDepth
-	}
-	if md := m.Descriptor(); isWKT(md) {
-		if md.FullName() == "google.protobuf.Empty" {
-			return nil
-		}
-		raw, err := marshalWKT(m)
-		if err != nil {
-			return err
-		}
-		return xml.EscapeText(b, raw)
-	}
-
-	for _, f := range setFields(m) {
-		err := c.writeXMLField(b, f, depth)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// writeXMLField writes every element of one set field: one per list entry, one per map entry or a single one.
-func (c codec) writeXMLField(b *bytes.Buffer, f fieldValue, depth int) error {
-	name := c.xmlName(f.fd)
-	switch {
-	case f.fd.IsList():
-		l := f.v.List()
-		for i := 0; i < l.Len(); i++ {
-			err := c.writeXMLElem(b, name, nil, f.fd, l.Get(i), depth)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	case f.fd.IsMap():
-		mp := f.v.Map()
-		for _, k := range sortedMapKeys(mp) {
-			key := k.String()
-			err := c.writeXMLElem(b, name, &key, f.fd.MapValue(), mp.Get(k), depth)
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	default:
-		return c.writeXMLElem(b, name, nil, f.fd, f.v, depth)
-	}
-}
-
-func (c codec) writeXMLElem(b *bytes.Buffer, name string, key *string, fd protoreflect.FieldDescriptor, v protoreflect.Value, depth int) error {
-	b.WriteByte('<')
-	b.WriteString(name)
-	if key != nil {
-		if !validXMLString(*key) {
-			return apperror.NewError("map key contains characters not representable in XML")
-		}
-		b.WriteString(` k="`)
-		err := xml.EscapeText(b, []byte(*key))
-		if err != nil {
-			return err
-		}
-		b.WriteByte('"')
-	}
-
-	text := ""
-	if fd.Message() == nil {
-		text = scalarText(fd, v)
-		if fd.Kind() == protoreflect.StringKind && !validXMLString(text) {
-			b.WriteString(` enc="b64"`)
-			text = base64.StdEncoding.EncodeToString([]byte(text))
-		}
-	}
-	b.WriteByte('>')
-	if fd.Message() != nil {
-		err := c.writeXMLFields(b, v.Message(), depth+1)
-		if err != nil {
-			return err
-		}
-	} else {
-		err := xml.EscapeText(b, []byte(text))
-		if err != nil {
-			return err
-		}
-	}
-	b.WriteString("</")
-	b.WriteString(name)
-	b.WriteByte('>')
-	return nil
-}
-
 // validXMLString reports whether s only contains characters allowed in XML 1.0.
 func validXMLString(s string) bool {
 	for _, r := range s {
@@ -662,87 +745,4 @@ func validXMLString(s string) bool {
 		}
 	}
 	return true
-}
-
-func (c codec) readXMLFields(n *xmlNode, m protoreflect.Message, depth int) error {
-	if depth > maxDepth {
-		return errDepth
-	}
-	if isWKT(m.Descriptor()) {
-		text := strings.TrimSpace(n.text)
-		if text == "" {
-			return nil
-		}
-		return unmarshalWKT([]byte(text), m)
-	}
-
-	for _, k := range n.kids {
-		fd := lookupField(m.Descriptor(), k.name)
-		if fd == nil {
-			continue
-		}
-		err := c.readXMLField(m, fd, k, depth)
-		if err != nil {
-			return apperror.NewErrorf("field %q", k.name).AddError(err)
-		}
-	}
-	return nil
-}
-
-func (c codec) readXMLField(m protoreflect.Message, fd protoreflect.FieldDescriptor, n *xmlNode, depth int) error {
-	switch {
-	case fd.IsList():
-		list := m.Mutable(fd).List()
-		v, err := c.readXMLValue(fd, n, list.NewElement(), depth)
-		if err != nil {
-			return err
-		}
-		list.Append(v)
-		return nil
-	case fd.IsMap():
-		ks, ok := n.attr(xmlAttrKey)
-		if !ok {
-			return apperror.NewError("map entry without key attribute")
-		}
-		key, err := parseScalar(fd.MapKey(), ks)
-		if err != nil {
-			return err
-		}
-		mp := m.Mutable(fd).Map()
-		v, err := c.readXMLValue(fd.MapValue(), n, mp.NewValue(), depth)
-		if err != nil {
-			return err
-		}
-		mp.Set(key.MapKey(), v)
-		return nil
-	}
-
-	if fd.Message() != nil {
-		_, err := c.readXMLValue(fd, n, m.Mutable(fd), depth)
-		return err
-	}
-	v, err := c.readXMLValue(fd, n, protoreflect.Value{}, depth)
-	if err != nil {
-		return err
-	}
-	m.Set(fd, v)
-	return nil
-}
-
-func (c codec) readXMLValue(fd protoreflect.FieldDescriptor, n *xmlNode, cur protoreflect.Value, depth int) (protoreflect.Value, error) {
-	if fd.Message() != nil {
-		return cur, c.readXMLFields(n, cur.Message(), depth+1)
-	}
-	text := n.text
-	switch {
-	case fd.Kind() == protoreflect.StringKind && n.attrs[xmlAttrEncoding] == xmlEncodingBase64:
-		raw, err := decodeBase64(strings.TrimSpace(text))
-		if err != nil {
-			return protoreflect.Value{}, err
-		}
-		text = string(raw)
-	case fd.Kind() != protoreflect.StringKind:
-		text = strings.TrimSpace(text)
-	}
-	return parseScalar(fd, text)
 }

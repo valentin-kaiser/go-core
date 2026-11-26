@@ -9,9 +9,6 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-// Protocol identifies a wire protocol.
-type Protocol string
-
 // Supported protocols.
 const (
 	ProtocolJSON Protocol = "json"
@@ -31,6 +28,9 @@ const (
 	idPrefixNumber = "n"
 	idPrefixString = "s"
 )
+
+// Protocol identifies a wire protocol.
+type Protocol string
 
 type rpcID struct {
 	set  bool
@@ -54,29 +54,6 @@ func (i rpcID) appendJSON(b []byte) []byte {
 		return append(b, i.text...)
 	}
 	return appendString(b, i.text)
-}
-
-func numericID(n uint64) rpcID {
-	return rpcID{set: true, num: true, text: strconv.FormatUint(n, decimalBase)}
-}
-
-func parseJSONID(raw []byte) (rpcID, bool) {
-	raw = bytes.TrimSpace(raw)
-	switch {
-	case len(raw) == 0:
-		return rpcID{}, true
-	case isNull(raw):
-		return rpcID{set: true, null: true}, true
-	case raw[0] == '"':
-		var s string
-		if json.Unmarshal(raw, &s) != nil {
-			return rpcID{}, false
-		}
-		return rpcID{set: true, text: s}, true
-	case raw[0] == '-' || (raw[0] >= '0' && raw[0] <= '9'):
-		return rpcID{set: true, num: true, text: string(raw)}, true
-	}
-	return rpcID{}, false
 }
 
 // envelope is a decoded request, notification or response.
@@ -119,6 +96,7 @@ func newWire(p Protocol, c codec) wire {
 type jsonWire struct{ c codec }
 
 func (jsonWire) protocol() Protocol  { return ProtocolJSON }
+
 func (jsonWire) contentType() string { return mediaTypeJSON }
 
 func (w jsonWire) parse(data []byte) ([]*envelope, bool, *Error) {
@@ -343,4 +321,27 @@ func (w jsonWire) encodeEvent(method string, id rpcID, data proto.Message) ([]by
 		}
 	}
 	return append(b, "}}"...), nil
+}
+
+func numericID(n uint64) rpcID {
+	return rpcID{set: true, num: true, text: strconv.FormatUint(n, decimalBase)}
+}
+
+func parseJSONID(raw []byte) (rpcID, bool) {
+	raw = bytes.TrimSpace(raw)
+	switch {
+	case len(raw) == 0:
+		return rpcID{}, true
+	case isNull(raw):
+		return rpcID{set: true, null: true}, true
+	case raw[0] == '"':
+		var s string
+		if json.Unmarshal(raw, &s) != nil {
+			return rpcID{}, false
+		}
+		return rpcID{set: true, text: s}, true
+	case raw[0] == '-' || (raw[0] >= '0' && raw[0] <= '9'):
+		return rpcID{set: true, num: true, text: string(raw)}, true
+	}
+	return rpcID{}, false
 }
