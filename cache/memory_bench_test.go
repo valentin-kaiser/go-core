@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/cache"
 )
 
@@ -18,7 +19,7 @@ type benchValue struct {
 func newBenchCache(b *testing.B, keys int) *cache.MemoryCache {
 	b.Helper()
 	mc := cache.NewMemoryCache()
-	b.Cleanup(func() { _ = mc.Close() })
+	b.Cleanup(func() { apperror.Catch(mc.Close, "closing cache failed") })
 	ctx := context.Background()
 	for i := range keys {
 		err := mc.Set(ctx, "key-"+strconv.Itoa(i), benchValue{ID: i, Name: "name", Tags: []string{"a", "b"}}, time.Hour)
@@ -36,7 +37,10 @@ func BenchmarkMemoryCacheGetHit(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var v benchValue
-		_, _ = mc.Get(ctx, "key-"+strconv.Itoa(i&1023), &v)
+		_, err := mc.Get(ctx, "key-"+strconv.Itoa(i&1023), &v)
+		if err != nil {
+			b.Error(err)
+		}
 	}
 }
 
@@ -50,7 +54,10 @@ func BenchmarkMemoryCacheGetHitParallel(b *testing.B) {
 		i := 0
 		for pb.Next() {
 			var v benchValue
-			_, _ = mc.Get(ctx, "key-"+strconv.Itoa(i&1023), &v)
+			_, err := mc.Get(ctx, "key-"+strconv.Itoa(i&1023), &v)
+			if err != nil {
+				b.Error(err)
+			}
 			i++
 		}
 	})
@@ -63,7 +70,10 @@ func BenchmarkMemoryCacheGetMiss(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var v benchValue
-		_, _ = mc.Get(ctx, "missing", &v)
+		_, err := mc.Get(ctx, "missing", &v)
+		if err != nil {
+			b.Error(err)
+		}
 	}
 }
 
@@ -74,7 +84,10 @@ func BenchmarkMemoryCacheSet(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = mc.Set(ctx, "key-"+strconv.Itoa(i&1023), val, time.Hour)
+		err := mc.Set(ctx, "key-"+strconv.Itoa(i&1023), val, time.Hour)
+		if err != nil {
+			b.Error(err)
+		}
 	}
 }
 
@@ -87,7 +100,10 @@ func BenchmarkMemoryCacheSetParallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			_ = mc.Set(ctx, "key-"+strconv.Itoa(i&1023), val, time.Hour)
+			err := mc.Set(ctx, "key-"+strconv.Itoa(i&1023), val, time.Hour)
+			if err != nil {
+				b.Error(err)
+			}
 			i++
 		}
 	})
@@ -101,7 +117,10 @@ func BenchmarkMemoryCacheExistsParallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			_, _ = mc.Exists(ctx, "key-"+strconv.Itoa(i&1023))
+			_, err := mc.Exists(ctx, "key-"+strconv.Itoa(i&1023))
+			if err != nil {
+				b.Error(err)
+			}
 			i++
 		}
 	})
@@ -119,10 +138,16 @@ func BenchmarkMemoryCacheMixedParallel(b *testing.B) {
 		for pb.Next() {
 			k := "key-" + strconv.Itoa(i&1023)
 			if i%10 == 0 {
-				_ = mc.Set(ctx, k, val, time.Hour)
+				err := mc.Set(ctx, k, val, time.Hour)
+				if err != nil {
+					b.Error(err)
+				}
 			} else {
 				var v benchValue
-				_, _ = mc.Get(ctx, k, &v)
+				_, err := mc.Get(ctx, k, &v)
+				if err != nil {
+					b.Error(err)
+				}
 			}
 			i++
 		}
@@ -132,7 +157,7 @@ func BenchmarkMemoryCacheMixedParallel(b *testing.B) {
 func newConfiguredBenchCache(b *testing.B, cfg cache.Config, keys int) *cache.MemoryCache {
 	b.Helper()
 	mc := cache.NewMemoryCacheWithConfig(cfg)
-	b.Cleanup(func() { _ = mc.Close() })
+	b.Cleanup(func() { apperror.Catch(mc.Close, "closing cache failed") })
 	ctx := context.Background()
 	for i := range keys {
 		err := mc.Set(ctx, "key-"+strconv.Itoa(i), benchValue{ID: i, Name: "name", Tags: []string{"a", "b"}}, time.Hour)
@@ -168,10 +193,16 @@ func BenchmarkMemoryCacheMixedParallelSharded(b *testing.B) {
 		for pb.Next() {
 			k := "key-" + strconv.Itoa(i&1023)
 			if i%10 == 0 {
-				_ = mc.Set(ctx, k, val, time.Hour)
+				err := mc.Set(ctx, k, val, time.Hour)
+				if err != nil {
+					b.Error(err)
+				}
 			} else {
 				var v benchValue
-				_, _ = mc.Get(ctx, k, &v)
+				_, err := mc.Get(ctx, k, &v)
+				if err != nil {
+					b.Error(err)
+				}
 			}
 			i++
 		}
@@ -187,7 +218,10 @@ func BenchmarkMemoryCacheSetParallelSharded(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			_ = mc.Set(ctx, "key-"+strconv.Itoa(i&1023), val, time.Hour)
+			err := mc.Set(ctx, "key-"+strconv.Itoa(i&1023), val, time.Hour)
+			if err != nil {
+				b.Error(err)
+			}
 			i++
 		}
 	})
@@ -200,7 +234,10 @@ func BenchmarkMemoryCacheGetHitNative(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var v benchValue
-		_, _ = mc.Get(ctx, "key-"+strconv.Itoa(i&1023), &v)
+		_, err := mc.Get(ctx, "key-"+strconv.Itoa(i&1023), &v)
+		if err != nil {
+			b.Error(err)
+		}
 	}
 }
 
@@ -213,7 +250,10 @@ func BenchmarkMemoryCacheGetHitParallelNative(b *testing.B) {
 		i := 0
 		for pb.Next() {
 			var v benchValue
-			_, _ = mc.Get(ctx, "key-"+strconv.Itoa(i&1023), &v)
+			_, err := mc.Get(ctx, "key-"+strconv.Itoa(i&1023), &v)
+			if err != nil {
+				b.Error(err)
+			}
 			i++
 		}
 	})
@@ -232,10 +272,16 @@ func BenchmarkMemoryCacheMixedParallelShardedNative(b *testing.B) {
 		for pb.Next() {
 			k := "key-" + strconv.Itoa(i&1023)
 			if i%10 == 0 {
-				_ = mc.Set(ctx, k, val, time.Hour)
+				err := mc.Set(ctx, k, val, time.Hour)
+				if err != nil {
+					b.Error(err)
+				}
 			} else {
 				var v benchValue
-				_, _ = mc.Get(ctx, k, &v)
+				_, err := mc.Get(ctx, k, &v)
+				if err != nil {
+					b.Error(err)
+				}
 			}
 			i++
 		}

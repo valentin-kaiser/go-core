@@ -55,7 +55,7 @@ func (tc *TieredCache) Get(ctx context.Context, key string, dest any) (bool, err
 	if err != nil {
 		tc.recordError(err)
 		tc.emitEvent(EventGet, key, nil, err)
-		return false, err
+		return false, apperror.NewErrorf("getting key %s from L1 cache failed", key).AddError(err)
 	}
 
 	if found {
@@ -69,7 +69,7 @@ func (tc *TieredCache) Get(ctx context.Context, key string, dest any) (bool, err
 	if err != nil {
 		tc.recordError(err)
 		tc.emitEvent(EventGet, key, nil, err)
-		return false, err
+		return false, apperror.NewErrorf("getting key %s from L2 cache failed", key).AddError(err)
 	}
 
 	if found {
@@ -104,7 +104,7 @@ func (tc *TieredCache) Set(ctx context.Context, key string, value any, ttl time.
 	if err != nil {
 		tc.recordError(err)
 		tc.emitEvent(EventSet, key, value, err)
-		return err
+		return apperror.NewErrorf("setting key %s in L2 cache failed", key).AddError(err)
 	}
 
 	// Set in L1 cache with potentially shorter TTL
@@ -133,7 +133,7 @@ func (tc *TieredCache) Delete(ctx context.Context, key string) error {
 
 	// Return error if both failed
 	if l1Err != nil && l2Err != nil {
-		err := apperror.NewError("failed to delete from both L1 and L2 caches")
+		err := apperror.NewError("deleting from both L1 and L2 caches failed").AddErrors([]error{l1Err, l2Err})
 		tc.recordError(err)
 		tc.emitEvent(EventDelete, key, nil, err)
 		return err
@@ -150,7 +150,7 @@ func (tc *TieredCache) Exists(ctx context.Context, key string) (bool, error) {
 	exists, err := tc.l1Cache.Exists(ctx, key)
 	if err != nil {
 		tc.recordError(err)
-		return false, err
+		return false, apperror.NewErrorf("checking key %s in L1 cache failed", key).AddError(err)
 	}
 
 	if exists {
@@ -161,7 +161,7 @@ func (tc *TieredCache) Exists(ctx context.Context, key string) (bool, error) {
 	exists, err = tc.l2Cache.Exists(ctx, key)
 	if err != nil {
 		tc.recordError(err)
-		return false, err
+		return false, apperror.NewErrorf("checking key %s in L2 cache failed", key).AddError(err)
 	}
 
 	return exists, nil
@@ -176,7 +176,7 @@ func (tc *TieredCache) Clear(ctx context.Context) error {
 
 	// Return error if both failed
 	if l1Err != nil && l2Err != nil {
-		err := apperror.NewError("failed to clear both L1 and L2 caches")
+		err := apperror.NewError("clearing both L1 and L2 caches failed").AddErrors([]error{l1Err, l2Err})
 		tc.recordError(err)
 		tc.emitEvent(EventClear, "", nil, err)
 		return err
@@ -213,7 +213,7 @@ func (tc *TieredCache) GetMulti(ctx context.Context, keys []string) (map[string]
 		l2Results, err := tc.l2Cache.GetMulti(ctx, missingKeys)
 		if err != nil {
 			tc.recordError(err)
-			return result, err
+			return result, apperror.NewError("getting keys from L2 cache failed").AddError(err)
 		}
 
 		// Backfill L1 cache with values from L2
@@ -245,7 +245,7 @@ func (tc *TieredCache) SetMulti(ctx context.Context, items map[string]any, ttl t
 	err := tc.l2Cache.SetMulti(ctx, items, effectiveTTL)
 	if err != nil {
 		tc.recordError(err)
-		return err
+		return apperror.NewError("setting keys in L2 cache failed").AddError(err)
 	}
 
 	// Set in L1 cache with potentially shorter TTL
@@ -269,7 +269,7 @@ func (tc *TieredCache) DeleteMulti(ctx context.Context, keys []string) error {
 
 	// Return error if both failed
 	if l1Err != nil && l2Err != nil {
-		err := apperror.NewError("failed to delete from both L1 and L2 caches")
+		err := apperror.NewError("deleting from both L1 and L2 caches failed").AddErrors([]error{l1Err, l2Err})
 		tc.recordError(err)
 		return err
 	}
@@ -297,7 +297,7 @@ func (tc *TieredCache) SetTTL(ctx context.Context, key string, ttl time.Duration
 
 	// Return error if both failed
 	if l1Err != nil && l2Err != nil {
-		err := apperror.NewError("failed to set TTL in both L1 and L2 caches")
+		err := apperror.NewError("setting TTL in both L1 and L2 caches failed").AddErrors([]error{l1Err, l2Err})
 		tc.recordError(err)
 		return err
 	}
@@ -344,10 +344,14 @@ func (tc *TieredCache) Close() error {
 	}
 
 	if l1Err != nil {
-		return l1Err
+		return apperror.NewError("closing L1 cache failed").AddError(l1Err)
 	}
 
-	return l2Err
+	if l2Err != nil {
+		return apperror.NewError("closing L2 cache failed").AddError(l2Err)
+	}
+
+	return nil
 }
 
 // GetL1Cache returns the L1 (fast) cache instance
@@ -374,7 +378,7 @@ func (tc *TieredCache) WarmupL1(ctx context.Context, keys []string) error {
 	// Get values from L2
 	values, err := tc.l2Cache.GetMulti(ctx, keys)
 	if err != nil {
-		return err
+		return apperror.NewError("getting keys from L2 cache failed").AddError(err)
 	}
 
 	if len(values) == 0 {
@@ -384,7 +388,12 @@ func (tc *TieredCache) WarmupL1(ctx context.Context, keys []string) error {
 	// Set values in L1 with shorter TTL
 	l1TTL := min(tc.config.DefaultTTL, time.Hour)
 
-	return tc.l1Cache.SetMulti(ctx, values, l1TTL)
+	err = tc.l1Cache.SetMulti(ctx, values, l1TTL)
+	if err != nil {
+		return apperror.NewError("setting keys in L1 cache failed").AddError(err)
+	}
+
+	return nil
 }
 
 // GetTieredStats returns detailed statistics for each cache level

@@ -6,13 +6,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/cache"
 )
 
 // Exists drops expired entries. A concurrent Set of the same key must never lose its fresh value.
 func TestMemoryCacheExistsDoesNotDropFreshValue(t *testing.T) {
 	mc := cache.NewMemoryCache()
-	defer func() { _ = mc.Close() }()
+	defer apperror.Catch(mc.Close, "closing cache failed")
 	ctx := context.Background()
 
 	var wg sync.WaitGroup
@@ -23,7 +24,10 @@ func TestMemoryCacheExistsDoesNotDropFreshValue(t *testing.T) {
 			case <-stop:
 				return
 			default:
-				_, _ = mc.Exists(ctx, "k")
+				_, err := mc.Exists(ctx, "k")
+				if err != nil {
+					t.Error(err)
+				}
 			}
 		}
 	})
@@ -56,7 +60,7 @@ func TestMemoryCacheEvictsLeastRecentlyRead(t *testing.T) {
 	cfg.MaxSize = 3
 	cfg.EnableLRU = true
 	mc := cache.NewMemoryCacheWithConfig(cfg)
-	defer func() { _ = mc.Close() }()
+	defer apperror.Catch(mc.Close, "closing cache failed")
 	ctx := context.Background()
 
 	for _, k := range []string{"a", "b", "c"} {
@@ -66,17 +70,24 @@ func TestMemoryCacheEvictsLeastRecentlyRead(t *testing.T) {
 		}
 	}
 	var v string
-	ok, _ := mc.Get(ctx, "a", &v)
+	ok, err := mc.Get(ctx, "a", &v)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !ok {
 		t.Fatal("a should be cached")
 	}
-	err := mc.Set(ctx, "d", "d", time.Hour)
+	err = mc.Set(ctx, "d", "d", time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	for key, want := range map[string]bool{"a": true, "b": false, "c": true, "d": true} {
-		if ok, _ := mc.Exists(ctx, key); ok != want {
+		ok, err := mc.Exists(ctx, key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok != want {
 			t.Errorf("key %q cached = %v, want %v", key, ok, want)
 		}
 	}
@@ -87,7 +98,7 @@ func TestMemoryCacheConcurrentMixed(t *testing.T) {
 	cfg := cache.DefaultConfig()
 	cfg.MaxSize = 50
 	mc := cache.NewMemoryCacheWithConfig(cfg)
-	defer func() { _ = mc.Close() }()
+	defer apperror.Catch(mc.Close, "closing cache failed")
 	ctx := context.Background()
 
 	var wg sync.WaitGroup
@@ -99,12 +110,21 @@ func TestMemoryCacheConcurrentMixed(t *testing.T) {
 				k := "k" + string(rune('a'+(i+g)%26))
 				switch i % 4 {
 				case 0:
-					_ = mc.Set(ctx, k, i, time.Duration(i%3)*time.Millisecond)
+					err := mc.Set(ctx, k, i, time.Duration(i%3)*time.Millisecond)
+					if err != nil {
+						t.Error(err)
+					}
 				case 3:
-					_ = mc.Delete(ctx, k)
+					err := mc.Delete(ctx, k)
+					if err != nil {
+						t.Error(err)
+					}
 				default:
 					var v int
-					_, _ = mc.Get(ctx, k, &v)
+					_, err := mc.Get(ctx, k, &v)
+					if err != nil {
+						t.Error(err)
+					}
 				}
 			}
 		}(g)
@@ -117,15 +137,24 @@ func TestMemoryCacheConcurrentMixed(t *testing.T) {
 
 func TestMemoryCacheStatsCountHitsAndMisses(t *testing.T) {
 	mc := cache.NewMemoryCache()
-	defer func() { _ = mc.Close() }()
+	defer apperror.Catch(mc.Close, "closing cache failed")
 	ctx := context.Background()
-	_ = mc.Set(ctx, "k", 1, time.Hour)
+	err := mc.Set(ctx, "k", 1, time.Hour)
+	if err != nil {
+		t.Error(err)
+	}
 
 	var v int
 	for range 3 {
-		_, _ = mc.Get(ctx, "k", &v)
+		_, err := mc.Get(ctx, "k", &v)
+		if err != nil {
+			t.Error(err)
+		}
 	}
-	_, _ = mc.Get(ctx, "missing", &v)
+	_, err = mc.Get(ctx, "missing", &v)
+	if err != nil {
+		t.Error(err)
+	}
 
 	s := mc.GetStats()
 	if s.Hits != 3 || s.Misses != 1 {

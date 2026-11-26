@@ -46,7 +46,11 @@ func TestShardedCacheBasicOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, _ := mc.Exists(ctx, "k5"); ok {
+	ok, err := mc.Exists(ctx, "k5")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
 		t.Error("k5 exists after Delete")
 	}
 	err = mc.Clear(ctx)
@@ -67,7 +71,10 @@ func TestShardedCacheNeverExceedsMaxSize(t *testing.T) {
 		mc := cache.NewMemoryCacheWithConfig(shardedConfig(tc.shards, tc.max))
 		ctx := context.Background()
 		for i := range 2000 {
-			_ = mc.Set(ctx, fmt.Sprintf("k%d", i), i, time.Hour)
+			err := mc.Set(ctx, fmt.Sprintf("k%d", i), i, time.Hour)
+			if err != nil {
+				t.Error(err)
+			}
 			if got := mc.GetSize(); got > tc.max {
 				t.Fatalf("shards=%d max=%d: holds %d items", tc.shards, tc.max, got)
 			}
@@ -83,7 +90,10 @@ func TestShardedCacheRespectsMaxSize(t *testing.T) {
 	mc := cache.NewMemoryCacheWithConfig(shardedConfig(4, 100))
 	ctx := context.Background()
 	for i := range 1000 {
-		_ = mc.Set(ctx, fmt.Sprintf("k%d", i), i, time.Hour)
+		err := mc.Set(ctx, fmt.Sprintf("k%d", i), i, time.Hour)
+		if err != nil {
+			t.Error(err)
+		}
 	}
 	if got := mc.GetSize(); got > 100 {
 		t.Fatalf("holds %d items, limit is 100", got)
@@ -109,12 +119,21 @@ func TestShardedCacheConcurrent(t *testing.T) {
 				k := fmt.Sprintf("k%d", (i*7+g)%700)
 				switch i % 5 {
 				case 0:
-					_ = mc.Set(ctx, k, i, time.Duration(i%3)*time.Millisecond)
+					err := mc.Set(ctx, k, i, time.Duration(i%3)*time.Millisecond)
+					if err != nil {
+						t.Error(err)
+					}
 				case 4:
-					_ = mc.Delete(ctx, k)
+					err := mc.Delete(ctx, k)
+					if err != nil {
+						t.Error(err)
+					}
 				default:
 					var v int
-					_, _ = mc.Get(ctx, k, &v)
+					_, err := mc.Get(ctx, k, &v)
+					if err != nil {
+						t.Error(err)
+					}
 				}
 			}
 		}(g)
@@ -175,7 +194,10 @@ func TestNativeSerializer(t *testing.T) {
 	}
 
 	// Scalars
-	_ = mc.Set(ctx, "n", 42, time.Hour)
+	err = mc.Set(ctx, "n", 42, time.Hour)
+	if err != nil {
+		t.Error(err)
+	}
 	var n int
 	ok, err = mc.Get(ctx, "n", &n)
 	if err != nil || !ok || n != 42 {
