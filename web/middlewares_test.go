@@ -7,7 +7,7 @@ import (
 )
 
 // noopHandler is a simple handler that writes a 200 OK response.
-var noopHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+var noopHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
 })
 
@@ -216,7 +216,7 @@ func TestCORSVaryHeaderDedup(t *testing.T) {
 		AllowOrigin:      "https://example.com",
 		AllowCredentials: true,
 	}
-	handler := corsHeaderMiddlewareWithConfig(config)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	handler := corsHeaderMiddlewareWithConfig(config)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		// Simulate another middleware/handler setting Vary: Origin
 		w.Header().Set("Vary", "Origin")
 		w.WriteHeader(http.StatusOK)

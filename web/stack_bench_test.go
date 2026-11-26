@@ -68,7 +68,8 @@ func BenchmarkWebsocketEcho(b *testing.B) {
 			if err != nil {
 				return
 			}
-			if err := conn.WriteMessage(mt, msg); err != nil {
+			err = conn.WriteMessage(mt, msg)
+			if err != nil {
 				return
 			}
 		}
@@ -79,21 +80,32 @@ func BenchmarkWebsocketEcho(b *testing.B) {
 	srv := httptest.NewServer(s.router)
 	b.Cleanup(srv.Close)
 
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/ws", nil)
+	conn, resp, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(srv.URL, "http")+"/ws", nil)
 	if err != nil {
 		b.Skipf("websocket dial failed: %v", err)
 	}
-	b.Cleanup(func() { _ = conn.Close() })
+	b.Cleanup(func() {
+		err := resp.Body.Close()
+		if err != nil {
+			b.Errorf("closing handshake response body failed: %v", err)
+		}
+		err = conn.Close()
+		if err != nil {
+			b.Errorf("closing connection failed: %v", err)
+		}
+	})
 
 	msg := []byte(strings.Repeat("x", 100))
 	b.SetBytes(int64(len(msg)))
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+		err := conn.WriteMessage(websocket.TextMessage, msg)
+		if err != nil {
 			b.Fatal(err)
 		}
-		if _, _, err := conn.ReadMessage(); err != nil {
+		_, _, err = conn.ReadMessage()
+		if err != nil {
 			b.Fatal(err)
 		}
 	}

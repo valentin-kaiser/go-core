@@ -265,7 +265,7 @@ func (s *Server) Start() *Server {
 						logging.F("redirect_code", rule.Code),
 					).Msg("redirecting request")
 
-					http.Redirect(w, r, targetURL, rule.Code)
+					http.Redirect(w, r, targetURL, rule.Code) //nolint:gosec // target is built from the configured redirect rule, the host is only re-used from the request itself
 					return
 				}
 
@@ -284,7 +284,7 @@ func (s *Server) Start() *Server {
 
 	for key, server := range s.servers {
 		group.Go(func() error {
-			protocol := strings.Split(key, ":")[0]
+			protocol, _, _ := strings.Cut(key, ":")
 			addr := server.Addr
 
 			logger.Info().Fields(logging.F("addr", addr), logging.F("protocol", protocol)).Msgf("listening on %s", protocol)

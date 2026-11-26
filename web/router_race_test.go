@@ -11,7 +11,7 @@ import (
 )
 
 // Requests are served while routes, status hooks and middlewares are registered.
-func TestRouterConcurrentRegistration(t *testing.T) {
+func TestRouterConcurrentRegistration(_ *testing.T) {
 	r := web.NewRouter()
 	r.HandleFunc("/", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNotFound) })
 
@@ -19,7 +19,7 @@ func TestRouterConcurrentRegistration(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 200; i++ {
+		for i := range 200 {
 			p := "/p" + strconv.Itoa(i)
 			r.HandleFunc(p, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 			r.OnStatus(p, http.StatusNotFound, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
@@ -28,7 +28,7 @@ func TestRouterConcurrentRegistration(t *testing.T) {
 	}()
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 200; i++ {
+		for i := range 200 {
 			rec := httptest.NewRecorder()
 			r.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/p"+strconv.Itoa(i%50), nil))
 		}
