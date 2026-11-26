@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/mail"
 )
 
@@ -72,7 +73,10 @@ func startSMTP(tb testing.TB, mutate func(*mail.ServerConfig)) (string, func() [
 	tb.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = server.Stop(ctx)
+		err := server.Stop(ctx)
+		if err != nil {
+			tb.Logf("stopping SMTP server failed: %v", err)
+		}
 	})
 
 	return fmt.Sprintf("127.0.0.1:%d", port), func() []received {
@@ -121,7 +125,7 @@ func TestSMTPServerSeveralMessagesOnOneConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = c.Close() }()
+	defer apperror.Catch(c.Close, "closing connection failed")
 
 	for i := range 5 {
 		err := c.Mail("sender@example.com")
@@ -145,7 +149,10 @@ func TestSMTPServerSeveralMessagesOnOneConnection(t *testing.T) {
 			t.Fatalf("message %d end of data: %v", i, err)
 		}
 	}
-	_ = c.Quit()
+	err = c.Quit()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	waitFor(t, func() bool { return len(messages()) == 5 })
 }
@@ -159,7 +166,7 @@ func TestSMTPServerRefusesOversizedMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = c.Close() }()
+	defer apperror.Catch(c.Close, "closing connection failed")
 
 	err = c.Mail("sender@example.com")
 	if err != nil {
@@ -202,7 +209,10 @@ func TestSMTPServerRefusesOversizedMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, _ = io.WriteString(w, "Subject: small\r\n\r\nok\r\n")
+	_, err = io.WriteString(w, "Subject: small\r\n\r\nok\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
 	err = w.Close()
 	if err != nil {
 		t.Fatalf("small message after the refused one: %v", err)
@@ -230,7 +240,7 @@ func benchSMTP(b *testing.B, size int) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer func() { _ = c.Close() }()
+	defer apperror.Catch(c.Close, "closing connection failed")
 
 	b.SetBytes(int64(body.Len()))
 	b.ReportAllocs()
@@ -277,16 +287,25 @@ func TestSMTPServerAuthRequiredForData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer func() { _ = conn.Close() }()
-	_ = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	defer apperror.Catch(conn.Close, "closing connection failed")
+	err = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	read := func() string {
 		buf := make([]byte, 4096)
-		n, _ := conn.Read(buf)
+		n, err := conn.Read(buf)
+		if err != nil {
+			t.Logf("reading reply failed: %v", err)
+		}
 		return string(buf[:n])
 	}
 	send := func(s string) string {
-		_, _ = io.WriteString(conn, s+"\r\n")
+		_, err := io.WriteString(conn, s+"\r\n")
+		if err != nil {
+			t.Fatal(err)
+		}
 		return read()
 	}
 
@@ -301,7 +320,10 @@ func TestSMTPServerAuthRequiredForData(t *testing.T) {
 		}
 		return
 	}
-	_, _ = io.WriteString(conn, "Subject: x\r\n\r\nbody\r\n.\r\n")
+	_, err = io.WriteString(conn, "Subject: x\r\n\r\nbody\r\n.\r\n")
+	if err != nil {
+		t.Fatal(err)
+	}
 	reply := read()
 	if !strings.HasPrefix(reply, "530") {
 		t.Fatalf("unauthenticated message got the reply %q, want 530", reply)

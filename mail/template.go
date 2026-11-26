@@ -51,7 +51,7 @@ func NewTemplateManager(config TemplateConfig) *TemplateManager {
 	if config.FileSystem != nil || config.TemplatesPath != "" {
 		err := tm.ReloadTemplates()
 		if err != nil {
-			tm.Error = apperror.Wrap(err)
+			tm.Error = apperror.NewError("reloading templates failed").AddError(err)
 		}
 	}
 
@@ -70,7 +70,7 @@ func (tm *TemplateManager) WithFS(filesystem fs.FS) *TemplateManager {
 	// Reload templates from the new filesystem
 	err := tm.ReloadTemplates()
 	if err != nil {
-		tm.Error = apperror.Wrap(err)
+		tm.Error = apperror.NewError("reloading templates failed").AddError(err)
 	}
 
 	return tm
@@ -96,7 +96,7 @@ func (tm *TemplateManager) WithFileServer(templatesPath string) *TemplateManager
 	// Reload templates from the new path
 	err := tm.ReloadTemplates()
 	if err != nil {
-		tm.Error = apperror.Wrap(err)
+		tm.Error = apperror.NewError("reloading templates failed").AddError(err)
 	}
 
 	return tm
@@ -140,7 +140,7 @@ func (tm *TemplateManager) LoadTemplate(name string) (*template.Template, error)
 
 	tmpl, err := tm.loadTemplateFromDisk(name)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewErrorf("loading template %s from disk failed", name).AddError(err)
 	}
 
 	return tmpl, nil
@@ -168,11 +168,11 @@ func (tm *TemplateManager) RenderTemplate(name string, data any, funcs ...templa
 			// Verify the resolved path is within TemplatesPath.
 			root, err := filepath.Abs(tm.config.TemplatesPath)
 			if err != nil {
-				return nil, apperror.NewError("failed to resolve templates root path").AddError(err)
+				return nil, apperror.NewError("resolving templates root path failed").AddError(err)
 			}
 			absCustom, err := filepath.Abs(customPath)
 			if err != nil {
-				return nil, apperror.NewError("failed to resolve template path").AddError(err)
+				return nil, apperror.NewError("resolving template path failed").AddError(err)
 			}
 			if !strings.HasPrefix(absCustom, root+string(filepath.Separator)) && absCustom != root {
 				return nil, apperror.NewError("invalid template name: path escapes templates root").AddDetail("name", name)
@@ -182,7 +182,7 @@ func (tm *TemplateManager) RenderTemplate(name string, data any, funcs ...templa
 			if err == nil {
 				content, err := os.ReadFile(absCustom) //nolint:gosec // absCustom was verified to be inside TemplatesPath above
 				if err != nil {
-					return nil, apperror.NewError("failed to read template file from TemplatesPath").AddError(err)
+					return nil, apperror.NewError("reading template file from TemplatesPath failed").AddError(err)
 				}
 				return content, nil
 			}
@@ -196,7 +196,7 @@ func (tm *TemplateManager) RenderTemplate(name string, data any, funcs ...templa
 			}
 			content, err := fs.ReadFile(tm.config.FileSystem, fsPath)
 			if err != nil {
-				return nil, apperror.NewError("failed to read template file from FileSystem").AddError(err)
+				return nil, apperror.NewError("reading template file from FileSystem failed").AddError(err)
 			}
 			return content, nil
 		}
@@ -205,7 +205,7 @@ func (tm *TemplateManager) RenderTemplate(name string, data any, funcs ...templa
 		return nil, apperror.NewError("no template source configured")
 	}()
 	if err != nil {
-		return "", apperror.Wrap(err)
+		return "", apperror.NewError("reading template source failed").AddError(err)
 	}
 
 	// Build function map: start with global functions, then apply custom functions
@@ -226,13 +226,13 @@ func (tm *TemplateManager) RenderTemplate(name string, data any, funcs ...templa
 	// Parse and execute template
 	tmpl, err := template.New(name).Funcs(funcMap).Parse(string(content))
 	if err != nil {
-		return "", apperror.NewError("failed to parse template").AddError(err)
+		return "", apperror.NewError("parsing template failed").AddError(err)
 	}
 
 	var buf bytes.Buffer
 	err = tmpl.Execute(&buf, data)
 	if err != nil {
-		return "", apperror.NewError("failed to execute template").AddError(err)
+		return "", apperror.NewError("executing template failed").AddError(err)
 	}
 
 	return buf.String(), nil
@@ -266,13 +266,13 @@ func (tm *TemplateManager) RenderTemplateContent(content string, data any, funcs
 	// Parse and execute template
 	tmpl, err := template.New("inline-template").Funcs(funcMap).Parse(content)
 	if err != nil {
-		return "", apperror.NewError("failed to parse template content").AddError(err)
+		return "", apperror.NewError("parsing template content failed").AddError(err)
 	}
 
 	var buf bytes.Buffer
 	err = tmpl.Execute(&buf, data)
 	if err != nil {
-		return "", apperror.NewError("failed to execute template content").AddError(err)
+		return "", apperror.NewError("executing template content failed").AddError(err)
 	}
 
 	return buf.String(), nil
@@ -291,14 +291,14 @@ func (tm *TemplateManager) ReloadTemplates() error {
 	if tm.config.FileSystem != nil {
 		err := tm.loadTemplatesFromFS(tm.config.FileSystem)
 		if err != nil {
-			return apperror.Wrap(err)
+			return apperror.NewError("loading templates from filesystem failed").AddError(err)
 		}
 	}
 
 	if tm.config.TemplatesPath != "" {
 		err := tm.loadTemplatesFromPath(tm.config.TemplatesPath)
 		if err != nil {
-			return apperror.Wrap(err)
+			return apperror.NewError("loading templates from path failed").AddError(err)
 		}
 	}
 
@@ -313,7 +313,7 @@ func (tm *TemplateManager) loadTemplatesFromFS(filesystem fs.FS) error {
 
 	return fs.WalkDir(filesystem, ".", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
-			return err
+			return apperror.NewError("walking templates filesystem failed").AddError(err)
 		}
 
 		if d.IsDir() || !strings.HasSuffix(path, ".html") {
@@ -323,13 +323,13 @@ func (tm *TemplateManager) loadTemplatesFromFS(filesystem fs.FS) error {
 		// Read template content
 		content, err := fs.ReadFile(filesystem, path)
 		if err != nil {
-			return apperror.NewError("failed to read template file").AddError(err)
+			return apperror.NewError("reading template file failed").AddError(err)
 		}
 
 		// Parse template
 		tmpl, err := tm.parseTemplate(path, string(content))
 		if err != nil {
-			return apperror.Wrap(err)
+			return apperror.NewErrorf("parsing template %s failed", path).AddError(err)
 		}
 
 		logger.Trace().Field("template", path).Msg("loaded template from filesystem")
@@ -357,7 +357,7 @@ func (tm *TemplateManager) loadTemplatesFromPath(templatesPath string) error {
 
 	return filepath.Walk(templatesPath, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
-			return err
+			return apperror.NewError("walking templates path failed").AddError(err)
 		}
 
 		if info.IsDir() || !strings.HasSuffix(path, ".html") {
@@ -367,20 +367,20 @@ func (tm *TemplateManager) loadTemplatesFromPath(templatesPath string) error {
 		// Get template name relative to templates path
 		relPath, err := filepath.Rel(templatesPath, path)
 		if err != nil {
-			return err
+			return apperror.NewErrorf("resolving relative path of %s failed", path).AddError(err)
 		}
 
 		// Load template content
 		// Reading through the root keeps symlinks from leading out of the templates path.
 		content, err := root.ReadFile(relPath)
 		if err != nil {
-			return apperror.NewError("failed to read template file").AddError(err)
+			return apperror.NewError("reading template file failed").AddError(err)
 		}
 
 		// Parse template
 		tmpl, err := tm.parseTemplate(relPath, string(content))
 		if err != nil {
-			return apperror.Wrap(err)
+			return apperror.NewErrorf("parsing template %s failed", relPath).AddError(err)
 		}
 
 		logger.Trace().Field("template", relPath).Msg("loaded template from path")
@@ -415,7 +415,7 @@ func (tm *TemplateManager) loadTemplateFromDisk(name string) (*template.Template
 
 		content, err = os.ReadFile(customPath)
 		if err != nil {
-			return nil, apperror.NewError("failed to read template file").AddError(err)
+			return nil, apperror.NewError("reading template file failed").AddError(err)
 		}
 	default:
 		return nil, apperror.NewError("no template source configured - use WithFS or WithFileServer")
@@ -424,7 +424,7 @@ func (tm *TemplateManager) loadTemplateFromDisk(name string) (*template.Template
 	// Parse template
 	tmpl, err := tm.parseTemplate(name, string(content))
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewErrorf("parsing template %s failed", name).AddError(err)
 	}
 
 	// Cache the template
@@ -444,7 +444,7 @@ func (tm *TemplateManager) parseTemplate(name, content string) (*template.Templa
 	// Parse template with functions
 	tmpl, err := template.New(name).Funcs(tm.funcs).Parse(content)
 	if err != nil {
-		return nil, apperror.NewError("failed to parse template").AddError(err)
+		return nil, apperror.NewError("parsing template failed").AddError(err)
 	}
 
 	return tmpl, nil

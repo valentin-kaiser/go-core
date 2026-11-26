@@ -224,17 +224,17 @@ func (c *ClientConfig) Validate() error {
 		return nil
 	}
 	if c.Host == "" {
-		return apperror.NewError("SMTP host is required")
+		return apperror.NewError("smtp host is required")
 	}
 	if c.Port <= 0 || c.Port > 65535 {
-		return apperror.NewError("SMTP port must be between 1 and 65535")
+		return apperror.NewError("smtp port must be between 1 and 65535")
 	}
 	if c.Auth {
 		if c.Username == "" {
-			return apperror.NewError("SMTP username is required")
+			return apperror.NewError("smtp username is required")
 		}
 		if c.Password == "" {
-			return apperror.NewError("SMTP password is required")
+			return apperror.NewError("smtp password is required")
 		}
 	}
 	return nil
@@ -250,16 +250,16 @@ func (c *ServerConfig) TLSConfig() *tls.Config {
 // Validate checks the server configuration for errors
 func (c *ServerConfig) Validate() error {
 	if c.Host == "" {
-		return apperror.NewError("SMTP server host is required")
+		return apperror.NewError("smtp server host is required")
 	}
 	if c.Port <= 0 || c.Port > 65535 {
-		return apperror.NewError("SMTP server port must be between 1 and 65535")
+		return apperror.NewError("smtp server port must be between 1 and 65535")
 	}
 	if c.Domain == "" {
-		return apperror.NewError("SMTP server domain is required")
+		return apperror.NewError("smtp server domain is required")
 	}
 	if c.TLS && (c.CertFile == "" || c.KeyFile == "") {
-		return apperror.NewError("TLS is enabled but certificate or key file is missing")
+		return apperror.NewError("tls is enabled but certificate or key file is missing")
 	}
 	return nil
 }
@@ -268,13 +268,13 @@ func (c *ServerConfig) Validate() error {
 func (c *QueueConfig) Validate() error {
 	if c.Enabled {
 		if c.QueueName == "" {
-			return apperror.NewError("Queue name is required")
+			return apperror.NewError("queue name is required")
 		}
 		if c.MaxAttempts <= 0 {
-			return apperror.NewError("Max attempts must be greater than 0")
+			return apperror.NewError("max attempts must be greater than 0")
 		}
 		if c.JobTimeout <= 0 {
-			return apperror.NewError("Job timeout must be greater than 0")
+			return apperror.NewError("job timeout must be greater than 0")
 		}
 	}
 	return nil
@@ -284,7 +284,7 @@ func (c *QueueConfig) Validate() error {
 func (c *TemplateConfig) Validate() error {
 	if c.Enabled {
 		if c.DefaultTemplate == "" {
-			return apperror.NewError("Default template is required")
+			return apperror.NewError("default template is required")
 		}
 	}
 	return nil
@@ -294,19 +294,19 @@ func (c *TemplateConfig) Validate() error {
 func (c *Config) Validate() error {
 	err := c.Client.Validate()
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("validating client configuration failed").AddError(err)
 	}
 	err = c.Server.Validate()
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("validating server configuration failed").AddError(err)
 	}
 	err = c.Queue.Validate()
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("validating queue configuration failed").AddError(err)
 	}
 	err = c.Templates.Validate()
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("validating template configuration failed").AddError(err)
 	}
 	return nil
 }

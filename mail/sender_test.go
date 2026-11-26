@@ -314,7 +314,7 @@ func TestSMTPSender_EncryptionMethods(t *testing.T) {
 	}
 }
 
-func TestSMTPSender_MessageWithAttachments(_ *testing.T) {
+func TestSMTPSender_MessageWithAttachments(t *testing.T) {
 	config := mail.ClientConfig{
 		Host:       "smtp.example.com",
 		Port:       587,
@@ -346,10 +346,10 @@ func TestSMTPSender_MessageWithAttachments(_ *testing.T) {
 	// Will fail due to network, but attachment processing should work
 	err := sender.Send(ctx, message)
 	// Network error expected in test environment
-	_ = err
+	t.Logf("send returned the expected network error: %v", err)
 }
 
-func TestSMTPSender_MessageWithHeaders(_ *testing.T) {
+func TestSMTPSender_MessageWithHeaders(t *testing.T) {
 	config := mail.ClientConfig{
 		Host:       "smtp.example.com",
 		Port:       587,
@@ -377,7 +377,7 @@ func TestSMTPSender_MessageWithHeaders(_ *testing.T) {
 	// Will fail due to network, but header processing should work
 	err := sender.Send(ctx, message)
 	// Network error expected in test environment
-	_ = err
+	t.Logf("send returned the expected network error: %v", err)
 }
 
 func TestSMTPSender_ContextCancellation(t *testing.T) {

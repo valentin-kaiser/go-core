@@ -22,6 +22,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"time"
 
 	"github.com/valentin-kaiser/go-core/apperror"
@@ -176,7 +177,7 @@ func NewSMTPServer(config ServerConfig, manager *Manager) Server {
 // Start starts the SMTP server
 func (s *smtpServer) Start(_ context.Context) error {
 	if !s.running.CompareAndSwap(0, 1) {
-		return apperror.NewError("SMTP server is already running")
+		return apperror.NewError("smtp server is already running")
 	}
 	// Start server in goroutine
 	serverReady := make(chan error, 1)
@@ -209,7 +210,7 @@ func (s *smtpServer) Start(_ context.Context) error {
 			addr := net.JoinHostPort(s.config.Host, strconv.Itoa(s.config.Port))
 			conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
 			if err == nil {
-				apperror.Catch(conn.Close, "failed to close connection")
+				apperror.Catch(conn.Close, "closing connection failed")
 				select {
 				case serverReady <- nil:
 				default:
@@ -241,7 +242,7 @@ func (s *smtpServer) Start(_ context.Context) error {
 // Stop stops the SMTP server
 func (s *smtpServer) Stop(ctx context.Context) error {
 	if !s.running.CompareAndSwap(1, 0) {
-		return apperror.NewError("SMTP server is not running")
+		return apperror.NewError("smtp server is not running")
 	}
 
 	// Cancel context to stop worker pool
@@ -252,9 +253,8 @@ func (s *smtpServer) Stop(ctx context.Context) error {
 	if s.listener != nil {
 		err := s.listener.Close()
 		if err != nil {
-			logger.Error().Err(err).Msg("failed to close SMTP server")
 			s.mutex.Unlock()
-			return apperror.Wrap(err)
+			return apperror.NewError("closing smtp listener failed").AddError(err)
 		}
 	}
 	if !s.closed {
@@ -307,13 +307,14 @@ func (s *smtpServer) loadTLSConfig() (*tls.Config, error) {
 					tlsConfig.Certificates = []tls.Certificate{cert}
 					return tlsConfig, nil
 				}
+				logger.Warn().Err(err).Msg("loading TLS key pair failed, generating a self-signed certificate")
 			}
 		}
 	}
 
 	cert, err := s.generateSelfSignedCert()
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("generating self-signed certificate failed").AddError(err)
 	}
 
 	tlsConfig.Certificates = []tls.Certificate{cert}
@@ -324,7 +325,7 @@ func (s *smtpServer) loadTLSConfig() (*tls.Config, error) {
 func (s *smtpServer) generateSelfSignedCert() (tls.Certificate, error) {
 	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
-		return tls.Certificate{}, apperror.NewError("failed to generate private key").AddError(err)
+		return tls.Certificate{}, apperror.NewError("generating private key failed").AddError(err)
 	}
 
 	// Create certificate template
@@ -349,21 +350,21 @@ func (s *smtpServer) generateSelfSignedCert() (tls.Certificate, error) {
 	// Generate certificate
 	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &privateKey.PublicKey, privateKey)
 	if err != nil {
-		return tls.Certificate{}, apperror.NewError("failed to create certificate").AddError(err)
+		return tls.Certificate{}, apperror.NewError("creating certificate failed").AddError(err)
 	}
 
 	// Encode certificate
 	certPEM := &bytes.Buffer{}
 	err = pem.Encode(certPEM, &pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 	if err != nil {
-		return tls.Certificate{}, apperror.NewError("failed to encode certificate").AddError(err)
+		return tls.Certificate{}, apperror.NewError("encoding certificate failed").AddError(err)
 	}
 
 	// Encode private key
 	keyPEM := &bytes.Buffer{}
 	err = pem.Encode(keyPEM, &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privateKey)})
 	if err != nil {
-		return tls.Certificate{}, apperror.NewError("failed to encode private key").AddError(err)
+		return tls.Certificate{}, apperror.NewError("encoding private key failed").AddError(err)
 	}
 
 	// Save certificates if paths are specified
@@ -389,7 +390,7 @@ createTLS:
 	// Create TLS certificate
 	cert, err := tls.X509KeyPair(certPEM.Bytes(), keyPEM.Bytes())
 	if err != nil {
-		return tls.Certificate{}, apperror.NewError("failed to create TLS certificate").AddError(err)
+		return tls.Certificate{}, apperror.NewError("creating TLS certificate failed").AddError(err)
 	}
 
 	return cert, nil
@@ -494,12 +495,7 @@ func (s *session) validateHeloIfNeeded() error {
 
 	err := s.server.security.ValidateHelo(hostname, s.remoteAddr)
 	if err != nil {
-		logger.Warn().
-			Field("remote_addr", s.remoteAddr).
-			Field("hostname", hostname).
-			Err(err).
-			Msg("HELO validation failed")
-		return err
+		return apperror.NewErrorf("validating helo hostname %q failed", hostname).AddError(err)
 	}
 
 	s.heloValidated = true
@@ -511,7 +507,7 @@ func (s *session) AuthPlain(username, password string) error {
 	// Validate HELO first if needed
 	err := s.validateHeloIfNeeded()
 	if err != nil {
-		return err
+		return apperror.NewError("validating helo before authentication failed").AddError(err)
 	}
 
 	// Check rate limiting first
@@ -554,7 +550,7 @@ func (s *session) Mail(from string, _ *Options) error {
 	// Validate HELO first if needed
 	err := s.validateHeloIfNeeded()
 	if err != nil {
-		return err
+		return apperror.NewError("validating helo before MAIL command failed").AddError(err)
 	}
 
 	// Check rate limiting
@@ -564,7 +560,7 @@ func (s *session) Mail(from string, _ *Options) error {
 			Field("remote_addr", s.remoteAddr).
 			Field("from", from).
 			Msg("MAIL command rate limit exceeded")
-		return err
+		return apperror.NewError("checking rate limit of MAIL command failed").AddError(err)
 	}
 
 	if s.server.config.Auth && !s.authenticated {
@@ -582,7 +578,7 @@ func (s *session) Rcpt(to string, _ *RcptOptions) error {
 	// Validate HELO first if needed
 	err := s.validateHeloIfNeeded()
 	if err != nil {
-		return err
+		return apperror.NewError("validating helo before RCPT command failed").AddError(err)
 	}
 
 	// Check rate limiting
@@ -592,7 +588,7 @@ func (s *session) Rcpt(to string, _ *RcptOptions) error {
 			Field("remote_addr", s.remoteAddr).
 			Field("to", to).
 			Msg("RCPT command rate limit exceeded")
-		return err
+		return apperror.NewError("checking rate limit of RCPT command failed").AddError(err)
 	}
 
 	if s.server.config.Auth && !s.authenticated {
@@ -608,13 +604,13 @@ func (s *session) Rcpt(to string, _ *RcptOptions) error {
 func (s *session) Data(r io.Reader) error {
 	err := s.checkData()
 	if err != nil {
-		return err
+		return apperror.NewError("checking data command failed").AddError(err)
 	}
 
 	// Read message data
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return apperror.NewError("failed to read email data").AddError(err)
+		return apperror.NewError("reading email data failed").AddError(err)
 	}
 
 	return s.receive(data)
@@ -625,7 +621,7 @@ func (s *session) checkData() error {
 	// Validate HELO first if needed
 	err := s.validateHeloIfNeeded()
 	if err != nil {
-		return err
+		return apperror.NewError("validating helo before data failed").AddError(err)
 	}
 
 	if s.server.config.Auth && !s.authenticated {
@@ -670,7 +666,7 @@ func (s *smtpServer) ListenAndServe() error {
 	addr := net.JoinHostPort(s.config.Host, strconv.Itoa(s.config.Port))
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return err
+		return apperror.NewErrorf("listening on %s failed", addr).AddError(err)
 	}
 	return s.Serve(listener)
 }
@@ -680,11 +676,11 @@ func (s *smtpServer) ListenAndServeTLS() error {
 	addr := net.JoinHostPort(s.config.Host, strconv.Itoa(s.config.Port))
 	tlsConfig, err := s.loadTLSConfig()
 	if err != nil {
-		return err
+		return apperror.NewError("loading TLS configuration failed").AddError(err)
 	}
 	listener, err := tls.Listen("tcp", addr, tlsConfig)
 	if err != nil {
-		return err
+		return apperror.NewErrorf("listening with TLS on %s failed", addr).AddError(err)
 	}
 	return s.Serve(listener)
 }
@@ -708,7 +704,7 @@ func (s *smtpServer) Serve(listener net.Listener) error {
 			case <-s.shutdown:
 				return ErrServerClosed
 			default:
-				return err
+				return apperror.NewError("accepting connection failed").AddError(err)
 			}
 		}
 
@@ -759,10 +755,11 @@ func (s *smtpServer) handleConnection(netConn net.Conn) {
 	conn := NewConn(netConn)
 	session, err := s.NewSession(conn)
 	if err != nil {
+		logger.Warn().Err(err).Field("remote_addr", netConn.RemoteAddr().String()).Msg("connection rejected by security manager")
 		s.writeResponse(conn, StatusPermFailure, "connection rejected")
 		return
 	}
-	defer apperror.Catch(session.Logout, "failed to logout session")
+	defer apperror.Catch(session.Logout, "logging out session failed")
 
 	// Send greeting
 	greeting := s.config.Domain + " ESMTP Service Ready"
@@ -786,11 +783,7 @@ func (s *smtpServer) NewSession(conn *Conn) (Session, error) {
 	// Validate connection using security manager
 	err := s.security.ValidateConnection(remoteAddr)
 	if err != nil {
-		logger.Warn().
-			Field("remote_addr", remoteAddr).
-			Err(err).
-			Msg("connection rejected by security manager")
-		return nil, err
+		return nil, apperror.NewErrorf("validating connection from %s failed", remoteAddr).AddError(err)
 	}
 
 	return &session{
@@ -928,38 +921,35 @@ func (s *smtpServer) writeRaw(conn *Conn, data string) {
 	logger.Trace().Field("response", strings.TrimSpace(data)).Msg("sent SMTP response")
 }
 
+// closedConnectionErrors are the errors that mean the peer closed or reset the connection or cannot be reached
+var closedConnectionErrors = []error{
+	io.EOF,
+	io.ErrUnexpectedEOF,
+	syscall.ECONNRESET,
+	syscall.EPIPE,
+	syscall.ECONNABORTED,
+	syscall.ECONNREFUSED,
+	syscall.ENETUNREACH,
+	syscall.EHOSTUNREACH,
+	syscall.ETIMEDOUT,
+}
+
 // isConnectionClosed checks if an error indicates a normal connection close/reset
 func isConnectionClosed(err error) bool {
 	if err == nil {
 		return false
 	}
 
-	errStr := err.Error()
-
-	// Common connection close/reset patterns
-	patterns := []string{
-		"connection reset by peer",
-		"broken pipe",
-		"connection aborted",
-		"wsarecv:",
-		"wsasend:",
-		"connection refused",
-		"network is unreachable",
-		"no route to host",
-		"connection timed out",
-		"EOF",
-	}
-
-	errStrLower := strings.ToLower(errStr)
-	for _, pattern := range patterns {
-		if strings.Contains(errStrLower, pattern) {
+	for _, target := range closedConnectionErrors {
+		if errors.Is(err, target) {
 			return true
 		}
 	}
 
-	// Check for specific error types
-	if errors.Is(err, io.EOF) {
-		return true
+	// Windows reports socket failures as winsock errors that do not map to the errors above
+	sysErr, ok := errors.AsType[*os.SyscallError](err)
+	if ok {
+		return sysErr.Syscall == "wsarecv" || sysErr.Syscall == "wsasend"
 	}
 
 	return false
@@ -1097,7 +1087,7 @@ func (s *smtpServer) decodePlainAuth(data string) ([]string, error) {
 	// Base64 decode the authentication data
 	decoded, err := base64.StdEncoding.DecodeString(data)
 	if err != nil {
-		return nil, apperror.NewError("failed to decode base64").AddError(err)
+		return nil, apperror.NewError("decoding base64 failed").AddError(err)
 	}
 
 	// Format: \0username\0password

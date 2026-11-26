@@ -333,15 +333,15 @@ func (b *MessageBuilder) AttachFile(fileHeader *multipart.FileHeader) *MessageBu
 
 	file, err := fileHeader.Open()
 	if err != nil {
-		b.Error = apperror.NewError("failed to open attachment file").AddError(err)
+		b.Error = apperror.NewError("opening attachment file failed").AddError(err)
 		return b
 	}
 
 	// Read the file content into memory and close it to prevent resource leaks
 	content, err := io.ReadAll(file)
-	apperror.Catch(file.Close, "failed to close attachment file")
+	apperror.Catch(file.Close, "closing attachment file failed")
 	if err != nil {
-		b.Error = apperror.NewError("failed to read attachment file").AddError(err)
+		b.Error = apperror.NewError("reading attachment file failed").AddError(err)
 		return b
 	}
 
