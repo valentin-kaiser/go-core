@@ -23,7 +23,8 @@ func newBenchRedis(b *testing.B, keys int) *cache.RedisCache {
 		b.Skipf("invalid REDIS_URL: %v", err)
 	}
 	client := redis.NewClient(opt)
-	if err := client.Ping(context.Background()).Err(); err != nil {
+	err = client.Ping(context.Background()).Err()
+	if err != nil {
 		_ = client.Close()
 		b.Skipf("Redis not available: %v", err)
 	}
@@ -37,8 +38,9 @@ func newBenchRedis(b *testing.B, keys int) *cache.RedisCache {
 	})
 
 	ctx := context.Background()
-	for i := 0; i < keys; i++ {
-		if err := rc.Set(ctx, "key-"+strconv.Itoa(i), benchValue{ID: i, Name: "name", Tags: []string{"a", "b"}}, time.Hour); err != nil {
+	for i := range keys {
+		err := rc.Set(ctx, "key-"+strconv.Itoa(i), benchValue{ID: i, Name: "name", Tags: []string{"a", "b"}}, time.Hour)
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -52,7 +54,8 @@ func BenchmarkRedisCacheGet(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var v benchValue
-		if _, err := rc.Get(ctx, "key-"+strconv.Itoa(i&1023), &v); err != nil {
+		_, err := rc.Get(ctx, "key-"+strconv.Itoa(i&1023), &v)
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -67,7 +70,8 @@ func BenchmarkRedisCacheGetParallel(b *testing.B) {
 		i := 0
 		for pb.Next() {
 			var v benchValue
-			if _, err := rc.Get(ctx, "key-"+strconv.Itoa(i&1023), &v); err != nil {
+			_, err := rc.Get(ctx, "key-"+strconv.Itoa(i&1023), &v)
+			if err != nil {
 				b.Error(err)
 				return
 			}
@@ -83,7 +87,8 @@ func BenchmarkRedisCacheSet(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := rc.Set(ctx, "key-"+strconv.Itoa(i&1023), val, time.Hour); err != nil {
+		err := rc.Set(ctx, "key-"+strconv.Itoa(i&1023), val, time.Hour)
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -98,7 +103,8 @@ func BenchmarkRedisCacheSetParallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			if err := rc.Set(ctx, "key-"+strconv.Itoa(i&1023), val, time.Hour); err != nil {
+			err := rc.Set(ctx, "key-"+strconv.Itoa(i&1023), val, time.Hour)
+			if err != nil {
 				b.Error(err)
 				return
 			}
@@ -117,7 +123,8 @@ func BenchmarkRedisCacheGetMulti(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, err := rc.GetMulti(ctx, keys); err != nil {
+		_, err := rc.GetMulti(ctx, keys)
+		if err != nil {
 			b.Fatal(err)
 		}
 	}

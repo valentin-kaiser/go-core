@@ -17,9 +17,7 @@ func TestMemoryCacheExistsDoesNotDropFreshValue(t *testing.T) {
 
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-stop:
@@ -28,14 +26,16 @@ func TestMemoryCacheExistsDoesNotDropFreshValue(t *testing.T) {
 				_, _ = mc.Exists(ctx, "k")
 			}
 		}
-	}()
+	})
 
-	for i := 0; i < 100000; i++ {
+	for i := range 100000 {
 		// A short TTL entry that expires, immediately followed by a long-lived one
-		if err := mc.Set(ctx, "k", i, time.Nanosecond); err != nil {
+		err := mc.Set(ctx, "k", i, time.Nanosecond)
+		if err != nil {
 			t.Fatal(err)
 		}
-		if err := mc.Set(ctx, "k", i, time.Hour); err != nil {
+		err = mc.Set(ctx, "k", i, time.Hour)
+		if err != nil {
 			t.Fatal(err)
 		}
 		ok, err := mc.Exists(ctx, "k")
@@ -60,15 +60,18 @@ func TestMemoryCacheEvictsLeastRecentlyRead(t *testing.T) {
 	ctx := context.Background()
 
 	for _, k := range []string{"a", "b", "c"} {
-		if err := mc.Set(ctx, k, k, time.Hour); err != nil {
+		err := mc.Set(ctx, k, k, time.Hour)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
 	var v string
-	if ok, _ := mc.Get(ctx, "a", &v); !ok {
+	ok, _ := mc.Get(ctx, "a", &v)
+	if !ok {
 		t.Fatal("a should be cached")
 	}
-	if err := mc.Set(ctx, "d", "d", time.Hour); err != nil {
+	err := mc.Set(ctx, "d", "d", time.Hour)
+	if err != nil {
 		t.Fatal(err)
 	}
 
@@ -88,11 +91,11 @@ func TestMemoryCacheConcurrentMixed(t *testing.T) {
 	ctx := context.Background()
 
 	var wg sync.WaitGroup
-	for g := 0; g < 8; g++ {
+	for g := range 8 {
 		wg.Add(1)
 		go func(g int) {
 			defer wg.Done()
-			for i := 0; i < 2000; i++ {
+			for i := range 2000 {
 				k := "k" + string(rune('a'+(i+g)%26))
 				switch i % 4 {
 				case 0:
@@ -119,7 +122,7 @@ func TestMemoryCacheStatsCountHitsAndMisses(t *testing.T) {
 	_ = mc.Set(ctx, "k", 1, time.Hour)
 
 	var v int
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, _ = mc.Get(ctx, "k", &v)
 	}
 	_, _ = mc.Get(ctx, "missing", &v)

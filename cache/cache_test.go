@@ -164,7 +164,7 @@ func TestMemoryCache_MultiOperations(t *testing.T) {
 	ctx := t.Context()
 
 	// Test SetMulti
-	items := map[string]interface{}{
+	items := map[string]any{
 		"user:1": TestUser{ID: 1, Name: "Alice", Email: "alice@example.com"},
 		"user:2": TestUser{ID: 2, Name: "Bob", Email: "bob@example.com"},
 		"user:3": TestUser{ID: 3, Name: "Charlie", Email: "charlie@example.com"},
