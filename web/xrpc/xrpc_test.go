@@ -29,7 +29,12 @@ import (
 // name=1, number=3, type_name=6.
 type fdp = descriptorpb.FieldDescriptorProto
 
-const fdpName = ".google.protobuf.FieldDescriptorProto"
+const (
+	fdpName      = ".google.protobuf.FieldDescriptorProto"
+	readDeadline = 5 * time.Second
+	callTimeout  = 10 * time.Second
+	contentJSON  = "application/json"
+)
 
 var testFile = func() protoreflect.FileDescriptor {
 	m := func(name, in, out string, cs, ss bool) *descriptorpb.MethodDescriptorProto {
@@ -230,7 +235,7 @@ func TestJSONRPC(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			status, body := post(t, ts.URL, "application/json", tt.body)
+			status, body := post(t, ts.URL, contentJSON, tt.body)
 			if status != tt.status {
 				t.Errorf("status = %d, want %d (%s)", status, tt.status, body)
 			}
@@ -242,46 +247,57 @@ func TestJSONRPC(t *testing.T) {
 			}
 		})
 	}
+}
 
-	t.Run("notification", func(t *testing.T) {
-		status, body := post(t, ts.URL, "application/json", `{"jsonrpc":"2.0","method":"Test.Echo","params":{"1":"a"}}`)
-		if status != http.StatusNoContent || body != "" {
-			t.Errorf("status = %d, body = %q", status, body)
-		}
-	})
+func TestJSONRPCNotification(t *testing.T) {
+	ts := newServer(t, xrpc.Register(testServer{}))
 
-	t.Run("unsupported content type", func(t *testing.T) {
-		status, _ := post(t, ts.URL, "text/plain", `{}`)
-		if status != http.StatusUnsupportedMediaType {
-			t.Errorf("status = %d", status)
-		}
-	})
+	status, body := post(t, ts.URL, contentJSON, `{"jsonrpc":"2.0","method":"Test.Echo","params":{"1":"a"}}`)
+	if status != http.StatusNoContent || body != "" {
+		t.Errorf("status = %d, body = %q", status, body)
+	}
+}
 
-	t.Run("method not allowed", func(t *testing.T) {
-		resp, err := http.Get(ts.URL)
-		if err != nil {
-			t.Fatal(err)
-		}
-		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusMethodNotAllowed {
-			t.Errorf("status = %d", resp.StatusCode)
-		}
-	})
+func TestJSONRPCUnsupportedContentType(t *testing.T) {
+	ts := newServer(t, xrpc.Register(testServer{}))
 
-	t.Run("body limit", func(t *testing.T) {
-		small := newServer(t, xrpc.Register(testServer{}).WithMaxBodySize(16))
-		status, _ := post(t, small.URL, "application/json", `{"jsonrpc":"2.0","method":"Test.Echo","params":{"1":"a"},"id":1}`)
-		if status != http.StatusRequestEntityTooLarge {
-			t.Errorf("status = %d", status)
-		}
-	})
+	status, _ := post(t, ts.URL, "text/plain", `{}`)
+	if status != http.StatusUnsupportedMediaType {
+		t.Errorf("status = %d", status)
+	}
+}
+
+func TestJSONRPCMethodNotAllowed(t *testing.T) {
+	ts := newServer(t, xrpc.Register(testServer{}))
+
+	resp, err := http.Get(ts.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = resp.Body.Close()
+	if err != nil {
+		t.Errorf("closing response body failed: %v", err)
+	}
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d", resp.StatusCode)
+	}
+}
+
+func TestJSONRPCBodyLimit(t *testing.T) {
+	const maxBodySize = 16
+
+	small := newServer(t, xrpc.Register(testServer{}).WithMaxBodySize(maxBodySize))
+	status, _ := post(t, small.URL, contentJSON, `{"jsonrpc":"2.0","method":"Test.Echo","params":{"1":"a"},"id":1}`)
+	if status != http.StatusRequestEntityTooLarge {
+		t.Errorf("status = %d", status)
+	}
 }
 
 func TestCaseInsensitiveMethods(t *testing.T) {
 	body := `{"jsonrpc":"2.0","method":"test.ECHO","params":{"1":"a"},"id":1}`
 
 	strict := newServer(t, xrpc.Register(testServer{}))
-	if status, _ := post(t, strict.URL, "application/json", body); status != http.StatusNotFound {
+	if status, _ := post(t, strict.URL, contentJSON, body); status != http.StatusNotFound {
 		t.Errorf("strict status = %d, want 404", status)
 	}
 
@@ -290,7 +306,7 @@ func TestCaseInsensitiveMethods(t *testing.T) {
 		t.Error("expected Handles to ignore case")
 	}
 	ts := newServer(t, svc)
-	if status, resp := post(t, ts.URL, "application/json", `{"jsonrpc":"2.0","method":"TEST.echo","params":{"1":"a"},"id":1}`); status != 200 {
+	if status, resp := post(t, ts.URL, contentJSON, `{"jsonrpc":"2.0","method":"TEST.echo","params":{"1":"a"},"id":1}`); status != 200 {
 		t.Errorf("status = %d (%s)", status, resp)
 	}
 }
@@ -307,7 +323,7 @@ func TestFieldNamesHeader(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentJSON)
 		if value != "" {
 			req.Header.Set(header, value)
 		}
@@ -321,7 +337,10 @@ func TestFieldNamesHeader(t *testing.T) {
 				t.Errorf("closing response body failed: %v", err)
 			}
 		}()
-		b, _ := io.ReadAll(resp.Body)
+		b, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("reading response body failed: %v", err)
+		}
 		return string(b), resp.Header.Get("Vary")
 	}
 
@@ -381,7 +400,10 @@ func TestFieldNamesQueryOnWebSocket(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		err = conn.SetReadDeadline(time.Now().Add(readDeadline))
+		if err != nil {
+			t.Fatalf("setting read deadline failed: %v", err)
+		}
 		_, frame, err := conn.ReadMessage()
 		if err != nil {
 			t.Fatal(err)
@@ -409,7 +431,7 @@ func TestFieldNamesQueryOnWebSocket(t *testing.T) {
 
 func TestJSONRPCFieldNames(t *testing.T) {
 	ts := newServer(t, xrpc.Register(testServer{}).WithFieldNames())
-	_, body := post(t, ts.URL, "application/json", `{"jsonrpc":"2.0","method":"Test.Echo","params":{"1":"foo","3":5},"id":1}`)
+	_, body := post(t, ts.URL, contentJSON, `{"jsonrpc":"2.0","method":"Test.Echo","params":{"1":"foo","3":5},"id":1}`)
 	if want := `{"jsonrpc":"2.0","result":{"name":"foo","number":5},"id":1}`; body != want {
 		t.Errorf("body = %s, want %s", body, want)
 	}
@@ -473,7 +495,12 @@ func clients(t *testing.T, ts *httptest.Server) map[string]*xrpc.Client {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = conn.Close() })
+	t.Cleanup(func() {
+		err := conn.Close()
+		if err != nil {
+			t.Errorf("closing grpc connection failed: %v", err)
+		}
+	})
 
 	out := map[string]*xrpc.Client{}
 	for name, opts := range map[string][]xrpc.ClientOption{
@@ -492,7 +519,7 @@ func clients(t *testing.T, ts *httptest.Server) map[string]*xrpc.Client {
 
 func timeout(t *testing.T) context.Context {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	t.Cleanup(cancel)
 	return ctx
 }
@@ -618,7 +645,7 @@ func TestStreamCancel(t *testing.T) {
 				if err == nil {
 					t.Error("expected error after cancel")
 				}
-			case <-time.After(5 * time.Second):
+			case <-time.After(readDeadline):
 				t.Fatal("stream did not stop after cancel")
 			}
 		})
