@@ -10,7 +10,7 @@ import (
 func benchScheduler(b *testing.B, n int) *TaskScheduler {
 	b.Helper()
 	s := NewTaskScheduler()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		err := s.RegisterIntervalTaskWithOptions("task-"+strconv.Itoa(i), time.Hour, func(context.Context) error { return nil }, TaskOptions{})
 		if err != nil {
 			b.Fatal(err)

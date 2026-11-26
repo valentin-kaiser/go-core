@@ -69,7 +69,7 @@ type Task struct {
 type TaskScheduler struct {
 	tasks          map[string]*Task
 	tasksMutex     sync.RWMutex
-	running        int32
+	running        atomic.Int32
 	shutdownChan   chan struct{}
 	workerWg       sync.WaitGroup
 	checkInterval  time.Duration
@@ -478,7 +478,7 @@ func (s *TaskScheduler) RegisterOrRescheduleIntervalTaskWithOptions(name string,
 
 // Start starts the task scheduler
 func (s *TaskScheduler) Start(ctx context.Context) error {
-	if !atomic.CompareAndSwapInt32(&s.running, 0, 1) {
+	if !s.running.CompareAndSwap(0, 1) {
 		return apperror.NewError("task scheduler is already running")
 	}
 
@@ -493,7 +493,7 @@ func (s *TaskScheduler) Start(ctx context.Context) error {
 
 // Stop stops the task scheduler
 func (s *TaskScheduler) Stop() {
-	if !atomic.CompareAndSwapInt32(&s.running, 1, 0) {
+	if !s.running.CompareAndSwap(1, 0) {
 		return
 	}
 
@@ -946,7 +946,7 @@ func (s *TaskScheduler) RescheduleTaskWithInterval(name string, interval time.Du
 
 // IsRunning returns true if the scheduler is running
 func (s *TaskScheduler) IsRunning() bool {
-	return atomic.LoadInt32(&s.running) == 1
+	return s.running.Load() == 1
 }
 
 // generateTaskID generates a unique task ID

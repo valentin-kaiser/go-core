@@ -3,6 +3,7 @@ package queue
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/valentin-kaiser/go-core/apperror"
@@ -13,8 +14,8 @@ type Middleware func(JobHandler) JobHandler
 
 // MiddlewareChain applies multiple middlewares to a job handler
 func MiddlewareChain(handler JobHandler, middlewares ...Middleware) JobHandler {
-	for i := len(middlewares) - 1; i >= 0; i-- {
-		handler = middlewares[i](handler)
+	for _, middleware := range slices.Backward(middlewares) {
+		handler = middleware(handler)
 	}
 	return handler
 }

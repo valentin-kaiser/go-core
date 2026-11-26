@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"sync"
 	"testing"
 	"time"
@@ -13,9 +14,16 @@ import (
 	"github.com/valentin-kaiser/go-core/queue"
 )
 
+// Login of the broker that test/compose.yaml starts for the integration tests.
+const (
+	rabbitMQTestUser = "admin"
+	rabbitMQTestKey  = "admin123"
+	rabbitMQTestHost = "localhost:5672"
+)
+
 func TestRabbitMQ(t *testing.T) {
 	config := queue.RabbitMQConfig{
-		URL:          "amqp://admin:admin123@localhost:5672/",
+		URL:          rabbitMQTestURL(),
 		QueueName:    "test_queue",
 		ExchangeName: "test_exchange",
 		RoutingKey:   "test",
@@ -30,7 +38,8 @@ func TestRabbitMQ(t *testing.T) {
 		t.Skipf("Skipping RabbitMQ test: %v", err)
 	}
 	t.Cleanup(func() {
-		if err := q.Close(); err != nil {
+		err := q.Close()
+		if err != nil {
 			t.Logf("Warning: failed to close queue: %v", err)
 		}
 	})
@@ -39,14 +48,15 @@ func TestRabbitMQ(t *testing.T) {
 
 	// basic.get never auto-deletes a queue, so messages left unacknowledged by an earlier run
 	// come back when its connection closes. Start from an empty queue.
-	if err := q.PurgeQueue(ctx); err != nil {
+	err = q.PurgeQueue(ctx)
+	if err != nil {
 		t.Fatalf("Failed to purge queue: %v", err)
 	}
 
 	t.Run("BasicEnqueueDequeue", func(t *testing.T) {
 		job := queue.NewJob("test-job").
 			WithID("test-1").
-			WithPayload(map[string]interface{}{"message": "hello world"}).
+			WithPayload(map[string]any{"message": "hello world"}).
 			Build()
 
 		err := q.Enqueue(ctx, job)
@@ -75,8 +85,9 @@ func TestRabbitMQ(t *testing.T) {
 			t.Errorf("Expected job status %s, got %s", queue.StatusRunning, dequeuedJob.Status)
 		}
 
-		var payload map[string]interface{}
-		if err := json.Unmarshal(dequeuedJob.Payload, &payload); err != nil {
+		var payload map[string]any
+		err = json.Unmarshal(dequeuedJob.Payload, &payload)
+		if err != nil {
 			t.Fatalf("Failed to unmarshal payload: %v", err)
 		}
 
@@ -89,7 +100,7 @@ func TestRabbitMQ(t *testing.T) {
 		job := queue.NewJob("scheduled-job").
 			WithID("scheduled-1").
 			WithDelay(time.Millisecond * 200).
-			WithPayload(map[string]interface{}{"scheduled": true}).
+			WithPayload(map[string]any{"scheduled": true}).
 			Build()
 
 		err := q.Schedule(ctx, job)
@@ -148,7 +159,7 @@ func TestRabbitMQ(t *testing.T) {
 		// Give RabbitMQ time to process
 		time.Sleep(time.Millisecond * 100)
 
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			job, err := q.Dequeue(ctx, time.Second*5)
 			if err != nil {
 				t.Fatalf("Failed to dequeue job %d: %v", i, err)
@@ -172,7 +183,7 @@ func TestRabbitMQ(t *testing.T) {
 	t.Run("JobOperations", func(t *testing.T) {
 		job := queue.NewJob("test-ops").
 			WithID("ops-1").
-			WithPayload(map[string]interface{}{"operation": "test"}).
+			WithPayload(map[string]any{"operation": "test"}).
 			Build()
 
 		err := q.Enqueue(ctx, job)
@@ -249,7 +260,7 @@ func TestRabbitMQ(t *testing.T) {
 
 func TestRabbitMQReconnection(t *testing.T) {
 	config := queue.RabbitMQConfig{
-		URL:          "amqp://admin:admin123@localhost:5672/",
+		URL:          rabbitMQTestURL(),
 		QueueName:    "test_reconnect",
 		ExchangeName: "test_reconnect_exchange",
 		RoutingKey:   "test_reconnect",
@@ -275,7 +286,7 @@ func TestRabbitMQReconnection(t *testing.T) {
 
 func TestRabbitMQWithClosedConnection(t *testing.T) {
 	config := queue.RabbitMQConfig{
-		URL:          "amqp://admin:admin123@localhost:5672/",
+		URL:          rabbitMQTestURL(),
 		QueueName:    "test_closed",
 		ExchangeName: "test_closed_exchange",
 		RoutingKey:   "test_closed",
@@ -288,7 +299,8 @@ func TestRabbitMQWithClosedConnection(t *testing.T) {
 		t.Skipf("Skipping RabbitMQ closed connection test: %v", err)
 	}
 
-	if err := q.Close(); err != nil {
+	err = q.Close()
+	if err != nil {
 		t.Logf("Warning: failed to close queue: %v", err)
 	}
 
@@ -329,7 +341,7 @@ func TestRabbitMQWithClosedConnection(t *testing.T) {
 
 func BenchmarkRabbitMQEnqueue(b *testing.B) {
 	config := queue.RabbitMQConfig{
-		URL:          "amqp://admin:admin123@localhost:5672/",
+		URL:          rabbitMQTestURL(),
 		QueueName:    "benchmark_queue",
 		ExchangeName: "benchmark_exchange",
 		RoutingKey:   "benchmark",
@@ -351,7 +363,7 @@ func BenchmarkRabbitMQEnqueue(b *testing.B) {
 		for pb.Next() {
 			job := queue.NewJob("benchmark-job").
 				WithID(fmt.Sprintf("bench-%d", i)).
-				WithPayload(map[string]interface{}{"index": i}).
+				WithPayload(map[string]any{"index": i}).
 				Build()
 
 			err := q.Enqueue(ctx, job)
@@ -365,7 +377,7 @@ func BenchmarkRabbitMQEnqueue(b *testing.B) {
 
 func BenchmarkRabbitMQDequeue(b *testing.B) {
 	config := queue.RabbitMQConfig{
-		URL:          "amqp://admin:admin123@localhost:5672/",
+		URL:          rabbitMQTestURL(),
 		QueueName:    "benchmark_dequeue",
 		ExchangeName: "benchmark_dequeue_exchange",
 		RoutingKey:   "benchmark_dequeue",
@@ -385,7 +397,7 @@ func BenchmarkRabbitMQDequeue(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		job := queue.NewJob("benchmark-dequeue-job").
 			WithID(fmt.Sprintf("dequeue-bench-%d", i)).
-			WithPayload(map[string]interface{}{"index": i}).
+			WithPayload(map[string]any{"index": i}).
 			Build()
 
 		err := q.Enqueue(ctx, job)
@@ -405,7 +417,8 @@ func BenchmarkRabbitMQDequeue(b *testing.B) {
 		}
 
 		job.Status = queue.StatusCompleted
-		if err := q.UpdateJob(ctx, job); err != nil {
+		err = q.UpdateJob(ctx, job)
+		if err != nil {
 			b.Logf("Failed to update job: %v", err)
 		}
 	}
@@ -416,7 +429,7 @@ func newTestRabbitMQ(t *testing.T, name string) *queue.RabbitMQ {
 	// A name per run: basic.get never auto-deletes a queue, so fixed names collect leftovers
 	suffix := fmt.Sprintf("%s_%d", name, time.Now().UnixNano())
 	q, err := queue.NewRabbitMQ(queue.RabbitMQConfig{
-		URL:          "amqp://admin:admin123@localhost:5672/",
+		URL:          rabbitMQTestURL(),
 		QueueName:    suffix,
 		ExchangeName: suffix + "_exchange",
 		RoutingKey:   suffix,
@@ -477,11 +490,13 @@ func TestRabbitMQScheduledJobIsDelayed(t *testing.T) {
 
 	job := queue.NewJob("delayed").WithID("delayed-1").WithDelay(700 * time.Millisecond).Build()
 	start := time.Now()
-	if err := q.Schedule(ctx, job); err != nil {
+	err := q.Schedule(ctx, job)
+	if err != nil {
 		t.Fatalf("Schedule: %v", err)
 	}
 
-	if _, err := q.Dequeue(ctx, 200*time.Millisecond); !errors.Is(err, queue.ErrNoJobAvailable) {
+	_, err = q.Dequeue(ctx, 200*time.Millisecond)
+	if !errors.Is(err, queue.ErrNoJobAvailable) {
 		t.Fatalf("the job was delivered before it was due: %v", err)
 	}
 
@@ -509,7 +524,8 @@ func TestRabbitMQCloseDoesNotWaitForDequeue(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 
 	start := time.Now()
-	if err := q.Close(); err != nil {
+	err := q.Close()
+	if err != nil {
 		t.Fatalf("Close: %v", err)
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
@@ -526,7 +542,7 @@ func newPrefetchRabbitMQ(tb testing.TB, name string, prefetch int) *queue.Rabbit
 	tb.Helper()
 	suffix := fmt.Sprintf("%s_%d", name, time.Now().UnixNano())
 	q, err := queue.NewRabbitMQ(queue.RabbitMQConfig{
-		URL:          "amqp://admin:admin123@localhost:5672/",
+		URL:          rabbitMQTestURL(),
 		QueueName:    suffix,
 		ExchangeName: suffix + "_exchange",
 		RoutingKey:   suffix,
@@ -550,12 +566,13 @@ func TestRabbitMQConsumerMode(t *testing.T) {
 	q := newPrefetchRabbitMQ(t, "consumer", 5)
 	ctx := t.Context()
 
-	for i := 0; i < 3; i++ {
-		if err := q.Enqueue(ctx, queue.NewJob("c").WithID(fmt.Sprintf("c-%d", i)).Build()); err != nil {
+	for i := range 3 {
+		err := q.Enqueue(ctx, queue.NewJob("c").WithID(fmt.Sprintf("c-%d", i)).Build())
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		job, err := q.Dequeue(ctx, 5*time.Second)
 		if err != nil {
 			t.Fatalf("Dequeue %d: %v", i, err)
@@ -564,13 +581,15 @@ func TestRabbitMQConsumerMode(t *testing.T) {
 			t.Fatalf("got %s, want %s", job.ID, want)
 		}
 		job.Status = queue.StatusCompleted
-		if err := q.UpdateJob(ctx, job); err != nil {
+		err = q.UpdateJob(ctx, job)
+		if err != nil {
 			t.Fatalf("ack: %v", err)
 		}
 	}
 
 	start := time.Now()
-	if _, err := q.Dequeue(ctx, 300*time.Millisecond); !errors.Is(err, queue.ErrNoJobAvailable) {
+	_, err := q.Dequeue(ctx, 300*time.Millisecond)
+	if !errors.Is(err, queue.ErrNoJobAvailable) {
 		t.Fatalf("expected ErrNoJobAvailable, got %v", err)
 	}
 	if elapsed := time.Since(start); elapsed < 250*time.Millisecond {
@@ -602,8 +621,9 @@ func TestRabbitMQConsumerModeConcurrentWorkers(t *testing.T) {
 	ctx := t.Context()
 
 	const jobs = 200
-	for i := 0; i < jobs; i++ {
-		if err := q.Enqueue(ctx, queue.NewJob("p").WithID(fmt.Sprintf("p-%d", i)).Build()); err != nil {
+	for i := range jobs {
+		err := q.Enqueue(ctx, queue.NewJob("p").WithID(fmt.Sprintf("p-%d", i)).Build())
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -611,10 +631,8 @@ func TestRabbitMQConsumerModeConcurrentWorkers(t *testing.T) {
 	var mu sync.Mutex
 	seen := make(map[string]int)
 	var wg sync.WaitGroup
-	for w := 0; w < 4; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 4 {
+		wg.Go(func() {
 			for {
 				job, err := q.Dequeue(ctx, 500*time.Millisecond)
 				if err != nil {
@@ -626,7 +644,7 @@ func TestRabbitMQConsumerModeConcurrentWorkers(t *testing.T) {
 				job.Status = queue.StatusCompleted
 				_ = q.UpdateJob(ctx, job)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -645,14 +663,17 @@ func TestRabbitMQConsumerModeSurvivesReconnect(t *testing.T) {
 	q := newPrefetchRabbitMQ(t, "consumerreconnect", 2)
 	ctx := t.Context()
 
-	if err := q.Enqueue(ctx, queue.NewJob("r").WithID("r-1").Build()); err != nil {
+	err := q.Enqueue(ctx, queue.NewJob("r").WithID("r-1").Build())
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := q.Dequeue(ctx, 5*time.Second); err != nil {
+	_, err = q.Dequeue(ctx, 5*time.Second)
+	if err != nil {
 		t.Fatal(err)
 	}
 
-	if err := q.Reconnect(queue.RabbitMQConfig{URL: "amqp://admin:admin123@localhost:5672/"}); err != nil {
+	err = q.Reconnect(queue.RabbitMQConfig{URL: rabbitMQTestURL()})
+	if err != nil {
 		t.Fatalf("Reconnect: %v", err)
 	}
 	// r-1 was never acknowledged, so the broker hands it out again on the new consumer
@@ -669,7 +690,8 @@ func BenchmarkRabbitMQDequeuePrefetch(b *testing.B) {
 	q := newPrefetchRabbitMQ(b, "benchprefetch", 100)
 	ctx := b.Context()
 	for i := 0; i < b.N; i++ {
-		if err := q.Enqueue(ctx, queue.NewJob("bench").WithID(fmt.Sprintf("b-%d", i)).Build()); err != nil {
+		err := q.Enqueue(ctx, queue.NewJob("bench").WithID(fmt.Sprintf("b-%d", i)).Build())
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -681,7 +703,8 @@ func BenchmarkRabbitMQDequeuePrefetch(b *testing.B) {
 			b.Fatal(err)
 		}
 		job.Status = queue.StatusCompleted
-		if err := q.UpdateJob(ctx, job); err != nil {
+		err = q.UpdateJob(ctx, job)
+		if err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -690,7 +713,7 @@ func BenchmarkRabbitMQDequeuePrefetch(b *testing.B) {
 func TestRabbitMQFinishedRetention(t *testing.T) {
 	suffix := fmt.Sprintf("retain_%d", time.Now().UnixNano())
 	q, err := queue.NewRabbitMQ(queue.RabbitMQConfig{
-		URL:            "amqp://admin:admin123@localhost:5672/",
+		URL:            rabbitMQTestURL(),
 		QueueName:      suffix,
 		ExchangeName:   suffix + "_exchange",
 		RoutingKey:     suffix,
@@ -702,9 +725,10 @@ func TestRabbitMQFinishedRetention(t *testing.T) {
 	t.Cleanup(func() { _ = q.PurgeQueue(context.Background()); _ = q.Close() })
 	ctx := t.Context()
 
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		job := queue.NewJob("r").WithID(fmt.Sprintf("r-%d", i)).Build()
-		if err := q.Enqueue(ctx, job); err != nil {
+		err := q.Enqueue(ctx, job)
+		if err != nil {
 			t.Fatal(err)
 		}
 		got, err := q.Dequeue(ctx, 2*time.Second)
@@ -712,15 +736,18 @@ func TestRabbitMQFinishedRetention(t *testing.T) {
 			t.Fatal(err)
 		}
 		got.Status = queue.StatusCompleted
-		if err := q.UpdateJob(ctx, got); err != nil {
+		err = q.UpdateJob(ctx, got)
+		if err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	if _, err := q.GetJob(ctx, "r-0"); err == nil {
+	_, err = q.GetJob(ctx, "r-0")
+	if err == nil {
 		t.Error("the oldest finished job is still indexed")
 	}
-	if _, err := q.GetJob(ctx, "r-9"); err != nil {
+	_, err = q.GetJob(ctx, "r-9")
+	if err != nil {
 		t.Errorf("the newest finished job was dropped: %v", err)
 	}
 	stats, err := q.GetStats(ctx)
@@ -737,7 +764,7 @@ func TestRabbitMQFinishedRetention(t *testing.T) {
 func TestRabbitMQReconnectDeclaresAutoDeleteQueue(t *testing.T) {
 	suffix := fmt.Sprintf("redeclare_%d", time.Now().UnixNano())
 	q, err := queue.NewRabbitMQ(queue.RabbitMQConfig{
-		URL:          "amqp://admin:admin123@localhost:5672/",
+		URL:          rabbitMQTestURL(),
 		QueueName:    suffix,
 		ExchangeName: suffix + "_exchange",
 		RoutingKey:   suffix,
@@ -750,19 +777,27 @@ func TestRabbitMQReconnectDeclaresAutoDeleteQueue(t *testing.T) {
 	t.Cleanup(func() { _ = q.Close() })
 	ctx := t.Context()
 
-	if _, err := q.Dequeue(ctx, 100*time.Millisecond); !errors.Is(err, queue.ErrNoJobAvailable) {
+	_, err = q.Dequeue(ctx, 100*time.Millisecond)
+	if !errors.Is(err, queue.ErrNoJobAvailable) {
 		t.Fatalf("first Dequeue: %v", err)
 	}
 	// An empty Reconnect config keeps the URL and queue names of the original
-	if err := q.Reconnect(queue.RabbitMQConfig{}); err != nil {
+	err = q.Reconnect(queue.RabbitMQConfig{})
+	if err != nil {
 		t.Fatalf("Reconnect: %v", err)
 	}
 
-	if err := q.Enqueue(ctx, queue.NewJob("x").WithID("after-reconnect").Build()); err != nil {
+	err = q.Enqueue(ctx, queue.NewJob("x").WithID("after-reconnect").Build())
+	if err != nil {
 		t.Fatalf("Enqueue after Reconnect: %v", err)
 	}
 	job, err := q.Dequeue(ctx, 5*time.Second)
 	if err != nil || job.ID != "after-reconnect" {
 		t.Fatalf("job=%v err=%v", job, err)
 	}
+}
+
+func rabbitMQTestURL() string {
+	u := url.URL{Scheme: "amqp", User: url.UserPassword(rabbitMQTestUser, rabbitMQTestKey), Host: rabbitMQTestHost, Path: "/"}
+	return u.String()
 }

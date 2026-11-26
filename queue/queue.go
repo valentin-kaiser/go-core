@@ -172,7 +172,7 @@ type Manager struct {
 	shutdownChan     chan struct{}
 	workerWg         sync.WaitGroup
 	handlerMutex     sync.RWMutex
-	running          int32
+	running          atomic.Int32
 	stats            *Stats
 	statsMutex       sync.RWMutex
 	scheduleTicker   *time.Ticker
@@ -308,7 +308,7 @@ func (m *Manager) RegisterHandler(jobType string, handler JobHandler) {
 
 // Start starts the queue manager
 func (m *Manager) Start(ctx context.Context) error {
-	if !atomic.CompareAndSwapInt32(&m.running, 0, 1) {
+	if !m.running.CompareAndSwap(0, 1) {
 		return apperror.NewError("manager is already running")
 	}
 
@@ -333,7 +333,7 @@ func (m *Manager) Start(ctx context.Context) error {
 
 // Stop stops the queue manager gracefully
 func (m *Manager) Stop() error {
-	if !atomic.CompareAndSwapInt32(&m.running, 1, 0) {
+	if !m.running.CompareAndSwap(1, 0) {
 		return apperror.NewError("manager is not running")
 	}
 
@@ -362,7 +362,7 @@ func (m *Manager) Stop() error {
 
 // Enqueue adds a job to the queue
 func (m *Manager) Enqueue(ctx context.Context, job *Job) error {
-	if atomic.LoadInt32(&m.running) == 0 {
+	if m.running.Load() == 0 {
 		return apperror.NewError("manager is not running")
 	}
 
@@ -381,7 +381,7 @@ func (m *Manager) Enqueue(ctx context.Context, job *Job) error {
 
 // Schedule adds a scheduled job to the queue
 func (m *Manager) Schedule(ctx context.Context, job *Job) error {
-	if atomic.LoadInt32(&m.running) == 0 {
+	if m.running.Load() == 0 {
 		return apperror.NewError("manager is not running")
 	}
 
@@ -434,7 +434,7 @@ func (m *Manager) GetStats() *Stats {
 
 // IsRunning returns true if the manager is currently running
 func (m *Manager) IsRunning() bool {
-	return atomic.LoadInt32(&m.running) == 1
+	return m.running.Load() == 1
 }
 
 // worker processes jobs from the queue

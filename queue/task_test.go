@@ -15,9 +15,9 @@ import (
 func TestTaskScheduler_RegisterIntervalTask(t *testing.T) {
 	scheduler := queue.NewTaskScheduler()
 
-	var executed int32
+	var executed atomic.Int32
 	taskFunc := func(_ context.Context) error {
-		atomic.AddInt32(&executed, 1)
+		executed.Add(1)
 		return nil
 	}
 
@@ -57,9 +57,9 @@ func TestTaskScheduler_RegisterIntervalTask(t *testing.T) {
 func TestTaskScheduler_RegisterCronTask(t *testing.T) {
 	scheduler := queue.NewTaskScheduler()
 
-	var executed int32
+	var executed atomic.Int32
 	taskFunc := func(_ context.Context) error {
-		atomic.AddInt32(&executed, 1)
+		executed.Add(1)
 		return nil
 	}
 
@@ -137,14 +137,14 @@ func TestTaskScheduler_StartStop(t *testing.T) {
 func TestTaskScheduler_IntervalTaskExecution(t *testing.T) {
 	scheduler := queue.NewTaskScheduler().WithCheckInterval(time.Millisecond * 100)
 
-	var executed int32
+	var executed atomic.Int32
 	var executionTimes []time.Time
 	var mu sync.Mutex
 
 	taskFunc := func(_ context.Context) error {
 		mu.Lock()
 		defer mu.Unlock()
-		atomic.AddInt32(&executed, 1)
+		executed.Add(1)
 		executionTimes = append(executionTimes, time.Now())
 		return nil
 	}
@@ -166,7 +166,7 @@ func TestTaskScheduler_IntervalTaskExecution(t *testing.T) {
 	time.Sleep(time.Second)
 	scheduler.Stop()
 
-	execCount := atomic.LoadInt32(&executed)
+	execCount := executed.Load()
 	if execCount < 2 {
 		t.Errorf("expected at least 2 executions, got %d", execCount)
 	}
@@ -192,17 +192,17 @@ func TestTaskScheduler_TaskRetry(t *testing.T) {
 		WithCheckInterval(time.Millisecond * 50).
 		WithRetryDelay(time.Millisecond * 50)
 
-	var attempts int32
-	var successCount int32
+	var attempts atomic.Int32
+	var successCount atomic.Int32
 	var lastError error
 
 	taskFunc := func(_ context.Context) error {
-		count := atomic.AddInt32(&attempts, 1)
+		count := attempts.Add(1)
 		if count < 3 {
 			lastError = fmt.Errorf("attempt %d failed", count)
 			return lastError
 		}
-		atomic.AddInt32(&successCount, 1)
+		successCount.Add(1)
 		return nil
 	}
 
@@ -229,12 +229,12 @@ func TestTaskScheduler_TaskRetry(t *testing.T) {
 
 	// The task should execute and succeed after 3 attempts
 	// It should only succeed once in the time window since interval is 10 seconds
-	attemptCount := atomic.LoadInt32(&attempts)
+	attemptCount := attempts.Load()
 	if attemptCount < 3 {
 		t.Errorf("expected at least 3 attempts, got %d", attemptCount)
 	}
 
-	successCountValue := atomic.LoadInt32(&successCount)
+	successCountValue := successCount.Load()
 	if successCountValue < 1 {
 		t.Errorf("expected at least 1 success, got %d", successCountValue)
 	}
@@ -263,11 +263,11 @@ func TestTaskScheduler_TaskFailure(t *testing.T) {
 		WithCheckInterval(time.Millisecond * 50).
 		WithRetryDelay(time.Millisecond * 30)
 
-	var attempts int32
+	var attempts atomic.Int32
 	expectedError := errors.New("task always fails")
 
 	taskFunc := func(_ context.Context) error {
-		atomic.AddInt32(&attempts, 1)
+		attempts.Add(1)
 		return expectedError
 	}
 
@@ -292,7 +292,7 @@ func TestTaskScheduler_TaskFailure(t *testing.T) {
 	time.Sleep(time.Millisecond * 200)
 	scheduler.Stop()
 
-	attemptCount := atomic.LoadInt32(&attempts)
+	attemptCount := attempts.Load()
 	if attemptCount < 3 { // At least 1 initial + 2 retries
 		t.Errorf("expected at least 3 attempts, got %d", attemptCount)
 	}
@@ -454,16 +454,16 @@ func TestTaskScheduler_GetTasks(t *testing.T) {
 func TestTaskScheduler_ConcurrentExecution(t *testing.T) {
 	scheduler := queue.NewTaskScheduler().WithCheckInterval(100 * time.Millisecond)
 
-	var executionCount int32
-	var concurrentCount int32
-	var maxConcurrent int32
+	var executionCount atomic.Int32
+	var concurrentCount atomic.Int32
+	var maxConcurrent atomic.Int32
 
 	taskFunc := func(_ context.Context) error {
 		// Track concurrent executions
-		current := atomic.AddInt32(&concurrentCount, 1)
+		current := concurrentCount.Add(1)
 		for {
-			existing := atomic.LoadInt32(&maxConcurrent)
-			if current <= existing || atomic.CompareAndSwapInt32(&maxConcurrent, existing, current) {
+			existing := maxConcurrent.Load()
+			if current <= existing || maxConcurrent.CompareAndSwap(existing, current) {
 				break
 			}
 		}
@@ -471,8 +471,8 @@ func TestTaskScheduler_ConcurrentExecution(t *testing.T) {
 		// Simulate work
 		time.Sleep(300 * time.Millisecond)
 
-		atomic.AddInt32(&executionCount, 1)
-		atomic.AddInt32(&concurrentCount, -1)
+		executionCount.Add(1)
+		concurrentCount.Add(-1)
 		return nil
 	}
 
@@ -483,9 +483,9 @@ func TestTaskScheduler_ConcurrentExecution(t *testing.T) {
 	}
 
 	// Reset counters
-	atomic.StoreInt32(&executionCount, 0)
-	atomic.StoreInt32(&concurrentCount, 0)
-	atomic.StoreInt32(&maxConcurrent, 0)
+	executionCount.Store(0)
+	concurrentCount.Store(0)
+	maxConcurrent.Store(0)
 
 	// Test concurrent task
 	err = scheduler.RegisterIntervalTaskWithOptions("concurrent", 150*time.Millisecond, taskFunc, queue.TaskOptions{
@@ -509,8 +509,8 @@ func TestTaskScheduler_ConcurrentExecution(t *testing.T) {
 	scheduler.Stop()
 
 	// Verify the concurrent task had overlapping executions
-	finalExecutionCount := atomic.LoadInt32(&executionCount)
-	finalMaxConcurrent := atomic.LoadInt32(&maxConcurrent)
+	finalExecutionCount := executionCount.Load()
+	finalMaxConcurrent := maxConcurrent.Load()
 
 	t.Logf("Total executions: %d, Max concurrent: %d", finalExecutionCount, finalMaxConcurrent)
 
@@ -545,16 +545,16 @@ func TestTaskScheduler_ConcurrentExecution(t *testing.T) {
 func TestTaskScheduler_ConcurrentCronExecution(t *testing.T) {
 	scheduler := queue.NewTaskScheduler().WithCheckInterval(50 * time.Millisecond)
 
-	var executionCount int32
-	var concurrentCount int32
-	var maxConcurrent int32
+	var executionCount atomic.Int32
+	var concurrentCount atomic.Int32
+	var maxConcurrent atomic.Int32
 
 	taskFunc := func(_ context.Context) error {
 		// Track concurrent executions
-		current := atomic.AddInt32(&concurrentCount, 1)
+		current := concurrentCount.Add(1)
 		for {
-			existing := atomic.LoadInt32(&maxConcurrent)
-			if current <= existing || atomic.CompareAndSwapInt32(&maxConcurrent, existing, current) {
+			existing := maxConcurrent.Load()
+			if current <= existing || maxConcurrent.CompareAndSwap(existing, current) {
 				break
 			}
 		}
@@ -562,8 +562,8 @@ func TestTaskScheduler_ConcurrentCronExecution(t *testing.T) {
 		// Simulate work - longer than the cron interval to force overlap
 		time.Sleep(1500 * time.Millisecond)
 
-		atomic.AddInt32(&executionCount, 1)
-		atomic.AddInt32(&concurrentCount, -1)
+		executionCount.Add(1)
+		concurrentCount.Add(-1)
 		return nil
 	}
 
@@ -589,8 +589,8 @@ func TestTaskScheduler_ConcurrentCronExecution(t *testing.T) {
 	scheduler.Stop()
 
 	// Verify the concurrent task had overlapping executions
-	finalExecutionCount := atomic.LoadInt32(&executionCount)
-	finalMaxConcurrent := atomic.LoadInt32(&maxConcurrent)
+	finalExecutionCount := executionCount.Load()
+	finalMaxConcurrent := maxConcurrent.Load()
 
 	t.Logf("Total cron executions: %d, Max concurrent: %d", finalExecutionCount, finalMaxConcurrent)
 
@@ -620,17 +620,17 @@ func TestTaskScheduler_ConcurrentCronExecution(t *testing.T) {
 func TestTaskScheduler_RunImmediately(t *testing.T) {
 	scheduler := queue.NewTaskScheduler().WithCheckInterval(50 * time.Millisecond)
 
-	var cronExecutionCount int32
-	var intervalExecutionCount int32
+	var cronExecutionCount atomic.Int32
+	var intervalExecutionCount atomic.Int32
 
 	// Simple task function that increments a counter
 	cronTaskFunc := func(_ context.Context) error {
-		atomic.AddInt32(&cronExecutionCount, 1)
+		cronExecutionCount.Add(1)
 		return nil
 	}
 
 	intervalTaskFunc := func(_ context.Context) error {
-		atomic.AddInt32(&intervalExecutionCount, 1)
+		intervalExecutionCount.Add(1)
 		return nil
 	}
 
@@ -718,8 +718,8 @@ func TestTaskScheduler_RunImmediately(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// The immediate tasks should have executed by now
-	cronCount := atomic.LoadInt32(&cronExecutionCount)
-	intervalCount := atomic.LoadInt32(&intervalExecutionCount)
+	cronCount := cronExecutionCount.Load()
+	intervalCount := intervalExecutionCount.Load()
 
 	if cronCount == 0 {
 		t.Error("cron immediate task should have executed by now")
