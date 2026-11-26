@@ -7,6 +7,8 @@ import (
 	"time"
 )
 
+const benchTaskCount = 1000
+
 func benchScheduler(b *testing.B, n int) *TaskScheduler {
 	b.Helper()
 	s := NewTaskScheduler()
@@ -21,7 +23,7 @@ func benchScheduler(b *testing.B, n int) *TaskScheduler {
 
 // One scheduler tick with nothing due: the cost of scanning all tasks under their locks.
 func BenchmarkSchedulerCheckIdle1000(b *testing.B) {
-	s := benchScheduler(b, 1000)
+	s := benchScheduler(b, benchTaskCount)
 	ctx := context.Background()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -46,10 +48,13 @@ func BenchmarkSchedulerRunTask(b *testing.B) {
 }
 
 func BenchmarkSchedulerGetTasks1000(b *testing.B) {
-	s := benchScheduler(b, 1000)
+	s := benchScheduler(b, benchTaskCount)
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = s.GetTasks()
+		tasks := s.GetTasks()
+		if len(tasks) != benchTaskCount {
+			b.Fatalf("GetTasks returned %d tasks, want %d", len(tasks), benchTaskCount)
+		}
 	}
 }

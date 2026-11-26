@@ -9,10 +9,26 @@ import (
 	"testing"
 	"time"
 
+	"github.com/valentin-kaiser/go-core/internal/await"
 	"github.com/valentin-kaiser/go-core/queue"
 )
 
+const (
+	// taskWaitTimeout bounds every wait for a scheduler run, so a missed run fails instead of hanging.
+	taskWaitTimeout   = 5 * time.Second
+	taskContextLimit  = 5 * time.Second
+	taskCheckFast     = 50 * time.Millisecond
+	taskCheckStandard = 100 * time.Millisecond
+	taskRetryDelay    = 30 * time.Millisecond
+	taskSchedulerWait = 10 * time.Second
+
+	everyFiveMinutesSpec = "*/5 * * * *"
+	everySecondSpec      = "* * * * * *"
+)
+
 func TestTaskScheduler_RegisterIntervalTask(t *testing.T) {
+	const taskName = "test-task"
+
 	scheduler := queue.NewTaskScheduler()
 
 	var executed atomic.Int32
@@ -21,17 +37,17 @@ func TestTaskScheduler_RegisterIntervalTask(t *testing.T) {
 		return nil
 	}
 
-	err := scheduler.RegisterIntervalTask("test-task", time.Second, taskFunc)
+	err := scheduler.RegisterIntervalTask(taskName, time.Second, taskFunc)
 	if err != nil {
 		t.Fatalf("failed to register interval task: %v", err)
 	}
 
-	task, err := scheduler.GetTask("test-task")
+	task, err := scheduler.GetTask(taskName)
 	if err != nil {
 		t.Fatalf("failed to get task: %v", err)
 	}
 
-	if task.Name != "test-task" {
+	if task.Name != taskName {
 		t.Errorf("expected task name 'test-task', got '%s'", task.Name)
 	}
 
@@ -48,7 +64,7 @@ func TestTaskScheduler_RegisterIntervalTask(t *testing.T) {
 	}
 
 	// Test duplicate registration
-	err = scheduler.RegisterIntervalTask("test-task", time.Second, taskFunc)
+	err = scheduler.RegisterIntervalTask(taskName, time.Second, taskFunc)
 	if err == nil {
 		t.Error("expected error when registering duplicate task")
 	}
@@ -64,7 +80,7 @@ func TestTaskScheduler_RegisterCronTask(t *testing.T) {
 	}
 
 	// Test valid cron expression
-	err := scheduler.RegisterCronTask("test-cron", "*/5 * * * *", taskFunc)
+	err := scheduler.RegisterCronTask("test-cron", everyFiveMinutesSpec, taskFunc)
 	if err != nil {
 		t.Fatalf("failed to register cron task: %v", err)
 	}
@@ -78,7 +94,7 @@ func TestTaskScheduler_RegisterCronTask(t *testing.T) {
 		t.Errorf("expected task type cron, got %v", task.Type)
 	}
 
-	if task.CronSpec != "*/5 * * * *" {
+	if task.CronSpec != everyFiveMinutesSpec {
 		t.Errorf("expected cron spec '*/5 * * * *', got '%s'", task.CronSpec)
 	}
 
@@ -89,13 +105,13 @@ func TestTaskScheduler_RegisterCronTask(t *testing.T) {
 	}
 
 	// Test empty name
-	err = scheduler.RegisterCronTask("", "*/5 * * * *", taskFunc)
+	err = scheduler.RegisterCronTask("", everyFiveMinutesSpec, taskFunc)
 	if err == nil {
 		t.Error("expected error for empty task name")
 	}
 
 	// Test nil function
-	err = scheduler.RegisterCronTask("nil-func", "*/5 * * * *", nil)
+	err = scheduler.RegisterCronTask("nil-func", everyFiveMinutesSpec, nil)
 	if err == nil {
 		t.Error("expected error for nil function")
 	}
@@ -104,7 +120,7 @@ func TestTaskScheduler_RegisterCronTask(t *testing.T) {
 func TestTaskScheduler_StartStop(t *testing.T) {
 	scheduler := queue.NewTaskScheduler()
 
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second*5)
+	ctx, cancel := context.WithTimeout(t.Context(), taskContextLimit)
 	defer cancel()
 
 	// Test start
@@ -135,7 +151,14 @@ func TestTaskScheduler_StartStop(t *testing.T) {
 }
 
 func TestTaskScheduler_IntervalTaskExecution(t *testing.T) {
-	scheduler := queue.NewTaskScheduler().WithCheckInterval(time.Millisecond * 100)
+	const (
+		interval       = 300 * time.Millisecond
+		minInterval    = 200 * time.Millisecond
+		maxInterval    = 500 * time.Millisecond
+		wantExecutions = 3
+	)
+
+	scheduler := queue.NewTaskScheduler().WithCheckInterval(taskCheckStandard)
 
 	var executed atomic.Int32
 	var executionTimes []time.Time
@@ -149,12 +172,12 @@ func TestTaskScheduler_IntervalTaskExecution(t *testing.T) {
 		return nil
 	}
 
-	err := scheduler.RegisterIntervalTask("test-interval", time.Millisecond*300, taskFunc)
+	err := scheduler.RegisterIntervalTask("test-interval", interval, taskFunc)
 	if err != nil {
 		t.Fatalf("failed to register interval task: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second*2)
+	ctx, cancel := context.WithTimeout(t.Context(), taskContextLimit)
 	defer cancel()
 
 	err = scheduler.Start(ctx)
@@ -162,8 +185,7 @@ func TestTaskScheduler_IntervalTaskExecution(t *testing.T) {
 		t.Fatalf("failed to start scheduler: %v", err)
 	}
 
-	// Wait for a few executions
-	time.Sleep(time.Second)
+	await.Until(t, taskWaitTimeout, func() bool { return executed.Load() >= wantExecutions }, "the interval task to run three times")
 	scheduler.Stop()
 
 	execCount := executed.Load()
@@ -175,22 +197,20 @@ func TestTaskScheduler_IntervalTaskExecution(t *testing.T) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	if len(executionTimes) < 2 {
-		t.Skip("not enough executions to test intervals")
-	}
-
 	for i := 1; i < len(executionTimes); i++ {
-		interval := executionTimes[i].Sub(executionTimes[i-1])
-		if interval < time.Millisecond*200 || interval > time.Millisecond*500 {
-			t.Errorf("unexpected interval between executions: %v", interval)
+		gap := executionTimes[i].Sub(executionTimes[i-1])
+		if gap < minInterval || gap > maxInterval {
+			t.Errorf("unexpected interval between executions: %v", gap)
 		}
 	}
 }
 
 func TestTaskScheduler_TaskRetry(t *testing.T) {
+	const taskName = "retry-task"
+
 	scheduler := queue.NewTaskScheduler().
-		WithCheckInterval(time.Millisecond * 50).
-		WithRetryDelay(time.Millisecond * 50)
+		WithCheckInterval(taskCheckFast).
+		WithRetryDelay(taskCheckFast)
 
 	var attempts atomic.Int32
 	var successCount atomic.Int32
@@ -206,16 +226,16 @@ func TestTaskScheduler_TaskRetry(t *testing.T) {
 		return nil
 	}
 
-	err := scheduler.RegisterIntervalTaskWithOptions("retry-task", time.Second*10, taskFunc, queue.TaskOptions{
+	err := scheduler.RegisterIntervalTaskWithOptions(taskName, 10*time.Second, taskFunc, queue.TaskOptions{
 		MaxRetries:  3,
-		RetryDelay:  time.Millisecond * 30,
+		RetryDelay:  taskRetryDelay,
 		Immediately: true, // Run immediately for this test
 	})
 	if err != nil {
 		t.Fatalf("failed to register task: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second*2)
+	ctx, cancel := context.WithTimeout(t.Context(), taskContextLimit)
 	defer cancel()
 
 	err = scheduler.Start(ctx)
@@ -224,7 +244,10 @@ func TestTaskScheduler_TaskRetry(t *testing.T) {
 	}
 
 	// Wait for task to be executed and retried
-	time.Sleep(time.Millisecond * 300)
+	await.Until(t, taskWaitTimeout, func() bool {
+		task, err := scheduler.GetTask(taskName)
+		return err == nil && task.RunCount >= 1
+	}, "the task to succeed after its retries")
 	scheduler.Stop()
 
 	// The task should execute and succeed after 3 attempts
@@ -240,7 +263,7 @@ func TestTaskScheduler_TaskRetry(t *testing.T) {
 	}
 
 	// Check task stats
-	task, err := scheduler.GetTask("retry-task")
+	task, err := scheduler.GetTask(taskName)
 	if err != nil {
 		t.Fatalf("failed to get task: %v", err)
 	}
@@ -259,9 +282,11 @@ func TestTaskScheduler_TaskRetry(t *testing.T) {
 }
 
 func TestTaskScheduler_TaskFailure(t *testing.T) {
+	const taskName = "failing-task"
+
 	scheduler := queue.NewTaskScheduler().
-		WithCheckInterval(time.Millisecond * 50).
-		WithRetryDelay(time.Millisecond * 30)
+		WithCheckInterval(taskCheckFast).
+		WithRetryDelay(taskRetryDelay)
 
 	var attempts atomic.Int32
 	expectedError := errors.New("task always fails")
@@ -271,16 +296,16 @@ func TestTaskScheduler_TaskFailure(t *testing.T) {
 		return expectedError
 	}
 
-	err := scheduler.RegisterIntervalTaskWithOptions("failing-task", time.Second*5, taskFunc, queue.TaskOptions{
+	err := scheduler.RegisterIntervalTaskWithOptions(taskName, 5*time.Second, taskFunc, queue.TaskOptions{
 		MaxRetries:  2,
-		RetryDelay:  time.Millisecond * 30,
+		RetryDelay:  taskRetryDelay,
 		Immediately: true, // Run immediately for this test
 	})
 	if err != nil {
 		t.Fatalf("failed to register task: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(t.Context(), time.Second*2)
+	ctx, cancel := context.WithTimeout(t.Context(), taskContextLimit)
 	defer cancel()
 
 	err = scheduler.Start(ctx)
@@ -289,7 +314,10 @@ func TestTaskScheduler_TaskFailure(t *testing.T) {
 	}
 
 	// Wait for task to fail completely
-	time.Sleep(time.Millisecond * 200)
+	await.Until(t, taskWaitTimeout, func() bool {
+		task, err := scheduler.GetTask(taskName)
+		return err == nil && task.ErrorCount >= 1
+	}, "the task to fail after its retries")
 	scheduler.Stop()
 
 	attemptCount := attempts.Load()
@@ -298,7 +326,7 @@ func TestTaskScheduler_TaskFailure(t *testing.T) {
 	}
 
 	// Check task stats
-	task, err := scheduler.GetTask("failing-task")
+	task, err := scheduler.GetTask(taskName)
 	if err != nil {
 		t.Fatalf("failed to get task: %v", err)
 	}
@@ -317,24 +345,29 @@ func TestTaskScheduler_TaskFailure(t *testing.T) {
 }
 
 func TestTaskScheduler_EnableDisableTask(t *testing.T) {
+	const (
+		taskName    = "toggle-task"
+		missingTask = "non-existent"
+	)
+
 	scheduler := queue.NewTaskScheduler()
 
 	taskFunc := func(_ context.Context) error {
 		return nil
 	}
 
-	err := scheduler.RegisterIntervalTask("toggle-task", time.Second, taskFunc)
+	err := scheduler.RegisterIntervalTask(taskName, time.Second, taskFunc)
 	if err != nil {
 		t.Fatalf("failed to register task: %v", err)
 	}
 
 	// Test disable
-	err = scheduler.DisableTask("toggle-task")
+	err = scheduler.DisableTask(taskName)
 	if err != nil {
 		t.Fatalf("failed to disable task: %v", err)
 	}
 
-	task, err := scheduler.GetTask("toggle-task")
+	task, err := scheduler.GetTask(taskName)
 	if err != nil {
 		t.Fatalf("failed to get task: %v", err)
 	}
@@ -344,12 +377,12 @@ func TestTaskScheduler_EnableDisableTask(t *testing.T) {
 	}
 
 	// Test enable
-	err = scheduler.EnableTask("toggle-task")
+	err = scheduler.EnableTask(taskName)
 	if err != nil {
 		t.Fatalf("failed to enable task: %v", err)
 	}
 
-	task, err = scheduler.GetTask("toggle-task")
+	task, err = scheduler.GetTask(taskName)
 	if err != nil {
 		t.Fatalf("failed to get task: %v", err)
 	}
@@ -359,43 +392,48 @@ func TestTaskScheduler_EnableDisableTask(t *testing.T) {
 	}
 
 	// Test non-existent task
-	err = scheduler.EnableTask("non-existent")
+	err = scheduler.EnableTask(missingTask)
 	if err == nil {
 		t.Error("expected error when enabling non-existent task")
 	}
 
-	err = scheduler.DisableTask("non-existent")
+	err = scheduler.DisableTask(missingTask)
 	if err == nil {
 		t.Error("expected error when disabling non-existent task")
 	}
 }
 
 func TestTaskScheduler_RemoveTask(t *testing.T) {
+	const (
+		taskName    = "remove-task"
+		missingTask = "non-existent"
+	)
+
 	scheduler := queue.NewTaskScheduler()
 
 	taskFunc := func(_ context.Context) error {
 		return nil
 	}
 
-	err := scheduler.RegisterIntervalTask("remove-task", time.Second, taskFunc)
+	err := scheduler.RegisterIntervalTask(taskName, time.Second, taskFunc)
 	if err != nil {
 		t.Fatalf("failed to register task: %v", err)
 	}
 
 	// Test removal
-	err = scheduler.RemoveTask("remove-task")
+	err = scheduler.RemoveTask(taskName)
 	if err != nil {
 		t.Fatalf("failed to remove task: %v", err)
 	}
 
 	// Check that task is gone
-	_, err = scheduler.GetTask("remove-task")
+	_, err = scheduler.GetTask(taskName)
 	if err == nil {
 		t.Error("expected error when getting removed task")
 	}
 
 	// Test removing non-existent task
-	err = scheduler.RemoveTask("non-existent")
+	err = scheduler.RemoveTask(missingTask)
 	if err == nil {
 		t.Error("expected error when removing non-existent task")
 	}
@@ -452,13 +490,16 @@ func TestTaskScheduler_GetTasks(t *testing.T) {
 }
 
 func TestTaskScheduler_ConcurrentExecution(t *testing.T) {
-	scheduler := queue.NewTaskScheduler().WithCheckInterval(100 * time.Millisecond)
+	const taskInterval = 150 * time.Millisecond
+
+	scheduler := queue.NewTaskScheduler().WithCheckInterval(taskCheckStandard)
 
 	var executionCount atomic.Int32
 	var concurrentCount atomic.Int32
 	var maxConcurrent atomic.Int32
+	release := make(chan struct{})
 
-	taskFunc := func(_ context.Context) error {
+	taskFunc := func(ctx context.Context) error {
 		// Track concurrent executions
 		current := concurrentCount.Add(1)
 		for {
@@ -468,8 +509,11 @@ func TestTaskScheduler_ConcurrentExecution(t *testing.T) {
 			}
 		}
 
-		// Simulate work
-		time.Sleep(300 * time.Millisecond)
+		// Simulate work: every run stays active until the test has seen the overlap
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
 
 		executionCount.Add(1)
 		concurrentCount.Add(-1)
@@ -477,7 +521,7 @@ func TestTaskScheduler_ConcurrentExecution(t *testing.T) {
 	}
 
 	// Test non-concurrent task (default behavior)
-	err := scheduler.RegisterIntervalTask("non-concurrent", 150*time.Millisecond, taskFunc)
+	err := scheduler.RegisterIntervalTask("non-concurrent", taskInterval, taskFunc)
 	if err != nil {
 		t.Fatalf("failed to register non-concurrent task: %v", err)
 	}
@@ -488,14 +532,14 @@ func TestTaskScheduler_ConcurrentExecution(t *testing.T) {
 	maxConcurrent.Store(0)
 
 	// Test concurrent task
-	err = scheduler.RegisterIntervalTaskWithOptions("concurrent", 150*time.Millisecond, taskFunc, queue.TaskOptions{
+	err = scheduler.RegisterIntervalTaskWithOptions("concurrent", taskInterval, taskFunc, queue.TaskOptions{
 		Concurrent: true,
 	})
 	if err != nil {
 		t.Fatalf("failed to register concurrent task: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	err = scheduler.Start(ctx)
@@ -503,8 +547,10 @@ func TestTaskScheduler_ConcurrentExecution(t *testing.T) {
 		t.Fatalf("failed to start scheduler: %v", err)
 	}
 
-	// Wait for some executions
-	time.Sleep(1 * time.Second)
+	// Wait for the executions to overlap, then let them finish
+	await.Until(t, taskWaitTimeout, func() bool { return maxConcurrent.Load() >= 2 }, "two overlapping executions")
+	close(release)
+	await.Until(t, taskWaitTimeout, func() bool { return executionCount.Load() >= 2 }, "two finished executions")
 	cancel()
 	scheduler.Stop()
 
@@ -543,13 +589,14 @@ func TestTaskScheduler_ConcurrentExecution(t *testing.T) {
 }
 
 func TestTaskScheduler_ConcurrentCronExecution(t *testing.T) {
-	scheduler := queue.NewTaskScheduler().WithCheckInterval(50 * time.Millisecond)
+	scheduler := queue.NewTaskScheduler().WithCheckInterval(taskCheckFast)
 
 	var executionCount atomic.Int32
 	var concurrentCount atomic.Int32
 	var maxConcurrent atomic.Int32
+	release := make(chan struct{})
 
-	taskFunc := func(_ context.Context) error {
+	taskFunc := func(ctx context.Context) error {
 		// Track concurrent executions
 		current := concurrentCount.Add(1)
 		for {
@@ -559,8 +606,11 @@ func TestTaskScheduler_ConcurrentCronExecution(t *testing.T) {
 			}
 		}
 
-		// Simulate work - longer than the cron interval to force overlap
-		time.Sleep(1500 * time.Millisecond)
+		// Simulate work: every run stays active until the test has seen the overlap
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
 
 		executionCount.Add(1)
 		concurrentCount.Add(-1)
@@ -568,14 +618,14 @@ func TestTaskScheduler_ConcurrentCronExecution(t *testing.T) {
 	}
 
 	// Test concurrent cron task that runs every second
-	err := scheduler.RegisterCronTaskWithOptions("concurrent-cron", "* * * * * *", taskFunc, queue.TaskOptions{
+	err := scheduler.RegisterCronTaskWithOptions("concurrent-cron", everySecondSpec, taskFunc, queue.TaskOptions{
 		Concurrent: true,
 	})
 	if err != nil {
 		t.Fatalf("failed to register concurrent cron task: %v", err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
 	err = scheduler.Start(ctx)
@@ -583,8 +633,10 @@ func TestTaskScheduler_ConcurrentCronExecution(t *testing.T) {
 		t.Fatalf("failed to start scheduler: %v", err)
 	}
 
-	// Wait for some executions
-	time.Sleep(3500 * time.Millisecond)
+	// The cron fires on whole seconds, so two overlapping runs need a few seconds of real time
+	await.Until(t, taskSchedulerWait, func() bool { return maxConcurrent.Load() >= 2 }, "two overlapping cron executions")
+	close(release)
+	await.Until(t, taskWaitTimeout, func() bool { return executionCount.Load() >= 2 }, "two finished cron executions")
 	cancel()
 	scheduler.Stop()
 
@@ -617,20 +669,19 @@ func TestTaskScheduler_ConcurrentCronExecution(t *testing.T) {
 	}
 }
 
-func TestTaskScheduler_RunImmediately(t *testing.T) {
-	scheduler := queue.NewTaskScheduler().WithCheckInterval(50 * time.Millisecond)
+// registerImmediateTasks registers two cron and two interval tasks that differ in Immediately.
+func registerImmediateTasks(t *testing.T, scheduler *queue.TaskScheduler, cronCount, intervalCount *atomic.Int32) {
+	t.Helper()
 
-	var cronExecutionCount atomic.Int32
-	var intervalExecutionCount atomic.Int32
+	const intervalTaskPeriod = 2 * time.Second
 
-	// Simple task function that increments a counter
 	cronTaskFunc := func(_ context.Context) error {
-		cronExecutionCount.Add(1)
+		cronCount.Add(1)
 		return nil
 	}
 
 	intervalTaskFunc := func(_ context.Context) error {
-		intervalExecutionCount.Add(1)
+		intervalCount.Add(1)
 		return nil
 	}
 
@@ -651,7 +702,7 @@ func TestTaskScheduler_RunImmediately(t *testing.T) {
 	}
 
 	// Test interval task with RunImmediately = false
-	err = scheduler.RegisterIntervalTaskWithOptions("interval-scheduled", 2*time.Second, intervalTaskFunc, queue.TaskOptions{
+	err = scheduler.RegisterIntervalTaskWithOptions("interval-scheduled", intervalTaskPeriod, intervalTaskFunc, queue.TaskOptions{
 		Immediately: false,
 	})
 	if err != nil {
@@ -659,10 +710,24 @@ func TestTaskScheduler_RunImmediately(t *testing.T) {
 	}
 
 	// Test interval task with default behavior (should run immediately for backward compatibility)
-	err = scheduler.RegisterIntervalTask("interval-immediate", 2*time.Second, intervalTaskFunc)
+	err = scheduler.RegisterIntervalTask("interval-immediate", intervalTaskPeriod, intervalTaskFunc)
 	if err != nil {
 		t.Fatalf("failed to register immediate interval task: %v", err)
 	}
+}
+
+func TestTaskScheduler_RunImmediatelyNextRun(t *testing.T) {
+	const (
+		immediateWindow         = 100 * time.Millisecond
+		cronScheduledMinDelay   = 10 * time.Second
+		intervalScheduledMinGap = 1500 * time.Millisecond
+	)
+
+	scheduler := queue.NewTaskScheduler().WithCheckInterval(taskCheckFast)
+
+	var cronExecutionCount atomic.Int32
+	var intervalExecutionCount atomic.Int32
+	registerImmediateTasks(t, scheduler, &cronExecutionCount, &intervalExecutionCount)
 
 	// Verify next run times before starting
 	cronImmediate, err := scheduler.GetTask("cron-immediate")
@@ -688,36 +753,45 @@ func TestTaskScheduler_RunImmediately(t *testing.T) {
 	now := time.Now()
 
 	// Immediate tasks should be scheduled to run now or very soon
-	if cronImmediate.NextRun.After(now.Add(100 * time.Millisecond)) {
+	if cronImmediate.NextRun.After(now.Add(immediateWindow)) {
 		t.Errorf("cron immediate task should run immediately, but next run is %v", cronImmediate.NextRun)
 	}
 
-	if intervalImmediate.NextRun.After(now.Add(100 * time.Millisecond)) {
+	if intervalImmediate.NextRun.After(now.Add(immediateWindow)) {
 		t.Errorf("interval immediate task should run immediately, but next run is %v", intervalImmediate.NextRun)
 	}
 
 	// Scheduled tasks should be scheduled for later
-	if cronScheduled.NextRun.Before(now.Add(10 * time.Second)) {
+	if cronScheduled.NextRun.Before(now.Add(cronScheduledMinDelay)) {
 		t.Errorf("cron scheduled task should not run immediately, but next run is %v", cronScheduled.NextRun)
 	}
 
-	if intervalScheduled.NextRun.Before(now.Add(1500 * time.Millisecond)) {
+	if intervalScheduled.NextRun.Before(now.Add(intervalScheduledMinGap)) {
 		t.Errorf("interval scheduled task should not run immediately, but next run is %v", intervalScheduled.NextRun)
 	}
+}
+
+func TestTaskScheduler_RunImmediately(t *testing.T) {
+	scheduler := queue.NewTaskScheduler().WithCheckInterval(taskCheckFast)
+
+	var cronExecutionCount atomic.Int32
+	var intervalExecutionCount atomic.Int32
+	registerImmediateTasks(t, scheduler, &cronExecutionCount, &intervalExecutionCount)
 
 	// Start the scheduler
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	err = scheduler.Start(ctx)
+	err := scheduler.Start(ctx)
 	if err != nil {
 		t.Fatalf("failed to start scheduler: %v", err)
 	}
 
-	// Wait a short time to see which tasks execute immediately
-	time.Sleep(500 * time.Millisecond)
-
 	// The immediate tasks should have executed by now
+	await.Until(t, taskWaitTimeout, func() bool {
+		return cronExecutionCount.Load() > 0 && intervalExecutionCount.Load() > 0
+	}, "the immediate cron and interval tasks to run")
+
 	cronCount := cronExecutionCount.Load()
 	intervalCount := intervalExecutionCount.Load()
 

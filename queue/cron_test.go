@@ -15,40 +15,40 @@ func TestValidateCronSpec(t *testing.T) {
 		wantErr  bool
 	}{
 		// Valid 5-field expressions
-		{"valid 5-field basic", "0 0 * * *", false},
-		{"valid 5-field with ranges", "0 9-17 * * 1-5", false},
-		{"valid 5-field with steps", "*/15 * * * *", false},
-		{"valid 5-field with lists", "0 9,12,15 * * *", false},
-		{"valid 5-field mixed", "0 9-17/2 * * 1-5", false},
+		{name: "valid 5-field basic", cronSpec: "0 0 * * *", wantErr: false},
+		{name: "valid 5-field with ranges", cronSpec: "0 9-17 * * 1-5", wantErr: false},
+		{name: "valid 5-field with steps", cronSpec: "*/15 * * * *", wantErr: false},
+		{name: "valid 5-field with lists", cronSpec: "0 9,12,15 * * *", wantErr: false},
+		{name: "valid 5-field mixed", cronSpec: "0 9-17/2 * * 1-5", wantErr: false},
 
 		// Valid 6-field expressions
-		{"valid 6-field basic", "0 0 0 * * *", false},
-		{"valid 6-field with ranges", "0 0 9-17 * * 1-5", false},
-		{"valid 6-field with steps", "*/30 */15 * * * *", false},
-		{"valid 6-field with lists", "0 0 9,12,15 * * *", false},
+		{name: "valid 6-field basic", cronSpec: "0 0 0 * * *", wantErr: false},
+		{name: "valid 6-field with ranges", cronSpec: "0 0 9-17 * * 1-5", wantErr: false},
+		{name: "valid 6-field with steps", cronSpec: "*/30 */15 * * * *", wantErr: false},
+		{name: "valid 6-field with lists", cronSpec: "0 0 9,12,15 * * *", wantErr: false},
 
 		// Predefined expressions
-		{"predefined @yearly", "@yearly", false},
-		{"predefined @annually", "@annually", false},
-		{"predefined @monthly", "@monthly", false},
-		{"predefined @weekly", "@weekly", false},
-		{"predefined @daily", "@daily", false},
-		{"predefined @midnight", "@midnight", false},
-		{"predefined @hourly", "@hourly", false},
+		{name: "predefined @yearly", cronSpec: "@yearly", wantErr: false},
+		{name: "predefined @annually", cronSpec: "@annually", wantErr: false},
+		{name: "predefined @monthly", cronSpec: "@monthly", wantErr: false},
+		{name: "predefined @weekly", cronSpec: "@weekly", wantErr: false},
+		{name: "predefined @daily", cronSpec: "@daily", wantErr: false},
+		{name: "predefined @midnight", cronSpec: "@midnight", wantErr: false},
+		{name: "predefined @hourly", cronSpec: "@hourly", wantErr: false},
 
 		// Invalid expressions
-		{"invalid field count", "0 0 0 0", true},
-		{"invalid field count too many", "0 0 0 0 0 0 0", true},
-		{"invalid minute range", "60 0 * * *", true},
-		{"invalid hour range", "0 24 * * *", true},
-		{"invalid day range", "0 0 0 * *", true},
-		{"invalid month range", "0 0 * 13 *", true},
-		{"invalid day of week range", "0 0 * * 7", true},
-		{"invalid step format", "0 0 */a * *", true},
-		{"invalid range format", "0 0 1-a * *", true},
-		{"invalid list format", "0 0 1,a * *", true},
-		{"empty expression", "", true},
-		{"invalid predefined", "@invalid", true},
+		{name: "invalid field count", cronSpec: "0 0 0 0", wantErr: true},
+		{name: "invalid field count too many", cronSpec: "0 0 0 0 0 0 0", wantErr: true},
+		{name: "invalid minute range", cronSpec: "60 0 * * *", wantErr: true},
+		{name: "invalid hour range", cronSpec: "0 24 * * *", wantErr: true},
+		{name: "invalid day range", cronSpec: "0 0 0 * *", wantErr: true},
+		{name: "invalid month range", cronSpec: "0 0 * 13 *", wantErr: true},
+		{name: "invalid day of week range", cronSpec: "0 0 * * 7", wantErr: true},
+		{name: "invalid step format", cronSpec: "0 0 */a * *", wantErr: true},
+		{name: "invalid range format", cronSpec: "0 0 1-a * *", wantErr: true},
+		{name: "invalid list format", cronSpec: "0 0 1,a * *", wantErr: true},
+		{name: "empty expression", cronSpec: "", wantErr: true},
+		{name: "invalid predefined", cronSpec: "@invalid", wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -204,7 +204,7 @@ func equalIntSlices(a, b []int) bool {
 // Benchmarks
 func BenchmarkParseCronSpec(b *testing.B) {
 	scheduler := &queue.TaskScheduler{}
-	cronSpec := "*/5 9-17 * * 1-5"
+	const cronSpec = "*/5 9-17 * * 1-5"
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
