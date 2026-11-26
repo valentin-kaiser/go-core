@@ -2,8 +2,10 @@
 package ptr
 
 // Point returns a pointer to the given value.
+//
+//go:fix inline
 func Point[T any](v T) *T {
-	return &v
+	return new(v)
 }
 
 // Deref returns the value pointed to by p.
