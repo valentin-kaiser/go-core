@@ -91,15 +91,59 @@ import (
 	"github.com/valentin-kaiser/go-core/logging"
 )
 
+const (
+	unknownValue      = "unknown"
+	develVersion      = "(devel)"
+	vcsRevisionKey    = "vcs.revision"
+	vcsTimeKey        = "vcs.time"
+	shortCommitLength = 7
+
+	versionPrefix       = "v"
+	preReleaseSeparator = "-"
+	segmentSeparator    = "."
+	splitPartsCount     = 2
+	patchSegmentIndex   = 2
+
+	calverShortYearDigits = 2
+	calverLongYearDigits  = 4
+	maxShortYear          = 99
+	maxMonth              = 12
+	maxDay                = 31
+	maxWeek               = 53
+
+	// Match counts include the full match at index 0 followed by the capture groups.
+	twoPartMatchCount   = 3
+	threePartMatchCount = 4
+	fourPartMatchCount  = 5
+	microIndex          = 3
+
+	formatNameSemVer              = "semantic"
+	formatNameCalVerYYYYMMDD      = "calver-yyyy.mm.dd"
+	formatNameCalVerYYMMMICRO     = "calver-yy.mm.micro"
+	formatNameCalVerYYYYWW        = "calver-yyyy.ww"
+	formatNameCalVerYYYYMMDDMICRO = "calver-yyyy.mm.dd.micro"
+
+	componentFormat   = "format"
+	componentOriginal = "original"
+	componentMajor    = "major"
+	componentMinor    = "minor"
+	componentPatch    = "patch"
+	componentMicro    = "micro"
+	componentYear     = "year"
+	componentMonth    = "month"
+	componentDay      = "day"
+	componentWeek     = "week"
+)
+
 var (
 	// GitTag is the release tag of the application, typically in the format "vX.Y.Z".
 	GitTag = "v0.0.0"
 	// GitCommit is the full commit hash of the application at build time.
-	GitCommit = "unknown"
+	GitCommit = unknownValue
 	// GitShort is the short commit hash of the application at build time.
-	GitShort = "unknown"
+	GitShort = unknownValue
 	// BuildDate is the date and time when the application was built.
-	BuildDate = "unknown"
+	BuildDate = unknownValue
 	// GoVersion is the version of the Go runtime used to build the application.
 	GoVersion = runtime.Version()
 	// Platform is the target platform of the application, formatted as "GOOS/GOARCH".
@@ -129,26 +173,26 @@ func init() {
 		Modules = append(Modules, (&Module{}).fromBuildInfo(mod))
 	}
 
-	if GitCommit != "unknown" || BuildDate != "unknown" {
+	if GitCommit != unknownValue || BuildDate != unknownValue {
 		return
 	}
 
-	if info.Main.Version != "" && info.Main.Version != "(devel)" {
+	if info.Main.Version != "" && info.Main.Version != develVersion {
 		GitTag = info.Main.Version
 	}
 
 	for _, setting := range info.Settings {
 		switch setting.Key {
-		case "vcs.revision":
+		case vcsRevisionKey:
 			if setting.Value != "" {
 				GitCommit = setting.Value
 				GitShort = GitCommit
 
-				if len(GitShort) >= 7 {
-					GitShort = GitShort[:7]
+				if len(GitShort) >= shortCommitLength {
+					GitShort = GitShort[:shortCommitLength]
 				}
 			}
-		case "vcs.time":
+		case vcsTimeKey:
 			BuildDate = setting.Value
 		}
 	}
@@ -176,17 +220,17 @@ const (
 func (f Format) String() string {
 	switch f {
 	case FormatSemVer:
-		return "semantic"
+		return formatNameSemVer
 	case FormatCalVerYYYYMMDD:
-		return "calver-yyyy.mm.dd"
+		return formatNameCalVerYYYYMMDD
 	case FormatCalVerYYMMMICRO:
-		return "calver-yy.mm.micro"
+		return formatNameCalVerYYMMMICRO
 	case FormatCalVerYYYYWW:
-		return "calver-yyyy.ww"
+		return formatNameCalVerYYYYWW
 	case FormatCalVerYYYYMMDDMICRO:
-		return "calver-yyyy.mm.dd.micro"
+		return formatNameCalVerYYYYMMDDMICRO
 	default:
-		return "unknown"
+		return unknownValue
 	}
 }
 
@@ -219,8 +263,8 @@ type ParsedVersion struct {
 
 // String returns the version string without the "v" prefix
 func (pv *ParsedVersion) String() string {
-	version, _, _ := strings.Cut(pv.Original, "-")
-	return strings.TrimPrefix(version, "v")
+	version, _, _ := strings.Cut(pv.Original, preReleaseSeparator)
+	return strings.TrimPrefix(version, versionPrefix)
 }
 
 // Release represents the version information of the application.
@@ -345,7 +389,7 @@ func Minor() int {
 // Patch returns the patch version number from the Git tag if it follows semantic versioning.
 func Patch() int {
 	if IsSemver(GitTag) {
-		return ParseSemver(GitTag, 2)
+		return ParseSemver(GitTag, patchSegmentIndex)
 	}
 
 	// For CalVer formats, try to return day as patch
@@ -367,8 +411,8 @@ func Patch() int {
 
 // String returns the version tag as a string without the "v" prefix.
 func String() string {
-	version, _, _ := strings.Cut(GitTag, "-")
-	return strings.TrimPrefix(version, "v")
+	version, _, _ := strings.Cut(GitTag, preReleaseSeparator)
+	return strings.TrimPrefix(version, versionPrefix)
 }
 
 // IsSemver checks if the provided tag is a valid Git tag in semantic versioning format "vX.Y.Z".
@@ -383,22 +427,21 @@ func ParseSemver(tag string, n int) int {
 		return 0
 	}
 
-	version := strings.TrimPrefix(strings.SplitN(tag, "-", 2)[0], "v")
-	segments := strings.Split(version, ".")
+	version := strings.TrimPrefix(strings.SplitN(tag, preReleaseSeparator, splitPartsCount)[0], versionPrefix)
+	segments := strings.Split(version, segmentSeparator)
 	if n >= len(segments) {
 		logger.Error().Fields(
 			logging.F("index", n),
-			logging.F("error", "index out of range"),
-		).Msg("error parsing version segment")
+			logging.F("reason", "index out of range"),
+		).Msg("parsing version segment failed")
 		return 0
 	}
 
 	v, err := strconv.Atoi(segments[n])
 	if err != nil {
-		logger.Error().Fields(
+		logger.Error().Err(err).Fields(
 			logging.F("index", n),
-			logging.F("error", err),
-		).Msg("error parsing version segment")
+		).Msg("parsing version segment failed")
 		return 0
 	}
 
@@ -408,18 +451,18 @@ func ParseSemver(tag string, n int) int {
 // semverSegment returns segment n of a tag that IsSemver already accepted, without validating
 // it again or splitting the whole tag. Missing or unparsable segments are 0.
 func semverSegment(tag string, n int) int {
-	tag = strings.TrimPrefix(tag, "v")
-	if i := strings.IndexByte(tag, '-'); i >= 0 {
+	tag = strings.TrimPrefix(tag, versionPrefix)
+	if i := strings.IndexByte(tag, preReleaseSeparator[0]); i >= 0 {
 		tag = tag[:i]
 	}
 	for ; n > 0; n-- {
-		i := strings.IndexByte(tag, '.')
+		i := strings.IndexByte(tag, segmentSeparator[0])
 		if i < 0 {
 			return 0
 		}
 		tag = tag[i+1:]
 	}
-	if i := strings.IndexByte(tag, '.'); i >= 0 {
+	if i := strings.IndexByte(tag, segmentSeparator[0]); i >= 0 {
 		tag = tag[:i]
 	}
 	v, err := strconv.Atoi(tag)
@@ -451,7 +494,7 @@ func ExtractSemanticVersion(tag string) string {
 		return ""
 	}
 
-	return strings.TrimPrefix(strings.SplitN(tag, "-", 2)[0], "v")
+	return strings.TrimPrefix(strings.SplitN(tag, preReleaseSeparator, splitPartsCount)[0], versionPrefix)
 }
 
 // ParseVersion parses a version string and returns a ParsedVersion struct
@@ -500,32 +543,32 @@ func GetVersionComponents(tag string) (map[string]any, error) {
 	}
 
 	components := make(map[string]any)
-	components["format"] = pv.Format.String()
-	components["original"] = pv.Original
+	components[componentFormat] = pv.Format.String()
+	components[componentOriginal] = pv.Original
 
 	if pv.Major > 0 {
-		components["major"] = pv.Major
+		components[componentMajor] = pv.Major
 	}
 	if pv.Minor > 0 {
-		components["minor"] = pv.Minor
+		components[componentMinor] = pv.Minor
 	}
 	if pv.Patch > 0 {
-		components["patch"] = pv.Patch
+		components[componentPatch] = pv.Patch
 	}
 	if pv.Micro > 0 {
-		components["micro"] = pv.Micro
+		components[componentMicro] = pv.Micro
 	}
 	if pv.Year > 0 {
-		components["year"] = pv.Year
+		components[componentYear] = pv.Year
 	}
 	if pv.Month > 0 {
-		components["month"] = pv.Month
+		components[componentMonth] = pv.Month
 	}
 	if pv.Day > 0 {
-		components["day"] = pv.Day
+		components[componentDay] = pv.Day
 	}
 	if pv.Week > 0 {
-		components["week"] = pv.Week
+		components[componentWeek] = pv.Week
 	}
 
 	return components, nil
@@ -534,12 +577,12 @@ func GetVersionComponents(tag string) (map[string]any, error) {
 // calverCandidate reports whether the tag starts, after an optional "v", with a number of
 // two or four digits followed by a dot, which every CalVer pattern requires.
 func calverCandidate(tag string) bool {
-	tag = strings.TrimPrefix(tag, "v")
+	tag = strings.TrimPrefix(tag, versionPrefix)
 	digits := 0
 	for digits < len(tag) && tag[digits] >= '0' && tag[digits] <= '9' {
 		digits++
 	}
-	return (digits == 2 || digits == 4) && digits < len(tag) && tag[digits] == '.'
+	return (digits == calverShortYearDigits || digits == calverLongYearDigits) && digits < len(tag) && tag[digits] == segmentSeparator[0]
 }
 
 // DetectFormat automatically detects the version format from a tag string
@@ -590,17 +633,17 @@ func IsCalVerYYYYMMDD(tag string) bool {
 		return false
 	}
 	matches := calverYYYYMMDD.FindStringSubmatch(tag)
-	if len(matches) < 4 {
+	if len(matches) < threePartMatchCount {
 		return false
 	}
 
-	nums, err := parseNumbers(matches[1:4]...)
+	nums, err := parseNumbers(matches[1:threePartMatchCount]...)
 	if err != nil {
 		return false
 	}
 	year, month, day := nums[0], nums[1], nums[2]
 
-	return year > 0 && month >= 1 && month <= 12 && day >= 1 && day <= 31
+	return year > 0 && month >= 1 && month <= maxMonth && day >= 1 && day <= maxDay
 }
 
 // IsCalVerYYMMMICRO checks if the tag is in YY.MM.MICRO CalVer format
@@ -609,18 +652,18 @@ func IsCalVerYYMMMICRO(tag string) bool {
 		return false
 	}
 	matches := calverYYMMMICRO.FindStringSubmatch(tag)
-	if len(matches) < 4 {
+	if len(matches) < threePartMatchCount {
 		return false
 	}
 
-	nums, err := parseNumbers(matches[1:4]...)
+	nums, err := parseNumbers(matches[1:threePartMatchCount]...)
 	if err != nil {
 		return false
 	}
 	year, month, micro := nums[0], nums[1], nums[2]
 
 	// Validate ranges - YY format with month and micro
-	return year >= 0 && year <= 99 && month >= 1 && month <= 12 && micro >= 0
+	return year >= 0 && year <= maxShortYear && month >= 1 && month <= maxMonth && micro >= 0
 }
 
 // IsCalVerYYYYWW checks if the tag is in YYYY.WW CalVer format
@@ -629,18 +672,18 @@ func IsCalVerYYYYWW(tag string) bool {
 		return false
 	}
 	matches := calverYYYYWW.FindStringSubmatch(tag)
-	if len(matches) < 3 {
+	if len(matches) < twoPartMatchCount {
 		return false
 	}
 
-	nums, err := parseNumbers(matches[1:3]...)
+	nums, err := parseNumbers(matches[1:twoPartMatchCount]...)
 	if err != nil {
 		return false
 	}
 	year, week := nums[0], nums[1]
 
 	// Validate ranges - year and week of year
-	return year > 0 && week >= 1 && week <= 53
+	return year > 0 && week >= 1 && week <= maxWeek
 }
 
 // IsCalVerYYYYMMDDMICRO checks if the tag is in YYYY.MM.DD.MICRO CalVer format
@@ -649,18 +692,18 @@ func IsCalVerYYYYMMDDMICRO(tag string) bool {
 		return false
 	}
 	matches := calverYYYYMMDDMICRO.FindStringSubmatch(tag)
-	if len(matches) < 5 {
+	if len(matches) < fourPartMatchCount {
 		return false
 	}
 
-	nums, err := parseNumbers(matches[1:5]...)
+	nums, err := parseNumbers(matches[1:fourPartMatchCount]...)
 	if err != nil {
 		return false
 	}
-	year, month, day, micro := nums[0], nums[1], nums[2], nums[3]
+	year, month, day, micro := nums[0], nums[1], nums[2], nums[microIndex]
 
 	// Validate date ranges
-	return year > 0 && month >= 1 && month <= 12 && day >= 1 && day <= 31 && micro >= 0
+	return year > 0 && month >= 1 && month <= maxMonth && day >= 1 && day <= maxDay && micro >= 0
 }
 
 // SemVerParser implements VersionParser for semantic versioning
@@ -741,11 +784,11 @@ func (p *CalVerYYYYMMDDParser) Parse(tag string) (*ParsedVersion, error) {
 	}
 
 	matches := calverYYYYMMDD.FindStringSubmatch(tag)
-	if len(matches) < 4 {
+	if len(matches) < threePartMatchCount {
 		return nil, apperror.NewError("parsing YYYY.MM.DD CalVer format failed")
 	}
 
-	nums, err := parseNumbers(matches[1:4]...)
+	nums, err := parseNumbers(matches[1:threePartMatchCount]...)
 	if err != nil {
 		return nil, apperror.NewError("parsing CalVer components failed").AddError(err)
 	}
@@ -817,11 +860,11 @@ func (p *CalVerYYMMMICROParser) Parse(tag string) (*ParsedVersion, error) {
 	}
 
 	matches := calverYYMMMICRO.FindStringSubmatch(tag)
-	if len(matches) < 4 {
+	if len(matches) < threePartMatchCount {
 		return nil, apperror.NewError("parsing YY.MM.MICRO CalVer format failed")
 	}
 
-	nums, err := parseNumbers(matches[1:4]...)
+	nums, err := parseNumbers(matches[1:threePartMatchCount]...)
 	if err != nil {
 		return nil, apperror.NewError("parsing CalVer components failed").AddError(err)
 	}
@@ -893,11 +936,11 @@ func (p *CalVerYYYYWWParser) Parse(tag string) (*ParsedVersion, error) {
 	}
 
 	matches := calverYYYYWW.FindStringSubmatch(tag)
-	if len(matches) < 3 {
+	if len(matches) < twoPartMatchCount {
 		return nil, apperror.NewError("parsing YYYY.WW CalVer format failed")
 	}
 
-	nums, err := parseNumbers(matches[1:3]...)
+	nums, err := parseNumbers(matches[1:twoPartMatchCount]...)
 	if err != nil {
 		return nil, apperror.NewError("parsing CalVer components failed").AddError(err)
 	}
@@ -961,15 +1004,15 @@ func (p *CalVerYYYYMMDDMICROParser) Parse(tag string) (*ParsedVersion, error) {
 	}
 
 	matches := calverYYYYMMDDMICRO.FindStringSubmatch(tag)
-	if len(matches) < 5 {
+	if len(matches) < fourPartMatchCount {
 		return nil, apperror.NewError("parsing YYYY.MM.DD.MICRO CalVer format failed")
 	}
 
-	nums, err := parseNumbers(matches[1:5]...)
+	nums, err := parseNumbers(matches[1:fourPartMatchCount]...)
 	if err != nil {
 		return nil, apperror.NewError("parsing CalVer components failed").AddError(err)
 	}
-	year, month, day, micro := nums[0], nums[1], nums[2], nums[3]
+	year, month, day, micro := nums[0], nums[1], nums[2], nums[microIndex]
 
 	pv := &ParsedVersion{
 		Original: tag,
