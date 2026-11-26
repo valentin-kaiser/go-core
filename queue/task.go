@@ -91,6 +91,8 @@ type TaskScheduler struct {
 	defaultTimeout time.Duration
 	retryDelay     time.Duration
 	cancel         context.CancelFunc
+	// now decides which tasks are due; tests replace it to move time without waiting.
+	now func() time.Time
 }
 
 // NewTaskScheduler creates a new task scheduler with default settings
@@ -107,6 +109,7 @@ func NewTaskScheduler() *TaskScheduler {
 		checkInterval:  defaultCheckInterval,
 		defaultTimeout: defaultTaskTimeout,
 		retryDelay:     defaultRetryDelay,
+		now:            time.Now,
 	}
 }
 
@@ -189,19 +192,19 @@ func (s *TaskScheduler) RegisterCronTaskWithOptions(name, cronSpec string, fn Ta
 		RetryDelay:      retryDelay,
 		Timeout:         timeout,
 		Quiet:           options.Quiet,
-		CreatedAt:       time.Now(),
-		UpdatedAt:       time.Now(),
+		CreatedAt:       s.timeNow(),
+		UpdatedAt:       s.timeNow(),
 		Enabled:         true,
 	}
 
-	nextRun, err := s.calculateNextCronRun(cronSpec, time.Now())
+	nextRun, err := s.calculateNextCronRun(cronSpec, s.timeNow())
 	if err != nil {
 		return apperror.NewError("calculating next run time failed").AddError(err)
 	}
 
 	task.NextRun = nextRun
 	if options.Immediately {
-		task.NextRun = time.Now()
+		task.NextRun = s.timeNow()
 	}
 	s.tasks[name] = task
 
@@ -254,14 +257,14 @@ func (s *TaskScheduler) RegisterIntervalTaskWithOptions(name string, interval ti
 		RetryDelay:      retryDelay,
 		Timeout:         timeout,
 		Quiet:           options.Quiet,
-		CreatedAt:       time.Now(),
-		UpdatedAt:       time.Now(),
+		CreatedAt:       s.timeNow(),
+		UpdatedAt:       s.timeNow(),
 		Enabled:         true,
 	}
 
-	task.NextRun = time.Now().Add(interval)
+	task.NextRun = s.timeNow().Add(interval)
 	if options.Immediately {
-		task.NextRun = time.Now()
+		task.NextRun = s.timeNow()
 	}
 
 	s.tasks[name] = task
@@ -307,7 +310,7 @@ func (s *TaskScheduler) RegisterOrRescheduleCronTaskWithOptions(name, cronSpec s
 
 	existingTask, exists := s.tasks[name]
 	if exists {
-		nextRun, err := s.calculateNextCronRun(cronSpec, time.Now())
+		nextRun, err := s.calculateNextCronRun(cronSpec, s.timeNow())
 		if err != nil {
 			return apperror.NewError("calculating next run time failed").AddError(err)
 		}
@@ -317,7 +320,7 @@ func (s *TaskScheduler) RegisterOrRescheduleCronTaskWithOptions(name, cronSpec s
 		existingTask.Interval = 0
 		existingTask.Function = fn
 		existingTask.NextRun = nextRun
-		existingTask.UpdatedAt = time.Now()
+		existingTask.UpdatedAt = s.timeNow()
 		if options.MaxRetries >= 0 { // Allow explicit 0 to disable retries
 			existingTask.MaxRetries = options.MaxRetries
 		}
@@ -360,19 +363,19 @@ func (s *TaskScheduler) RegisterOrRescheduleCronTaskWithOptions(name, cronSpec s
 		RetryDelay:      retryDelay,
 		Timeout:         timeout,
 		Quiet:           options.Quiet,
-		CreatedAt:       time.Now(),
-		UpdatedAt:       time.Now(),
+		CreatedAt:       s.timeNow(),
+		UpdatedAt:       s.timeNow(),
 		Enabled:         true,
 	}
 
-	nextRun, err := s.calculateNextCronRun(cronSpec, time.Now())
+	nextRun, err := s.calculateNextCronRun(cronSpec, s.timeNow())
 	if err != nil {
 		return apperror.NewError("calculating next run time failed").AddError(err)
 	}
 
 	task.NextRun = nextRun
 	if options.Immediately {
-		task.NextRun = time.Now()
+		task.NextRun = s.timeNow()
 	}
 	s.tasks[name] = task
 
@@ -407,8 +410,8 @@ func (s *TaskScheduler) RegisterOrRescheduleIntervalTaskWithOptions(name string,
 		existingTask.CronSpec = ""
 		existingTask.Interval = interval
 		existingTask.Function = fn
-		existingTask.NextRun = time.Now().Add(interval)
-		existingTask.UpdatedAt = time.Now()
+		existingTask.NextRun = s.timeNow().Add(interval)
+		existingTask.UpdatedAt = s.timeNow()
 		if options.MaxRetries >= 0 { // Allow explicit 0 to disable retries
 			existingTask.MaxRetries = options.MaxRetries
 		}
@@ -451,14 +454,14 @@ func (s *TaskScheduler) RegisterOrRescheduleIntervalTaskWithOptions(name string,
 		RetryDelay:      retryDelay,
 		Timeout:         timeout,
 		Quiet:           options.Quiet,
-		CreatedAt:       time.Now(),
-		UpdatedAt:       time.Now(),
+		CreatedAt:       s.timeNow(),
+		UpdatedAt:       s.timeNow(),
 		Enabled:         true,
 	}
 
-	task.NextRun = time.Now().Add(interval)
+	task.NextRun = s.timeNow().Add(interval)
 	if options.Immediately {
-		task.NextRun = time.Now()
+		task.NextRun = s.timeNow()
 	}
 
 	s.tasks[name] = task
@@ -596,7 +599,7 @@ func (s *TaskScheduler) EnableTask(name string) error {
 	}
 
 	task.Enabled = true
-	task.UpdatedAt = time.Now()
+	task.UpdatedAt = s.timeNow()
 
 	logger.Debug().
 		Field("task_name", name).
@@ -616,7 +619,7 @@ func (s *TaskScheduler) DisableTask(name string) error {
 	}
 
 	task.Enabled = false
-	task.UpdatedAt = time.Now()
+	task.UpdatedAt = s.timeNow()
 
 	logger.Debug().
 		Field("task_name", name).
@@ -670,7 +673,7 @@ func (s *TaskScheduler) RescheduleTaskWithCron(name, cronSpec string) error {
 		return apperror.NewErrorf("task '%s' not found", name)
 	}
 
-	nextRun, err := s.calculateNextCronRun(cronSpec, time.Now())
+	nextRun, err := s.calculateNextCronRun(cronSpec, s.timeNow())
 	if err != nil {
 		return apperror.NewError("calculating next run time failed").AddError(err)
 	}
@@ -679,7 +682,7 @@ func (s *TaskScheduler) RescheduleTaskWithCron(name, cronSpec string) error {
 	task.CronSpec = cronSpec
 	task.Interval = 0
 	task.NextRun = nextRun
-	task.UpdatedAt = time.Now()
+	task.UpdatedAt = s.timeNow()
 
 	logger.Trace().
 		Field("task_name", name).
@@ -710,8 +713,8 @@ func (s *TaskScheduler) RescheduleTaskWithInterval(name string, interval time.Du
 	task.Type = TaskTypeInterval
 	task.CronSpec = ""
 	task.Interval = interval
-	task.NextRun = time.Now().Add(interval)
-	task.UpdatedAt = time.Now()
+	task.NextRun = s.timeNow().Add(interval)
+	task.UpdatedAt = s.timeNow()
 
 	logger.Trace().
 		Field("task_name", name).
@@ -750,7 +753,7 @@ func (s *TaskScheduler) schedulerLoop(ctx context.Context) {
 func (s *TaskScheduler) checkAndRunTasks(ctx context.Context) {
 	s.tasksMutex.RLock()
 	var tasksToRun []*Task
-	now := time.Now()
+	now := s.timeNow()
 
 	for _, task := range s.tasks {
 		task.mutex.RLock()
@@ -790,13 +793,13 @@ func (s *TaskScheduler) runTask(ctx context.Context, task *Task) {
 	if !task.AllowConcurrent {
 		task.mutex.Lock()
 		task.IsRunning = true
-		task.UpdatedAt = time.Now()
+		task.UpdatedAt = s.timeNow()
 		task.mutex.Unlock()
 	}
 
 	if task.AllowConcurrent {
 		task.mutex.Lock()
-		task.UpdatedAt = time.Now()
+		task.UpdatedAt = s.timeNow()
 		task.mutex.Unlock()
 	}
 
@@ -841,11 +844,11 @@ func (s *TaskScheduler) recordTaskSuccess(task *Task) {
 	if !task.AllowConcurrent {
 		task.IsRunning = false
 	}
-	task.LastRun = time.Now()
+	task.LastRun = s.timeNow()
 	task.RunCount++
 	task.ConsecutiveFailures = 0
 	task.LastError = ""
-	task.UpdatedAt = time.Now()
+	task.UpdatedAt = s.timeNow()
 
 	var nextRunTime time.Time
 	var runCount int64
@@ -886,10 +889,10 @@ func (s *TaskScheduler) recordTaskFailure(task *Task, lastError error) {
 		task.IsRunning = false
 	}
 	task.ErrorCount++
-	task.LastRun = time.Now()
+	task.LastRun = s.timeNow()
 	task.ConsecutiveFailures++
 	task.LastError = lastError.Error()
-	task.UpdatedAt = time.Now()
+	task.UpdatedAt = s.timeNow()
 
 	errorCount := task.ErrorCount
 	consecutiveFailures := task.ConsecutiveFailures
@@ -930,13 +933,13 @@ func (s *TaskScheduler) updateNextRun(task *Task) error {
 
 	switch task.Type {
 	case TaskTypeCron:
-		nextRun, err := s.calculateNextCronRun(task.CronSpec, time.Now())
+		nextRun, err := s.calculateNextCronRun(task.CronSpec, s.timeNow())
 		if err != nil {
 			return apperror.NewError("calculating next run time failed").AddError(err)
 		}
 		task.NextRun = nextRun
 	case TaskTypeInterval:
-		task.NextRun = time.Now().Add(task.Interval)
+		task.NextRun = s.timeNow().Add(task.Interval)
 	}
 	return nil
 }
@@ -944,4 +947,12 @@ func (s *TaskScheduler) updateNextRun(task *Task) error {
 // generateTaskID generates a unique task ID
 func generateTaskID() string {
 	return uuid.New().String()
+}
+
+// timeNow tolerates a zero-value scheduler, which has no clock set.
+func (s *TaskScheduler) timeNow() time.Time {
+	if s.now == nil {
+		return time.Now()
+	}
+	return s.now()
 }

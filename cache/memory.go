@@ -51,6 +51,8 @@ type MemoryCache struct {
 	native    InMemorySerializer // set when the serializer keeps values without encoding them
 	stopChan  chan struct{}
 	cleanupWg sync.WaitGroup
+	// now decides expiry; tests replace it to move time without waiting.
+	now func() time.Time
 }
 
 // NewMemoryCache creates a new in-memory cache with default configuration.
@@ -88,6 +90,7 @@ func NewMemoryCacheWithConfig(config Config) *MemoryCache {
 		BaseCache: NewBaseCache(config),
 		shards:    make([]*memShard, shards),
 		stopChan:  make(chan struct{}),
+		now:       time.Now,
 	}
 	for i := range mc.shards {
 		mc.shards[i] = newMemShard(i)
@@ -161,7 +164,7 @@ func (mc *MemoryCache) Get(_ context.Context, key string, dest any) (bool, error
 		return false, NewCacheError(opGet, key, apperror.NewError("invalid cache item type"))
 	}
 	item := memItem.item
-	now := time.Now()
+	now := mc.now()
 
 	if !item.ExpiresAt.IsZero() && now.After(item.ExpiresAt) {
 		sh.mutex.RUnlock()
@@ -220,7 +223,7 @@ func (mc *MemoryCache) Set(_ context.Context, key string, value any, ttl time.Du
 		return NewCacheError(opSet, key, err)
 	}
 
-	now := time.Now()
+	now := mc.now()
 
 	item := &Item{
 		Key:       formattedKey,
@@ -320,7 +323,7 @@ func (mc *MemoryCache) Exists(_ context.Context, key string) (bool, error) {
 	}
 	item := memItem.item
 
-	if !item.IsExpired() {
+	if !item.expiredAt(mc.now()) {
 		sh.mutex.RUnlock()
 		return true, nil
 	}
@@ -339,7 +342,7 @@ func (mc *MemoryCache) Exists(_ context.Context, key string) (bool, error) {
 	if !ok {
 		return false, NewCacheError(opExists, key, apperror.NewError("invalid item type"))
 	}
-	if !currentItem.item.IsExpired() {
+	if !currentItem.item.expiredAt(mc.now()) {
 		return true, nil
 	}
 	mc.removeElement(sh, current, formattedKey)
@@ -427,11 +430,11 @@ func (mc *MemoryCache) TTL(_ context.Context, key string) (time.Duration, error)
 		return 0, nil
 	}
 
-	if item.IsExpired() {
+	if item.expiredAt(mc.now()) {
 		return 0, apperror.NewError("key has expired")
 	}
 
-	return time.Until(item.ExpiresAt), nil
+	return item.ExpiresAt.Sub(mc.now()), nil
 }
 
 // SetTTL updates the TTL for an existing key
@@ -455,11 +458,11 @@ func (mc *MemoryCache) SetTTL(_ context.Context, key string, ttl time.Duration) 
 	item.ExpiresAt = time.Time{}
 	item.TTL = 0
 	if ttl > 0 {
-		item.ExpiresAt = time.Now().Add(ttl)
+		item.ExpiresAt = mc.now().Add(ttl)
 		item.TTL = ttl
 	}
 
-	item.UpdatedAt = time.Now()
+	item.UpdatedAt = mc.now()
 	return nil
 }
 
@@ -537,7 +540,7 @@ func (mc *MemoryCache) removeIfExpired(sh *memShard, formattedKey string) {
 	sh.mutex.Lock()
 	defer sh.mutex.Unlock()
 	if element, exists := sh.items[formattedKey]; exists {
-		if memItem, ok := element.Value.(*memoryItem); ok && memItem.item.IsExpired() {
+		if memItem, ok := element.Value.(*memoryItem); ok && memItem.item.expiredAt(mc.now()) {
 			mc.removeElement(sh, element, formattedKey)
 		}
 	}
@@ -628,7 +631,7 @@ func (mc *MemoryCache) cleanupShard(sh *memShard) {
 	sh.mutex.Lock()
 	defer sh.mutex.Unlock()
 
-	now := time.Now()
+	now := mc.now()
 	var expiredKeys []string
 
 	for key, element := range sh.items {

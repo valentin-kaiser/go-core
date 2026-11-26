@@ -184,7 +184,11 @@ type Item struct {
 
 // IsExpired checks if the item has expired
 func (i *Item) IsExpired() bool {
-	return !i.ExpiresAt.IsZero() && time.Now().After(i.ExpiresAt)
+	return i.expiredAt(time.Now())
+}
+
+func (i *Item) expiredAt(now time.Time) bool {
+	return !i.ExpiresAt.IsZero() && now.After(i.ExpiresAt)
 }
 
 // EventType represents cache event types

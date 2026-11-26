@@ -218,6 +218,8 @@ type Scheduler struct {
 	statsMutex       sync.RWMutex
 	scheduleTicker   *time.Ticker
 	progressChan     chan progressUpdate
+	// now decides retry and schedule times; tests replace it to move time without waiting.
+	now func() time.Time
 }
 
 // NewScheduler creates a new queue manager with default settings
@@ -241,6 +243,7 @@ func NewScheduler() *Scheduler {
 		shutdownChan:     make(chan struct{}),
 		stats:            &Stats{},
 		progressChan:     make(chan progressUpdate, progressChanSize),
+		now:              time.Now,
 	}
 }
 
@@ -495,7 +498,7 @@ func (m *Scheduler) processJob(ctx context.Context, job *Job, workerID int) {
 
 	job.Status = StatusRunning
 	job.Attempts++
-	job.UpdatedAt = time.Now()
+	job.UpdatedAt = m.timeNow()
 	err := m.queue.UpdateJob(ctx, job)
 	if err != nil {
 		logger.Error().Err(err).Field("job_id", job.ID).Msg("updating job status to running failed")
@@ -508,7 +511,7 @@ func (m *Scheduler) processJob(ctx context.Context, job *Job, workerID int) {
 	if !exists {
 		job.Status = StatusFailed
 		job.Error = "no handler registered for job type: " + job.Type
-		job.UpdatedAt = time.Now()
+		job.UpdatedAt = m.timeNow()
 		err = m.queue.UpdateJob(ctx, job)
 		if err != nil {
 			logger.Error().Err(err).Field("job_id", job.ID).Msg("updating job status to failed failed")
@@ -525,9 +528,9 @@ func (m *Scheduler) processJob(ctx context.Context, job *Job, workerID int) {
 	}
 
 	job.Status = StatusCompleted
-	job.CompletedAt = time.Now()
+	job.CompletedAt = m.timeNow()
 	job.Progress = 1.0
-	job.UpdatedAt = time.Now()
+	job.UpdatedAt = m.timeNow()
 	err = m.queue.UpdateJob(ctx, job)
 	if err != nil {
 		logger.Error().Err(err).Field("job_id", job.ID).Msg("updating job status to completed failed")
@@ -555,8 +558,8 @@ func (m *Scheduler) handleJobError(ctx context.Context, job *Job, jobErr error) 
 func (m *Scheduler) retryJob(ctx context.Context, job *Job, retryErr *RetryableError) {
 	job.Status = StatusRetrying
 	job.Error = retryErr.Error()
-	job.RetryAt = time.Now().Add(m.calculateRetryDelay(job.Attempts))
-	job.UpdatedAt = time.Now()
+	job.RetryAt = m.timeNow().Add(m.calculateRetryDelay(job.Attempts))
+	job.UpdatedAt = m.timeNow()
 	err := m.queue.UpdateJob(ctx, job)
 	if err != nil {
 		logger.Error().Err(err).Field("job_id", job.ID).Msg("updating job status to retrying failed")
@@ -584,7 +587,7 @@ func (m *Scheduler) retryJob(ctx context.Context, job *Job, retryErr *RetryableE
 func (m *Scheduler) failJob(ctx context.Context, job *Job, jobErr error) {
 	job.Status = StatusFailed
 	job.Error = jobErr.Error()
-	job.UpdatedAt = time.Now()
+	job.UpdatedAt = m.timeNow()
 	updateErr := m.queue.UpdateJob(ctx, job)
 	if updateErr != nil {
 		logger.Error().Err(updateErr).Field("job_id", job.ID).Msg("updating job status to failed failed")
@@ -635,7 +638,7 @@ func (m *Scheduler) enqueueDueScheduledJobs(ctx context.Context) {
 		return
 	}
 
-	now := time.Now()
+	now := m.timeNow()
 	for _, job := range jobs {
 		if job.ScheduleAt.After(now) {
 			continue
@@ -657,4 +660,12 @@ func (m *Scheduler) progressReporter() {
 			Field("progress", update.progress).
 			Msg("job progress updated")
 	}
+}
+
+// timeNow tolerates a zero-value scheduler, which has no clock set.
+func (m *Scheduler) timeNow() time.Time {
+	if m.now == nil {
+		return time.Now()
+	}
+	return m.now()
 }
