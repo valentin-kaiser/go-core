@@ -68,7 +68,8 @@ func (r *RSACipher) LoadPrivateKey(pemData []byte, passphrase []byte) *RSACipher
 	var privateKey *rsa.PrivateKey
 	var err error
 
-	if block.Type == "ENCRYPTED PRIVATE KEY" {
+	switch block.Type {
+	case "ENCRYPTED PRIVATE KEY":
 		if len(passphrase) == 0 {
 			r.Error = apperror.NewError("encrypted private key requires a passphrase")
 			return r
@@ -92,7 +93,7 @@ func (r *RSACipher) LoadPrivateKey(pemData []byte, passphrase []byte) *RSACipher
 			r.Error = apperror.NewError("decrypted key is not an RSA private key")
 			return r
 		}
-	} else if block.Type == "PRIVATE KEY" {
+	case "PRIVATE KEY":
 		// Unencrypted PKCS#8
 		keyInterface, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 		if err != nil {
@@ -106,7 +107,7 @@ func (r *RSACipher) LoadPrivateKey(pemData []byte, passphrase []byte) *RSACipher
 			r.Error = apperror.NewError("key is not an RSA private key")
 			return r
 		}
-	} else {
+	default:
 		// Try PKCS#1 format
 		privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
 		if err != nil {
@@ -126,7 +127,7 @@ func (r *RSACipher) LoadPrivateKeyFromFile(path string, passphrase []byte) *RSAC
 		return r
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is supplied by the caller by design
 	if err != nil {
 		r.Error = apperror.NewError("failed to read private key file").AddError(err)
 		return r
@@ -173,7 +174,7 @@ func (r *RSACipher) LoadPublicKeyFromFile(path string) *RSACipher {
 		return r
 	}
 
-	data, err := os.ReadFile(path)
+	data, err := os.ReadFile(path) //nolint:gosec // path is supplied by the caller by design
 	if err != nil {
 		r.Error = apperror.NewError("failed to read public key file").AddError(err)
 		return r
@@ -278,7 +279,7 @@ func (r *RSACipher) SavePublicKey(path string) *RSACipher {
 		return r
 	}
 
-	err = os.WriteFile(path, pemData, 0644)
+	err = os.WriteFile(path, pemData, 0644) //nolint:gosec // public keys are meant to be world-readable
 	if err != nil {
 		r.Error = apperror.NewError("failed to write public key file").AddError(err)
 		return r
@@ -423,13 +424,15 @@ var (
 func encryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 	// Generate salt for PBKDF2
 	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
+	_, err := rand.Read(salt)
+	if err != nil {
 		return nil, apperror.Wrap(err)
 	}
 
 	// Generate IV for AES-CBC
 	iv := make([]byte, aes.BlockSize)
-	if _, err := rand.Read(iv); err != nil {
+	_, err = rand.Read(iv)
+	if err != nil {
 		return nil, apperror.Wrap(err)
 	}
 

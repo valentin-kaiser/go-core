@@ -270,11 +270,13 @@ func TestRSACipher_SaveAndLoadFromFile(t *testing.T) {
 	}
 
 	// Verify files exist
-	if _, err := os.Stat(privateKeyPath); os.IsNotExist(err) {
+	_, err := os.Stat(privateKeyPath)
+	if os.IsNotExist(err) {
 		t.Error("private key file was not created")
 	}
 
-	if _, err := os.Stat(publicKeyPath); os.IsNotExist(err) {
+	_, err = os.Stat(publicKeyPath)
+	if os.IsNotExist(err) {
 		t.Error("public key file was not created")
 	}
 

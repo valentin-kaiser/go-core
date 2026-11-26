@@ -48,11 +48,9 @@ func TestAesCipherInvalidKeyStillReportsError(t *testing.T) {
 func TestAesCipherConcurrentUse(t *testing.T) {
 	c := security.NewAesCipher().WithAES256()
 	var wg sync.WaitGroup
-	for g := 0; g < 8; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 200; i++ {
+	for range 8 {
+		wg.Go(func() {
+			for range 200 {
 				var enc, dec bytes.Buffer
 				c.Encrypt("payload", &enc)
 				c.Decrypt(enc.String(), &dec)
@@ -61,7 +59,7 @@ func TestAesCipherConcurrentUse(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }
