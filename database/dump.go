@@ -43,21 +43,20 @@ func forEachStatement(r io.Reader, fn func(stmt string) error) error {
 		if err != nil && !errors.Is(err, io.EOF) {
 			return apperror.NewError("reading statement failed").AddError(err)
 		}
-
 		trimmed := bytes.TrimSpace(line)
-		if len(trimmed) > 0 && !bytes.HasPrefix(trimmed, []byte(commentPrefix)) {
+		isStatementLine := len(trimmed) > 0 && !bytes.HasPrefix(trimmed, []byte(commentPrefix))
+		if isStatementLine {
 			stmt = append(stmt, bytes.TrimSuffix(line, []byte("\n"))...)
 			stmt = append(stmt, '\n')
-			if trimmed[len(trimmed)-1] == ';' {
-				ferr := fn(string(stmt))
-				if ferr != nil {
-					return ferr
-				}
-				stmt = stmt[:0]
+		}
+		if isStatementLine && trimmed[len(trimmed)-1] == ';' {
+			ferr := fn(string(stmt))
+			if ferr != nil {
+				return ferr
 			}
+			stmt = stmt[:0]
 		}
 		long = long[:0]
-
 		if err != nil { // io.EOF
 			return nil
 		}
