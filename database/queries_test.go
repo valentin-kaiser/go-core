@@ -3,18 +3,18 @@ package database_test
 import (
 	"database/sql"
 	"testing"
-	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/database"
 )
+
+const queryRounds = 2
 
 func connectedTyped(t *testing.T) *database.Database[TestQueries] {
 	t.Helper()
 	db := database.New[TestQueries](database.DriverSQLite, "typed")
 	db.RegisterQueriesFunc(func(c database.DBTX) *TestQueries { return NewTestQueries(c) })
-	db.Connect(100*time.Millisecond, ":memory:")
-	t.Cleanup(func() { apperror.Catch(db.Disconnect, "disconnecting database failed") })
+	db.Connect(connectInterval, memoryDSN)
+	cleanupDisconnect(t, db)
 	db.AwaitConnection()
 	return db
 }
@@ -49,11 +49,11 @@ func TestRegisterQueriesFuncQueryAndTransaction(t *testing.T) {
 func TestRegisterQueriesReflective(t *testing.T) {
 	db := database.New[TestQueries](database.DriverSQLite, "reflect")
 	db.RegisterQueries(NewTestQueries)
-	t.Cleanup(func() { apperror.Catch(db.Disconnect, "disconnecting database failed") })
-	db.Connect(100*time.Millisecond, ":memory:")
+	cleanupDisconnect(t, db)
+	db.Connect(connectInterval, memoryDSN)
 	db.AwaitConnection()
 
-	for i := range 2 {
+	for i := range queryRounds {
 		var got *TestQueries
 		err := db.Query(func(q *TestQueries) error {
 			got = q

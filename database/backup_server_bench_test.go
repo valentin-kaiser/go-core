@@ -1,3 +1,5 @@
+//go:build integration
+
 package database_test
 
 import (
@@ -13,13 +15,16 @@ import (
 	"github.com/valentin-kaiser/go-core/database"
 )
 
-const dumpBenchRows = 20000
+const (
+	dumpBenchRows  = 20000
+	dropBenchTable = "DROP TABLE IF EXISTS dump_bench"
+)
 
 // fillDumpTable creates a table of 20000 rows with text, a binary value and a timestamp
 func fillDumpTable(b *testing.B, db *database.Database[TestQueries], create string, placeholder func(int) string) {
 	b.Helper()
 	err := db.Execute(func(c *sql.DB) error {
-		for _, s := range []string{"DROP TABLE IF EXISTS dump_bench", create} {
+		for _, s := range []string{dropBenchTable, create} {
 			_, err := c.Exec(s)
 			if err != nil {
 				return err
@@ -47,9 +52,13 @@ func fillDumpTable(b *testing.B, db *database.Database[TestQueries], create stri
 		b.Fatal(err)
 	}
 	b.Cleanup(func() {
-		apperror.Catch(func() error {
-			return db.Execute(func(c *sql.DB) error { _, err := c.Exec("DROP TABLE IF EXISTS dump_bench"); return err })
-		}, "dropping benchmark table failed")
+		err := db.Execute(func(c *sql.DB) error {
+			_, err := c.Exec(dropBenchTable)
+			return err
+		})
+		if err != nil {
+			b.Errorf("dropping benchmark table failed: %v", err)
+		}
 	})
 }
 
@@ -66,9 +75,10 @@ func benchBackupRestore(b *testing.B, db *database.Database[TestQueries], schema
 			}
 		}
 		info, err := os.Stat(path)
-		if err == nil {
-			b.SetBytes(info.Size())
+		if err != nil {
+			b.Fatalf("reading size of %s failed: %v", path, err)
 		}
+		b.SetBytes(info.Size())
 	})
 
 	b.Run("Restore", func(b *testing.B) {
@@ -80,9 +90,10 @@ func benchBackupRestore(b *testing.B, db *database.Database[TestQueries], schema
 			}
 		}
 		info, err := os.Stat(path)
-		if err == nil {
-			b.SetBytes(info.Size())
+		if err != nil {
+			b.Fatalf("reading size of %s failed: %v", path, err)
 		}
+		b.SetBytes(info.Size())
 	})
 }
 

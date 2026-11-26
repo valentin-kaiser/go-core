@@ -6,7 +6,6 @@ import (
 	"database/sql/driver"
 	"errors"
 	"testing"
-	"time"
 
 	"github.com/valentin-kaiser/go-core/database"
 	"github.com/valentin-kaiser/go-core/logging"
@@ -209,7 +208,7 @@ func TestLoggingMiddleware_WithDriverErrSkip(_ *testing.T) {
 // TestMiddleware_Integration tests middleware integration with SQLite database
 func TestMiddleware_Integration(t *testing.T) {
 	// Create a test database with middleware
-	db := database.New[any](database.DriverSQLite, "test")
+	db := database.New[any](database.DriverSQLite, testDatabaseName)
 
 	// Create mock middleware
 	mock := &mockMiddleware{}
@@ -221,13 +220,13 @@ func TestMiddleware_Integration(t *testing.T) {
 	db.RegisterMiddleware(loggingMw)
 
 	// Connect to in-memory SQLite database
-	dsn := ":memory:"
+	dsn := memoryDSN
 
-	db.Connect(100*time.Millisecond, dsn)
-	defer disconnect(t, db)
+	db.Connect(connectInterval, dsn)
+	cleanupDisconnect(t, db)
 
 	// Wait for connection
-	time.Sleep(200 * time.Millisecond)
+	awaitConnected(t, db)
 
 	if !db.Connected() {
 		t.Fatal("Database should be connected")
@@ -252,7 +251,7 @@ func TestMiddleware_Integration(t *testing.T) {
 
 // TestMiddleware_Chaining tests that multiple middlewares work together
 func TestMiddleware_Chaining(t *testing.T) {
-	db := database.New[any](database.DriverSQLite, "test")
+	db := database.New[any](database.DriverSQLite, testDatabaseName)
 
 	mock1 := &mockMiddleware{}
 	mock2 := &mockMiddleware{}
@@ -260,12 +259,12 @@ func TestMiddleware_Chaining(t *testing.T) {
 	db.RegisterMiddleware(mock1)
 	db.RegisterMiddleware(mock2)
 
-	dsn := ":memory:"
+	dsn := memoryDSN
 
-	db.Connect(100*time.Millisecond, dsn)
-	defer disconnect(t, db)
+	db.Connect(connectInterval, dsn)
+	cleanupDisconnect(t, db)
 
-	time.Sleep(200 * time.Millisecond)
+	awaitConnected(t, db)
 
 	if !db.Connected() {
 		t.Fatal("Database should be connected")
@@ -282,7 +281,7 @@ func TestMiddleware_Chaining(t *testing.T) {
 
 // TestMiddleware_NilMiddleware tests that nil middleware is handled gracefully
 func TestMiddleware_NilMiddleware(t *testing.T) {
-	db := database.New[any](database.DriverSQLite, "test")
+	db := database.New[any](database.DriverSQLite, testDatabaseName)
 
 	// Register nil middleware - should not panic
 	result := db.RegisterMiddleware(nil)
@@ -290,12 +289,12 @@ func TestMiddleware_NilMiddleware(t *testing.T) {
 		t.Error("RegisterMiddleware should return the same database instance")
 	}
 
-	dsn := ":memory:"
+	dsn := memoryDSN
 
-	db.Connect(100*time.Millisecond, dsn)
-	defer disconnect(t, db)
+	db.Connect(connectInterval, dsn)
+	cleanupDisconnect(t, db)
 
-	time.Sleep(200 * time.Millisecond)
+	awaitConnected(t, db)
 
 	if !db.Connected() {
 		t.Fatal("Database should be connected")
@@ -383,11 +382,11 @@ func TestMiddleware_DriverReuse(t *testing.T) {
 	loggingMW := database.NewLoggingMiddleware(logger)
 	db1.RegisterMiddleware(loggingMW)
 
-	dsn := ":memory:"
+	dsn := memoryDSN
 
 	// First connection - count drivers before and after
 	driversBeforeFirst := sql.Drivers()
-	db1.Connect(100*time.Millisecond, dsn)
+	db1.Connect(connectInterval, dsn)
 	db1.AwaitConnection()
 	driversAfterFirst := sql.Drivers()
 
@@ -403,7 +402,7 @@ func TestMiddleware_DriverReuse(t *testing.T) {
 		t.Fatalf("failed to disconnect: %v", err)
 	}
 
-	db1.Connect(100*time.Millisecond, dsn)
+	db1.Connect(connectInterval, dsn)
 	db1.AwaitConnection()
 	driversAfterReconnect := sql.Drivers()
 
@@ -417,7 +416,7 @@ func TestMiddleware_DriverReuse(t *testing.T) {
 	db2.RegisterQueries(NewTestQueries)
 	db2.RegisterMiddleware(loggingMW) // Use the same instance
 
-	db2.Connect(100*time.Millisecond, dsn)
+	db2.Connect(connectInterval, dsn)
 	db2.AwaitConnection()
 	driversAfterSecondDB := sql.Drivers()
 
@@ -441,10 +440,10 @@ func TestMiddleware_DifferentInstances(t *testing.T) {
 	loggingMW1 := database.NewLoggingMiddleware(logger)
 	db1.RegisterMiddleware(loggingMW1)
 
-	dsn := ":memory:"
+	dsn := memoryDSN
 
 	driversBeforeFirst := sql.Drivers()
-	db1.Connect(100*time.Millisecond, dsn)
+	db1.Connect(connectInterval, dsn)
 	db1.AwaitConnection()
 	driversAfterFirst := sql.Drivers()
 
@@ -454,7 +453,7 @@ func TestMiddleware_DifferentInstances(t *testing.T) {
 	loggingMW2 := database.NewLoggingMiddleware(logger) // Different instance
 	db2.RegisterMiddleware(loggingMW2)
 
-	db2.Connect(100*time.Millisecond, dsn)
+	db2.Connect(connectInterval, dsn)
 	db2.AwaitConnection()
 	driversAfterSecond := sql.Drivers()
 

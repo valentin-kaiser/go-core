@@ -12,6 +12,14 @@ import (
 	"time"
 )
 
+const (
+	benchDumpRows      = 20000
+	longLineBytes      = 300000
+	longStatementRows  = 5000
+	copyPayloadRepeats = 100000
+	dumpFileMode       = 0o600
+)
+
 // oldStatements is the algorithm Restore used before: split the whole dump and append line by line.
 func oldStatements(sqlContent string) []string {
 	statements := []string{}
@@ -73,7 +81,7 @@ func TestForEachStatementMatchesOldSplitting(t *testing.T) {
 		"comment after code": "SELECT 1;\n-- done\n",
 		"empty":              "",
 		"only comments":      "-- a\n-- b\n",
-		"long statement":     "INSERT INTO a VALUES\n" + strings.Repeat("(1,'x'),\n", 5000) + "(2,'y');\n",
+		"long statement":     "INSERT INTO a VALUES\n" + strings.Repeat("(1,'x'),\n", longStatementRows) + "(2,'y');\n",
 	}
 	for name, dump := range dumps {
 		t.Run(name, func(t *testing.T) {
@@ -89,13 +97,13 @@ func TestCopyFile(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.db")
 	dst := filepath.Join(dir, "dst.db")
-	payload := []byte(strings.Repeat("0123456789", 100000))
-	err := os.WriteFile(src, payload, 0o600)
+	payload := []byte(strings.Repeat("0123456789", copyPayloadRepeats))
+	err := os.WriteFile(src, payload, dumpFileMode)
 	if err != nil {
 		t.Fatal(err)
 	}
 	// An existing, longer target is truncated
-	err = os.WriteFile(dst, append(payload, payload...), 0o600)
+	err = os.WriteFile(dst, append(payload, payload...), dumpFileMode)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +129,7 @@ func TestCopyFile(t *testing.T) {
 func benchDump() string {
 	var b strings.Builder
 	b.WriteString("-- MySQL dump\nSET NAMES utf8mb4;\n")
-	for range 20000 {
+	for range benchDumpRows {
 		b.WriteString("INSERT INTO `users` VALUES (1,'name','2026-01-01 00:00:00','some text that makes the row longer');\n")
 	}
 	return b.String()
@@ -151,7 +159,7 @@ func BenchmarkForEachStatement(b *testing.B) {
 
 // A line longer than the reader's buffer is read in pieces and must come out whole.
 func TestForEachStatementVeryLongLine(t *testing.T) {
-	long := "INSERT INTO a VALUES ('" + strings.Repeat("x", 300000) + "');\nSELECT 2;\n"
+	long := "INSERT INTO a VALUES ('" + strings.Repeat("x", longLineBytes) + "');\nSELECT 2;\n"
 	want, got := oldStatements(long), newStatements(t, long)
 	if !reflect.DeepEqual(want, got) {
 		t.Fatalf("a long line was read incorrectly: %d statements, lengths %d and %d", len(got), len(want[0]), len(got[0]))
@@ -164,22 +172,22 @@ func TestAppendMySQLValue(t *testing.T) {
 		in   any
 		want string
 	}{
-		{nil, "NULL"},
-		{"plain", "'plain'"},
-		{"it's", `'it\'s'`},
-		{"a\\b", `'a\\b'`},
-		{"line\r\nbreak", `'line\r\nbreak'`},
-		{"ctrl\x1az", `'ctrl\Zz'`},
-		{"café", "'café'"},
-		{[]byte("bytes"), "'bytes'"},
-		{[]byte{0, 1, 255}, "X'0001ff'"},
-		{"nul\x00inside", "X'6e756c00696e73696465'"},
-		{int64(-5), "-5"},
-		{uint64(7), "7"},
-		{1.5, "1.5"},
-		{true, "true"},
-		{when, "'2026-03-04 05:06:07.123456'"},
-		{time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC), "'2026-03-04 05:06:07'"},
+		{in: nil, want: "NULL"},
+		{in: "plain", want: "'plain'"},
+		{in: "it's", want: `'it\'s'`},
+		{in: "a\\b", want: `'a\\b'`},
+		{in: "line\r\nbreak", want: `'line\r\nbreak'`},
+		{in: "ctrl\x1az", want: `'ctrl\Zz'`},
+		{in: "café", want: "'café'"},
+		{in: []byte("bytes"), want: "'bytes'"},
+		{in: []byte{0, 1, 255}, want: "X'0001ff'"},
+		{in: "nul\x00inside", want: "X'6e756c00696e73696465'"},
+		{in: int64(-5), want: "-5"},
+		{in: uint64(7), want: "7"},
+		{in: 1.5, want: "1.5"},
+		{in: true, want: "true"},
+		{in: when, want: "'2026-03-04 05:06:07.123456'"},
+		{in: time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC), want: "'2026-03-04 05:06:07'"},
 	}
 	for _, c := range cases {
 		if got := string(appendMySQLValue(nil, c.in)); got != c.want {
@@ -193,17 +201,17 @@ func TestAppendPostgresValue(t *testing.T) {
 		in   any
 		want string
 	}{
-		{nil, "NULL"},
-		{"plain", "E'plain'"},
-		{"it's", "E'it''s'"},
-		{"a\\b", `E'a\\b'`},
-		{"line\r\nbreak", `E'line\r\nbreak'`},
-		{[]byte{0, 1, 255}, `E'\\x0001ff'`},
-		{"nul\x00inside", `E'\\x6e756c00696e73696465'`},
-		{int64(42), "42"},
-		{2.25, "2.25"},
-		{false, "false"},
-		{time.Date(2026, 3, 4, 5, 6, 7, 500000000, time.FixedZone("x", 3600)), "'2026-03-04 05:06:07.5+01:00'"},
+		{in: nil, want: "NULL"},
+		{in: "plain", want: "E'plain'"},
+		{in: "it's", want: "E'it''s'"},
+		{in: "a\\b", want: `E'a\\b'`},
+		{in: "line\r\nbreak", want: `E'line\r\nbreak'`},
+		{in: []byte{0, 1, 255}, want: `E'\\x0001ff'`},
+		{in: "nul\x00inside", want: `E'\\x6e756c00696e73696465'`},
+		{in: int64(42), want: "42"},
+		{in: 2.25, want: "2.25"},
+		{in: false, want: "false"},
+		{in: time.Date(2026, 3, 4, 5, 6, 7, 500000000, time.FixedZone("x", 3600)), want: "'2026-03-04 05:06:07.5+01:00'"},
 	}
 	for _, c := range cases {
 		if got := string(appendPostgresValue(nil, c.in)); got != c.want {

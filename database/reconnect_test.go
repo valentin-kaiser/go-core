@@ -4,8 +4,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/database"
+	"github.com/valentin-kaiser/go-core/internal/await"
+)
+
+const (
+	reconnectCheckInterval = 20 * time.Millisecond
+	poolReplaceTimeout     = 5 * time.Second
 )
 
 // A reconnect replaces the connection pool. The replaced pool must be closed,
@@ -14,8 +19,8 @@ import (
 func TestReconnectClosesReplacedPool(t *testing.T) {
 	db := database.New[TestQueries](database.DriverSQLite, "reconnect-close")
 	db.RegisterQueries(NewTestQueries)
-	db.Connect(20*time.Millisecond, ":memory:")
-	t.Cleanup(func() { apperror.Catch(db.Disconnect, "disconnecting database failed") })
+	db.Connect(reconnectCheckInterval, memoryDSN)
+	cleanupDisconnect(t, db)
 	db.AwaitConnection()
 
 	old := db.Get()
@@ -24,14 +29,8 @@ func TestReconnectClosesReplacedPool(t *testing.T) {
 		t.Fatalf("ping before reconnect: %v", err)
 	}
 
-	db.Reconnect(":memory:")
-	deadline := time.Now().Add(5 * time.Second)
-	for db.Get() == old {
-		if time.Now().After(deadline) {
-			t.Fatal("pool was not replaced after Reconnect")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	db.Reconnect(memoryDSN)
+	await.Until(t, poolReplaceTimeout, func() bool { return db.Get() != old }, "the pool to be replaced after Reconnect")
 
 	err = old.Ping()
 	if err == nil {
