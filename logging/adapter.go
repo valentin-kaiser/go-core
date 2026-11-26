@@ -74,7 +74,7 @@ type Adapter interface {
 	Fatal() Event
 	Panic() Event
 
-	Printf(format string, v ...interface{})
+	Printf(format string, v ...any)
 
 	// Package-specific logger
 	WithPackage(pkg string) Adapter
@@ -89,11 +89,11 @@ type Adapter interface {
 // Field represents a structured log field
 type Field struct {
 	Key   string
-	Value interface{}
+	Value any
 }
 
 // F is a helper function to create fields
-func F(key string, value interface{}) Field {
+func F(key string, value any) Field {
 	return Field{Key: key, Value: value}
 }
 
@@ -102,7 +102,7 @@ type Event interface {
 	// Add fields to the event
 	Fields(fields ...Field) Event
 
-	Field(key string, value interface{}) Event
+	Field(key string, value any) Event
 
 	// Add an error to the event
 	Err(err error) Event
@@ -111,7 +111,7 @@ type Event interface {
 	Msg(msg string)
 
 	// Log the formatted message
-	Msgf(format string, v ...interface{})
+	Msgf(format string, v ...any)
 }
 
 // IsEnabled reports whether the adapter would write an event of the given level.

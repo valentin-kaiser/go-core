@@ -60,12 +60,12 @@ func Panic() logging.Event {
 }
 
 // Printf logs a formatted message
-func Printf(format string, v ...interface{}) {
+func Printf(format string, v ...any) {
 	global().Printf(format, v...)
 }
 
 // F is a helper function to create fields
-func F(key string, value interface{}) logging.Field {
+func F(key string, value any) logging.Field {
 	return logging.F(key, value)
 }
 

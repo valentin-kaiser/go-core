@@ -29,14 +29,14 @@ func (e *ZerologEvent) Fields(fields ...Field) Event {
 }
 
 // Field adds a single structured field to the event
-func (e *ZerologEvent) Field(key string, value interface{}) Event {
+func (e *ZerologEvent) Field(key string, value any) Event {
 	e.event = addField(e.event, key, value)
 	return e
 }
 
 // addField uses the typed zerolog setters for common types. Interface goes through
 // reflection and a JSON marshal, which is several times slower.
-func addField(ev *zerolog.Event, key string, value interface{}) *zerolog.Event {
+func addField(ev *zerolog.Event, key string, value any) *zerolog.Event {
 	switch v := value.(type) {
 	case string:
 		return ev.Str(key, v)
@@ -83,7 +83,7 @@ func (e *ZerologEvent) Msg(msg string) {
 }
 
 // Msgf logs the formatted message
-func (e *ZerologEvent) Msgf(format string, v ...interface{}) {
+func (e *ZerologEvent) Msgf(format string, v ...any) {
 	e.event.Msgf(format, v...)
 }
 
@@ -166,8 +166,8 @@ func (z *ZerologAdapter) WithFileRotation(name string, size, age, backups int, c
 }
 
 // WithStream adds a stream writer to the logger with the specified max buffer size
-func (z *ZerologAdapter) WithStream(max int) *ZerologAdapter {
-	stream := NewStreamWriter(max)
+func (z *ZerologAdapter) WithStream(maxSize int) *ZerologAdapter {
+	stream := NewStreamWriter(maxSize)
 	z.config.Lock()
 	z.stream = stream
 	z.config.Unlock()
@@ -230,7 +230,7 @@ func (z *ZerologAdapter) Rotate() error {
 	return nil
 }
 
-// GetPath returns the log file path if logging to a file
+// Path returns the log file path if logging to a file
 func (z *ZerologAdapter) Path() string {
 	if file := z.fileLogger(); file != nil {
 		return file.Filename
@@ -238,6 +238,7 @@ func (z *ZerologAdapter) Path() string {
 	return ""
 }
 
+// Stream returns the attached stream writer, or nil if none was configured.
 func (z *ZerologAdapter) Stream() *StreamWriter {
 	z.config.Lock()
 	defer z.config.Unlock()
@@ -266,41 +267,41 @@ func (z *ZerologAdapter) GetLevel() Level {
 
 // Trace returns a trace level event
 func (z *ZerologAdapter) Trace() Event {
-	return z.event(z.state.Load().logger.Trace())
+	return z.event(z.state.Load().logger.Trace()) //nolint:zerologlint // returns the event to the caller
 }
 
 // Debug returns a debug level event
 func (z *ZerologAdapter) Debug() Event {
-	return z.event(z.state.Load().logger.Debug())
+	return z.event(z.state.Load().logger.Debug()) //nolint:zerologlint // returns the event to the caller
 }
 
 // Info returns an info level event
 func (z *ZerologAdapter) Info() Event {
-	return z.event(z.state.Load().logger.Info())
+	return z.event(z.state.Load().logger.Info()) //nolint:zerologlint // returns the event to the caller
 }
 
 // Warn returns a warning level event
 func (z *ZerologAdapter) Warn() Event {
-	return z.event(z.state.Load().logger.Warn())
+	return z.event(z.state.Load().logger.Warn()) //nolint:zerologlint // returns the event to the caller
 }
 
 // Error returns an error level event
 func (z *ZerologAdapter) Error() Event {
-	return z.event(z.state.Load().logger.Error())
+	return z.event(z.state.Load().logger.Error()) //nolint:zerologlint // returns the event to the caller
 }
 
 // Fatal returns a fatal level event
 func (z *ZerologAdapter) Fatal() Event {
-	return z.event(z.state.Load().logger.Fatal())
+	return z.event(z.state.Load().logger.Fatal()) //nolint:zerologlint // returns the event to the caller
 }
 
 // Panic returns a panic level event
 func (z *ZerologAdapter) Panic() Event {
-	return z.event(z.state.Load().logger.Panic())
+	return z.event(z.state.Load().logger.Panic()) //nolint:zerologlint // returns the event to the caller
 }
 
 // Printf logs a formatted message using the underlying zerolog logger.
-func (z *ZerologAdapter) Printf(format string, v ...interface{}) {
+func (z *ZerologAdapter) Printf(format string, v ...any) {
 	z.state.Load().logger.Printf(format, v...)
 }
 
@@ -322,6 +323,7 @@ func (z *ZerologAdapter) Enabled() bool {
 	return z.state.Load().level != DisabledLevel
 }
 
+// Logger returns a standard library logger that writes through this adapter.
 func (z *ZerologAdapter) Logger() *l.Logger {
 	return l.New(z.state.Load().logger, "", 0)
 }

@@ -47,7 +47,7 @@ func (e *StandardEvent) Fields(fields ...Field) Event {
 }
 
 // Field adds a single field to the event
-func (e *StandardEvent) Field(key string, value interface{}) Event {
+func (e *StandardEvent) Field(key string, value any) Event {
 	e.fields = append(e.fields, Field{Key: key, Value: value})
 	return e
 }
@@ -77,7 +77,7 @@ func (e *StandardEvent) Msg(msg string) {
 }
 
 // Msgf logs the formatted message with all accumulated fields
-func (e *StandardEvent) Msgf(format string, v ...interface{}) {
+func (e *StandardEvent) Msgf(format string, v ...any) {
 	if !e.shouldLog() {
 		return
 	}
@@ -158,7 +158,7 @@ func upperLevelName(l Level) string {
 
 // writeValue writes the value like fmt.Sprintf("%v") would, without going through fmt for
 // the common types
-func writeValue(b *strings.Builder, v interface{}) {
+func writeValue(b *strings.Builder, v any) {
 	var scratch [32]byte
 	switch x := v.(type) {
 	case string:
@@ -242,7 +242,7 @@ func (s *StandardAdapter) Panic() Event {
 }
 
 // Printf prints a formatted message
-func (s *StandardAdapter) Printf(format string, v ...interface{}) {
+func (s *StandardAdapter) Printf(format string, v ...any) {
 	s.logger.Printf(format, v...)
 }
 
@@ -256,6 +256,7 @@ func (s *StandardAdapter) Enabled() bool {
 	return Level(s.level.Load()) != DisabledLevel
 }
 
+// Logger returns the underlying standard library logger.
 func (s *StandardAdapter) Logger() *log.Logger {
 	return s.logger
 }

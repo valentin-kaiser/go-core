@@ -11,7 +11,7 @@ func (e *NoOpEvent) Fields(_ ...Field) Event {
 }
 
 // Field does nothing and returns itself for chaining
-func (e *NoOpEvent) Field(_ string, _ interface{}) Event {
+func (e *NoOpEvent) Field(_ string, _ any) Event {
 	return e
 }
 
@@ -24,7 +24,7 @@ func (e *NoOpEvent) Err(_ error) Event {
 func (e *NoOpEvent) Msg(_ string) {}
 
 // Msgf does nothing
-func (e *NoOpEvent) Msgf(_ string, _ ...interface{}) {}
+func (e *NoOpEvent) Msgf(_ string, _ ...any) {}
 
 // NoOpAdapter implements LogAdapter but does nothing
 // This is the default implementation for minimal overhead when logging is disabled
@@ -81,7 +81,7 @@ func (n *NoOpAdapter) Panic() Event {
 }
 
 // Printf does nothing
-func (n *NoOpAdapter) Printf(_ string, _ ...interface{}) {}
+func (n *NoOpAdapter) Printf(_ string, _ ...any) {}
 
 // WithPackage returns the same no-op adapter
 func (n *NoOpAdapter) WithPackage(_ string) Adapter {

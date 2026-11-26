@@ -109,7 +109,7 @@ func (d *DynamicAdapter) Panic() Event {
 }
 
 // Printf logs a formatted message using the current active adapter.
-func (d *DynamicAdapter) Printf(format string, v ...interface{}) {
+func (d *DynamicAdapter) Printf(format string, v ...any) {
 	d.current().Printf(format, v...)
 }
 
@@ -190,7 +190,7 @@ func GetPackageLevel(pkg string) Level {
 // ListPackages returns all packages that have specific adapters
 func ListPackages() []string {
 	var p []string
-	packages.Range(func(key, _ interface{}) bool {
+	packages.Range(func(key, _ any) bool {
 		if pkg, ok := key.(string); ok {
 			p = append(p, pkg)
 		}
@@ -211,11 +211,6 @@ func (d *DynamicAdapter) current() Adapter {
 
 	// WithPackage caches the derived adapter per package, so this does not allocate
 	return global.Load().adapter.WithPackage(d.pkg)
-}
-
-// track returns the location of the caller of the adapter method that called it.
-func track() string {
-	return callerInfo(4)
 }
 
 // callerInfo resolves the call site skip frames above itself.

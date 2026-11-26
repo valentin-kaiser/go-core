@@ -1,4 +1,4 @@
-package logging
+package logging_test
 
 import (
 	"bytes"
@@ -6,13 +6,15 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/valentin-kaiser/go-core/logging"
 )
 
 func TestNewSlogLogger_MapsLevelsAndFields(t *testing.T) {
 	var out bytes.Buffer
-	adapter := NewStandardAdapterWithLogger(log.New(&out, "", 0)).SetLevel(DebugLevel)
+	adapter := logging.NewStandardAdapterWithLogger(log.New(&out, "", 0)).SetLevel(logging.DebugLevel)
 
-	logger := NewSlogLogger(adapter)
+	logger := logging.NewSlogLogger(adapter)
 	logger.Info("hello", "user", "alice", "attempt", 2)
 
 	line := out.String()
@@ -32,9 +34,9 @@ func TestNewSlogLogger_MapsLevelsAndFields(t *testing.T) {
 
 func TestNewSlogLogger_RespectsAdapterLevel(t *testing.T) {
 	var out bytes.Buffer
-	adapter := NewStandardAdapterWithLogger(log.New(&out, "", 0)).SetLevel(WarnLevel)
+	adapter := logging.NewStandardAdapterWithLogger(log.New(&out, "", 0)).SetLevel(logging.WarnLevel)
 
-	logger := NewSlogLogger(adapter)
+	logger := logging.NewSlogLogger(adapter)
 	logger.Info("hidden")
 	logger.Warn("visible")
 
@@ -49,9 +51,9 @@ func TestNewSlogLogger_RespectsAdapterLevel(t *testing.T) {
 
 func TestNewSlogLogger_WithAttrsAndGroups(t *testing.T) {
 	var out bytes.Buffer
-	adapter := NewStandardAdapterWithLogger(log.New(&out, "", 0))
+	adapter := logging.NewStandardAdapterWithLogger(log.New(&out, "", 0))
 
-	logger := NewSlogLogger(adapter).With("service", "api").WithGroup("http")
+	logger := logging.NewSlogLogger(adapter).With("service", "api").WithGroup("http")
 	logger.Info("request", slog.String("method", "GET"))
 
 	line := out.String()

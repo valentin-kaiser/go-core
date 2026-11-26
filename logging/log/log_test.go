@@ -13,7 +13,7 @@ import (
 func TestLoggerSingleton(t *testing.T) {
 	logging.SetGlobalAdapter(logging.NewStandardAdapter())
 	// Test basic logging functions exist and can be called
-	t.Run("basic logging functions", func(t *testing.T) {
+	t.Run("basic logging functions", func(_ *testing.T) {
 		// These should not panic
 		log.Trace().Msg("trace message")
 		log.Debug().Msg("debug message")
@@ -22,13 +22,13 @@ func TestLoggerSingleton(t *testing.T) {
 		log.Error().Msg("error message")
 	})
 
-	t.Run("error logging with fluent interface", func(t *testing.T) {
+	t.Run("error logging with fluent interface", func(_ *testing.T) {
 		err := errors.New("test error")
 		// This should work like the requested usage: log.Info().Err(err).Msg("test")
 		log.Info().Err(err).Msg("test")
 	})
 
-	t.Run("field logging", func(t *testing.T) {
+	t.Run("field logging", func(_ *testing.T) {
 		log.Info().Field("key", "value").Msg("message with field")
 		log.Info().Fields(log.F("user", "john"), log.F("action", "login")).Msg("message with fields")
 	})
@@ -45,7 +45,7 @@ func TestLoggerSingleton(t *testing.T) {
 		log.SetLevel(originalLevel)
 	})
 
-	t.Run("printf logging", func(t *testing.T) {
+	t.Run("printf logging", func(_ *testing.T) {
 		log.Printf("formatted message: %s, number: %d", "test", 42)
 	})
 
