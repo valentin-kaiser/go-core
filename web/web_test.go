@@ -26,32 +26,17 @@ func TestServerInstance(t *testing.T) {
 }
 
 func TestServerStartAsync(t *testing.T) {
-	server := web.New()
-	server.WithHost("localhost").WithPort(0, web.ProtocolHTTP)
+	port := freePort(t)
+	server := web.New().WithHost(loopbackHost).WithHTTPPort(port)
 
-	done := make(chan error, 1)
+	done := startServer(t, server, port)
 
-	// Start server asynchronously
-	server.StartAsync(done)
-
-	// Give the server a moment to start
-	time.Sleep(100 * time.Millisecond)
-
-	// Stop the server
 	err := server.Stop()
 	if err != nil {
-		t.Logf("Warning: failed to stop server: %v", err)
+		t.Fatalf("stopping server failed: %v", err)
 	}
 
-	// Wait for completion
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Errorf("StartAsync should not return error: %v", err)
-		}
-	case <-time.After(5 * time.Second):
-		t.Error("StartAsync timed out")
-	}
+	waitDone(t, done, "StartAsync")
 }
 
 func TestServerErrorHandling(t *testing.T) {
@@ -74,11 +59,16 @@ func TestServerErrorHandling(t *testing.T) {
 }
 
 func TestServerMemoryUsage(_ *testing.T) {
+	const (
+		serverCount = 100
+		basePort    = 8080
+	)
+
 	// Test that creating many servers doesn't cause memory leaks
-	for i := range 100 {
+	for i := range serverCount {
 		server := web.New()
 		server.WithHost("localhost").
-			WithPort(8080+uint16(i), web.ProtocolHTTP).
+			WithPort(basePort+uint16(i), web.ProtocolHTTP).
 			WithHandlerFunc(fmt.Sprintf("/test%d", i), func(w http.ResponseWriter, _ *http.Request) {
 				w.WriteHeader(http.StatusOK)
 			})
@@ -131,15 +121,21 @@ func BenchmarkServerWithHandlerFunc(b *testing.B) {
 }
 
 func TestServerConfiguration(t *testing.T) {
+	const (
+		configuredPort = 8080
+		ioTimeout      = 30 * time.Second
+		idleTimeout    = 60 * time.Second
+	)
+
 	server := web.New()
 
 	// Test chainable configuration
 	result := server.
 		WithHost("0.0.0.0").
-		WithPort(8080, web.ProtocolHTTP).
-		WithReadTimeout(30 * time.Second).
-		WithWriteTimeout(30 * time.Second).
-		WithIdleTimeout(60 * time.Second)
+		WithPort(configuredPort, web.ProtocolHTTP).
+		WithReadTimeout(ioTimeout).
+		WithWriteTimeout(ioTimeout).
+		WithIdleTimeout(idleTimeout)
 
 	if result != server {
 		t.Error("Configuration methods should return the same server instance")
@@ -258,6 +254,8 @@ func TestServerWebsocket(t *testing.T) {
 }
 
 func TestServerPortValidation(t *testing.T) {
+	const maxPort = 65535
+
 	server := web.New()
 
 	// Test invalid port should set error
@@ -268,9 +266,9 @@ func TestServerPortValidation(t *testing.T) {
 
 	// Test maximum valid port
 	server = web.New()
-	server.WithPort(65535, web.ProtocolHTTP)
+	server.WithPort(maxPort, web.ProtocolHTTP)
 	if server.Error != nil {
-		t.Errorf("Port 65535 should be valid, got error: %v", server.Error)
+		t.Errorf("Port %d should be valid, got error: %v", maxPort, server.Error)
 	}
 }
 

@@ -39,9 +39,15 @@ func (s *streamingHealthService) Watch(ctx context.Context, _ *grpc_health_v1.He
 	return nil
 }
 
+const (
+	rpcPath             = "/rpc"
+	callTimeout         = 10 * time.Second
+	firstMessageTimeout = 5 * time.Second
+)
+
 func TestServerWithXRPC(t *testing.T) {
 	svc := &streamingHealthService{release: make(chan struct{})}
-	server := New().WithXRPC("/rpc", xrpc.Register(svc))
+	server := New().WithXRPC(rpcPath, xrpc.Register(svc))
 	if server.Error != nil {
 		t.Fatalf("unexpected error registering xRPC service: %v", server.Error)
 	}
@@ -55,7 +61,7 @@ func TestServerWithXRPC(t *testing.T) {
 	defer ts.Close()
 
 	t.Run("json", func(t *testing.T) {
-		resp, err := http.Post(ts.URL+"/rpc", "application/json", strings.NewReader(`{"jsonrpc":"2.0","method":"Health.Check","params":{"1":"x"},"id":1}`))
+		resp, err := http.Post(ts.URL+rpcPath, "application/json", strings.NewReader(`{"jsonrpc":"2.0","method":"Health.Check","params":{"1":"x"},"id":1}`))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -65,7 +71,10 @@ func TestServerWithXRPC(t *testing.T) {
 				t.Errorf("closing response body failed: %v", err)
 			}
 		}()
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("reading response body failed: %v", err)
+		}
 		if want := `{"jsonrpc":"2.0","result":{"1":1},"id":1}`; string(body) != want {
 			t.Errorf("body = %s, want %s", body, want)
 		}
@@ -85,7 +94,7 @@ func TestServerWithXRPC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
 	defer cancel()
 
 	t.Run("grpc unary", func(t *testing.T) {
@@ -113,7 +122,7 @@ func TestServerWithXRPC(t *testing.T) {
 			if m.GetStatus() != grpc_health_v1.HealthCheckResponse_NOT_SERVING {
 				t.Errorf("unexpected first message %v", m)
 			}
-		case <-time.After(5 * time.Second):
+		case <-time.After(firstMessageTimeout):
 			t.Fatal("first message was not delivered before the stream finished")
 		}
 
@@ -130,12 +139,12 @@ func TestServerWithXRPC(t *testing.T) {
 
 func TestServerWithXRPCConflicts(t *testing.T) {
 	svc := xrpc.Register(&streamingHealthService{})
-	server := New().WithXRPC("/rpc", svc).WithXRPC("/other", svc)
+	server := New().WithXRPC(rpcPath, svc).WithXRPC("/other", svc)
 	if server.Error == nil {
 		t.Fatal("expected error for duplicate gRPC paths")
 	}
 
-	if New().WithXRPC("/rpc", nil).Error == nil {
+	if New().WithXRPC(rpcPath, nil).Error == nil {
 		t.Fatal("expected error for nil service")
 	}
 }
