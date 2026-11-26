@@ -251,7 +251,6 @@ func (b *MessageBuilder) Attach(attachment Attachment) *MessageBuilder {
 	if b.Error != nil {
 		return b
 	}
-	// Ensure the attachment has a valid filename and content type
 	if attachment.Filename == "" || attachment.ContentType == "" {
 		b.Error = apperror.NewError("attachment must have a valid filename and content type").AddDetail("filename", attachment.Filename).AddDetail("content_type", attachment.ContentType)
 		return b
@@ -265,7 +264,6 @@ func (b *MessageBuilder) AttachInline(filename, contentType, contentID string, c
 	if b.Error != nil {
 		return b
 	}
-	// Ensure the attachment has a valid filename and content type
 	if strings.TrimSpace(filename) == "" || strings.TrimSpace(contentType) == "" {
 		b.Error = apperror.NewError("inline attachment must have a valid filename and content type").AddDetail("filename", filename).AddDetail("content_type", contentType)
 		return b
