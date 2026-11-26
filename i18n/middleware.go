@@ -56,7 +56,7 @@ func GlobalMiddleware() func(http.Handler) http.Handler {
 // Accept-Language header against the languages loaded in the bundle. If no
 // match is found or the header is absent, [Default] is returned.
 func resolveFromRequest(b *Bundle, r *http.Request) Language {
-	accept := r.Header.Get("Accept-Language")
+	accept := r.Header.Get(acceptLanguageHeader)
 	if accept == "" {
 		return Default
 	}
@@ -84,7 +84,10 @@ func resolveFromRequest(b *Bundle, r *http.Request) Language {
 }
 
 // maxCachedHeaders bounds the Accept-Language values remembered per language set
-const maxCachedHeaders = 256
+const (
+	maxCachedHeaders     = 256
+	acceptLanguageHeader = "Accept-Language"
+)
 
 // resolve parses the header and picks the best supported language, or Default
 func (m *languageMatcher) resolve(b *Bundle, accept string) Language {

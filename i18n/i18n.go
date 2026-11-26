@@ -95,6 +95,11 @@ import (
 	"sync/atomic"
 )
 
+const (
+	keySeparator  = "."
+	jsonExtension = ".json"
+)
+
 // Language represents a BCP 47 language code.
 type Language string
 
@@ -387,7 +392,7 @@ func flattenJSON(prefix string, raw map[string]any, out map[string]string) error
 	for k, v := range raw {
 		key := k
 		if prefix != "" {
-			key = prefix + "." + k
+			key = prefix + keySeparator + k
 		}
 		switch val := v.(type) {
 		case map[string]any:
@@ -425,10 +430,10 @@ func loadDir(b *Bundle, fsys fs.FS, dir string) error {
 			continue
 		}
 		name := entry.Name()
-		if path.Ext(name) != ".json" {
+		if path.Ext(name) != jsonExtension {
 			continue
 		}
-		lang := Language(strings.ToLower(strings.TrimSuffix(name, ".json")))
+		lang := Language(strings.ToLower(strings.TrimSuffix(name, jsonExtension)))
 		data, err := fs.ReadFile(fsys, path.Join(dir, name))
 		if err != nil {
 			errs = append(errs, fmt.Errorf("reading translation file %q failed: %w", name, err))
