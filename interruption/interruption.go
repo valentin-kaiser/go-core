@@ -53,13 +53,24 @@ import (
 	"github.com/valentin-kaiser/go-core/logging"
 )
 
+const (
+	defaultTimestampFormat = "2006-01-02_15-04-05"
+	panicDirName           = "panics"
+	panicFileExtension     = ".log"
+	unknownCaller          = "unknown"
+	// callerSkipFrames skips the frames between the panic and the deferred Catch call.
+	callerSkipFrames             = 3
+	panicDirMode     os.FileMode = 0o750
+	panicFileMode    os.FileMode = 0o600
+)
+
 var (
 	// Format specifies the timestamp format used for naming panic log files.
-	Format = "2006-01-02_15-04-05"
+	Format = defaultTimestampFormat
 	// Write determines whether panic information should be written to files.
 	Write = false
 	// Directory specifies the directory where panic log files are stored.
-	Directory = filepath.Join(flag.Path, "panics")
+	Directory = filepath.Join(flag.Path, panicDirName)
 	logger    = logging.GetPackageLogger("interruption")
 )
 
@@ -77,9 +88,9 @@ var (
 func Catch() {
 	err := recover()
 	if err != nil {
-		caller := "unknown"
+		caller := unknownCaller
 		line := 0
-		_, file, line, ok := runtime.Caller(3)
+		_, file, line, ok := runtime.Caller(callerSkipFrames)
 		if ok {
 			caller = fmt.Sprintf("%s/%s", filepath.Base(filepath.Dir(file)), strings.Trim(filepath.Base(file), filepath.Ext(file)))
 		}
@@ -98,10 +109,10 @@ func Catch() {
 		}
 
 		if flag.Debug {
-			logger.Error().Msgf("%v code: %v => %v \n %v", caller, line, err, string(debug.Stack()))
+			logger.Error().Field("caller", caller).Field("line", line).Field("error", err).Field("stack", string(debug.Stack())).Msg("panic recovered")
 			return
 		}
-		logger.Error().Msgf("%v code: %v => %v", caller, line, err)
+		logger.Error().Field("caller", caller).Field("line", line).Field("error", err).Msg("panic recovered")
 	}
 }
 
@@ -215,11 +226,6 @@ func SetupGracefulShutdown(handlers []func() error, signals ...os.Signal) func()
 	}
 }
 
-const (
-	panicDirMode  os.FileMode = 0o750
-	panicFileMode os.FileMode = 0o600
-)
-
 func write(err any, caller string, line int) {
 	e := os.MkdirAll(Directory, panicDirMode)
 	if e != nil {
@@ -227,7 +233,7 @@ func write(err any, caller string, line int) {
 		return
 	}
 	timestamp := time.Now().Format(Format)
-	name := filepath.Join(Directory, timestamp+".log")
+	name := filepath.Join(Directory, timestamp+panicFileExtension)
 	content := fmt.Sprintf("Caller: %v\nLine: %v\nError: %v\n", caller, line, err)
 	if flag.Debug {
 		content = fmt.Sprintf("Caller: %v\nLine: %v\nError: %v\n\nStack Trace:\n%s\n", caller, line, err, string(debug.Stack()))
