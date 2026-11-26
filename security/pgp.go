@@ -79,25 +79,25 @@ func (p *PGPCipher) EncryptWithPassword(plaintext []byte, out io.Writer) *PGPCip
 
 	enc, err := p.handle.Encryption().Password(p.passphrase).New()
 	if err != nil {
-		p.Error = apperror.NewError("failed to create encryption handle").AddError(err)
+		p.Error = apperror.NewError("creating encryption handle failed").AddError(err)
 		return p
 	}
 
 	message, err := enc.Encrypt(plaintext)
 	if err != nil {
-		p.Error = apperror.NewError("failed to encrypt message").AddError(err)
+		p.Error = apperror.NewError("encrypting message failed").AddError(err)
 		return p
 	}
 
 	armored, err := message.ArmorBytes()
 	if err != nil {
-		p.Error = apperror.NewError("failed to armor message").AddError(err)
+		p.Error = apperror.NewError("armoring message failed").AddError(err)
 		return p
 	}
 
 	_, err = out.Write(armored)
 	if err != nil {
-		p.Error = apperror.NewError("failed to write encrypted message").AddError(err)
+		p.Error = apperror.NewError("writing encrypted message failed").AddError(err)
 		return p
 	}
 
@@ -128,31 +128,31 @@ func (p *PGPCipher) EncryptWithPublicKey(plaintext []byte, out io.Writer) *PGPCi
 
 	pKey, err := crypto.NewKeyFromArmored(p.publicKey)
 	if err != nil {
-		p.Error = apperror.NewError("failed to create public key").AddError(err)
+		p.Error = apperror.NewError("creating public key failed").AddError(err)
 		return p
 	}
 
 	enc, err := p.handle.Encryption().Recipient(pKey).New()
 	if err != nil {
-		p.Error = apperror.NewError("failed to create encryption handle").AddError(err)
+		p.Error = apperror.NewError("creating encryption handle failed").AddError(err)
 		return p
 	}
 
 	message, err := enc.Encrypt(plaintext)
 	if err != nil {
-		p.Error = apperror.NewError("failed to encrypt message").AddError(err)
+		p.Error = apperror.NewError("encrypting message failed").AddError(err)
 		return p
 	}
 
 	armored, err := message.ArmorBytes()
 	if err != nil {
-		p.Error = apperror.NewError("failed to armor message").AddError(err)
+		p.Error = apperror.NewError("armoring message failed").AddError(err)
 		return p
 	}
 
 	_, err = out.Write(armored)
 	if err != nil {
-		p.Error = apperror.NewError("failed to write encrypted message").AddError(err)
+		p.Error = apperror.NewError("writing encrypted message failed").AddError(err)
 		return p
 	}
 
@@ -183,19 +183,19 @@ func (p *PGPCipher) DecryptWithPassword(ciphertext []byte, out io.Writer) *PGPCi
 
 	dec, err := p.handle.Decryption().Password(p.passphrase).New()
 	if err != nil {
-		p.Error = apperror.NewError("failed to create decryption handle").AddError(err)
+		p.Error = apperror.NewError("creating decryption handle failed").AddError(err)
 		return p
 	}
 
 	message, err := dec.Decrypt(ciphertext, crypto.Armor)
 	if err != nil {
-		p.Error = apperror.NewError("failed to decrypt message").AddError(err)
+		p.Error = apperror.NewError("decrypting message failed").AddError(err)
 		return p
 	}
 
 	_, err = out.Write(message.Bytes())
 	if err != nil {
-		p.Error = apperror.NewError("failed to write decrypted message").AddError(err)
+		p.Error = apperror.NewError("writing decrypted message failed").AddError(err)
 		return p
 	}
 
@@ -227,25 +227,25 @@ func (p *PGPCipher) DecryptWithPrivateKey(ciphertext []byte, out io.Writer) *PGP
 
 	pKey, err := crypto.NewPrivateKeyFromArmored(p.privateKey, p.passphrase)
 	if err != nil {
-		p.Error = apperror.NewError("failed to create private key").AddError(err)
+		p.Error = apperror.NewError("creating private key failed").AddError(err)
 		return p
 	}
 
 	dec, err := p.handle.Decryption().DecryptionKey(pKey).New()
 	if err != nil {
-		p.Error = apperror.NewError("failed to create decryption handle").AddError(err)
+		p.Error = apperror.NewError("creating decryption handle failed").AddError(err)
 		return p
 	}
 
 	message, err := dec.Decrypt(ciphertext, crypto.Armor)
 	if err != nil {
-		p.Error = apperror.NewError("failed to decrypt message").AddError(err)
+		p.Error = apperror.NewError("decrypting message failed").AddError(err)
 		return p
 	}
 
 	_, err = out.Write(message.Bytes())
 	if err != nil {
-		p.Error = apperror.NewError("failed to write decrypted message").AddError(err)
+		p.Error = apperror.NewError("writing decrypted message failed").AddError(err)
 		return p
 	}
 
@@ -269,7 +269,7 @@ func (p *PGPCipher) WithPublicKeyFromFile(filePath string) *PGPCipher {
 	if len(filePath) > 0 && p.Error == nil {
 		key, err := os.ReadFile(filepath.Clean(filePath))
 		if err != nil {
-			p.Error = apperror.NewError("failed to read public key file").AddError(err)
+			p.Error = apperror.NewError("reading public key file failed").AddError(err)
 			return p
 		}
 		p.publicKey = string(key)
@@ -288,7 +288,7 @@ func (p *PGPCipher) WithPrivateKeyFromFile(filePath string) *PGPCipher {
 	if len(filePath) > 0 && p.Error == nil {
 		key, err := os.ReadFile(filepath.Clean(filePath))
 		if err != nil {
-			p.Error = apperror.NewError("failed to read private key file").AddError(err)
+			p.Error = apperror.NewError("reading private key file failed").AddError(err)
 			return p
 		}
 		p.privateKey = string(key)
@@ -329,30 +329,30 @@ func (p *PGPCipher) GenerateKeyPair(name, email string) error {
 
 	privateKey, err := keyGen.GenerateKeyWithSecurity(constants.HighSecurity)
 	if err != nil {
-		return apperror.NewError("failed to generate key pair").AddError(err)
+		return apperror.NewError("generating key pair failed").AddError(err)
 	}
 
 	armored, err := privateKey.Armor()
 	if err != nil {
-		return apperror.NewError("failed to armor private key").AddError(err)
+		return apperror.NewError("armoring private key failed").AddError(err)
 	}
 
 	if len(p.passphrase) > 0 {
 		locked, err := p.handle.LockKey(privateKey, p.passphrase)
 		if err != nil {
-			return apperror.NewError("failed to lock private key").AddError(err)
+			return apperror.NewError("locking private key failed").AddError(err)
 		}
 
 		armored, err = locked.Armor()
 		if err != nil {
-			return apperror.NewError("failed to armor private key").AddError(err)
+			return apperror.NewError("armoring private key failed").AddError(err)
 		}
 	}
 	p.privateKey = armored
 
 	armoredPub, err := privateKey.GetArmoredPublicKey()
 	if err != nil {
-		return apperror.NewError("failed to get public key").AddError(err)
+		return apperror.NewError("getting public key failed").AddError(err)
 	}
 	p.publicKey = armoredPub
 

@@ -30,19 +30,19 @@ func NewTLSConfig(cert tls.Certificate, caPool *x509.CertPool, clientAuth tls.Cl
 func LoadCertAndConfig(certFile, keyFile, caFile string, clientAuth tls.ClientAuthType) (*tls.Config, error) {
 	cert, err := LoadCertificate(certFile, keyFile)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("loading certificate failed").AddError(err)
 	}
 
 	err = ValidateCertificate(cert)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("validating certificate failed").AddError(err)
 	}
 
 	var caPool *x509.CertPool
 	if caFile != "" {
 		caPool, err = LoadCACertPool(caFile)
 		if err != nil {
-			return nil, apperror.Wrap(err)
+			return nil, apperror.NewError("loading CA certificate pool failed").AddError(err)
 		}
 	}
 
@@ -53,7 +53,7 @@ func LoadCertAndConfig(certFile, keyFile, caFile string, clientAuth tls.ClientAu
 func LoadCertificate(certFile, keyFile string) (tls.Certificate, error) {
 	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
 	if err != nil {
-		return tls.Certificate{}, apperror.NewError("failed to load certificate").AddError(err)
+		return tls.Certificate{}, apperror.NewError("loading certificate failed").AddError(err)
 	}
 	return cert, nil
 }
@@ -62,12 +62,12 @@ func LoadCertificate(certFile, keyFile string) (tls.Certificate, error) {
 func LoadCACertPool(caFile string) (*x509.CertPool, error) {
 	caCert, err := os.ReadFile(filepath.Clean(caFile))
 	if err != nil {
-		return nil, apperror.NewError("failed to read CA certificate").AddError(err)
+		return nil, apperror.NewError("reading CA certificate failed").AddError(err)
 	}
 
 	pool := x509.NewCertPool()
 	if ok := pool.AppendCertsFromPEM(caCert); !ok {
-		return nil, apperror.NewError("failed to append CA certificate")
+		return nil, apperror.NewError("appending CA certificate failed")
 	}
 	return pool, nil
 }
@@ -80,7 +80,7 @@ func IsCertificateExpired(cert tls.Certificate) (bool, error) {
 	for _, c := range cert.Certificate {
 		x509Cert, err := x509.ParseCertificate(c)
 		if err != nil {
-			return false, apperror.NewError("failed to parse certificate").AddError(err)
+			return false, apperror.NewError("parsing certificate failed").AddError(err)
 		}
 
 		if time.Now().After(x509Cert.NotAfter) {
@@ -98,7 +98,7 @@ func ValidateCertificate(cert tls.Certificate) error {
 	for _, c := range cert.Certificate {
 		x509Cert, err := x509.ParseCertificate(c)
 		if err != nil {
-			return apperror.NewError("failed to parse certificate").AddError(err)
+			return apperror.NewError("parsing certificate failed").AddError(err)
 		}
 
 		now := time.Now()
@@ -130,12 +130,12 @@ func GenerateSelfSignedCertificate(subject pkix.Name) (tls.Certificate, *x509.Ce
 
 	priv, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
-		return tls.Certificate{}, nil, apperror.NewError("failed to generate private key").AddError(err)
+		return tls.Certificate{}, nil, apperror.NewError("generating private key failed").AddError(err)
 	}
 
 	caBytes, err := x509.CreateCertificate(rand.Reader, ca, ca, &priv.PublicKey, priv)
 	if err != nil {
-		return tls.Certificate{}, nil, apperror.NewError("failed to create certificate").AddError(err)
+		return tls.Certificate{}, nil, apperror.NewError("creating certificate failed").AddError(err)
 	}
 
 	caPEM := new(bytes.Buffer)
@@ -144,7 +144,7 @@ func GenerateSelfSignedCertificate(subject pkix.Name) (tls.Certificate, *x509.Ce
 		Bytes: caBytes,
 	})
 	if err != nil {
-		return tls.Certificate{}, nil, apperror.NewError("failed to encode certificate").AddError(err)
+		return tls.Certificate{}, nil, apperror.NewError("encoding certificate failed").AddError(err)
 	}
 
 	keyPEM := new(bytes.Buffer)
@@ -153,17 +153,17 @@ func GenerateSelfSignedCertificate(subject pkix.Name) (tls.Certificate, *x509.Ce
 		Bytes: x509.MarshalPKCS1PrivateKey(priv),
 	})
 	if err != nil {
-		return tls.Certificate{}, nil, apperror.NewError("failed to encode private key").AddError(err)
+		return tls.Certificate{}, nil, apperror.NewError("encoding private key failed").AddError(err)
 	}
 
 	cert, err := tls.X509KeyPair(caPEM.Bytes(), keyPEM.Bytes())
 	if err != nil {
-		return tls.Certificate{}, nil, apperror.NewError("failed to load X509 key pair").AddError(err)
+		return tls.Certificate{}, nil, apperror.NewError("loading X509 key pair failed").AddError(err)
 	}
 
 	caPool := x509.NewCertPool()
 	if ok := caPool.AppendCertsFromPEM(caPEM.Bytes()); !ok {
-		return tls.Certificate{}, nil, apperror.NewError("failed to append CA certificate to pool")
+		return tls.Certificate{}, nil, apperror.NewError("appending CA certificate to pool failed")
 	}
 	return cert, caPool, nil
 }
@@ -172,19 +172,19 @@ func GenerateSelfSignedCertificate(subject pkix.Name) (tls.Certificate, *x509.Ce
 func WriteCertificate(cert tls.Certificate, certPath, keyPath string) error {
 	err := os.MkdirAll(filepath.Dir(certPath), 0700)
 	if err != nil {
-		return apperror.NewError("failed to create certificate directory").AddError(err)
+		return apperror.NewError("creating certificate directory failed").AddError(err)
 	}
 
 	err = os.MkdirAll(filepath.Dir(keyPath), 0700)
 	if err != nil {
-		return apperror.NewError("failed to create key directory").AddError(err)
+		return apperror.NewError("creating key directory failed").AddError(err)
 	}
 
 	certOut, err := os.Create(filepath.Clean(certPath))
 	if err != nil {
-		return apperror.NewError("failed to create certificate file").AddError(err)
+		return apperror.NewError("creating certificate file failed").AddError(err)
 	}
-	defer apperror.Catch(certOut.Close, "failed to close certificate file")
+	defer apperror.Catch(certOut.Close, "closing certificate file failed")
 
 	for _, c := range cert.Certificate {
 		err = pem.Encode(certOut, &pem.Block{
@@ -192,19 +192,19 @@ func WriteCertificate(cert tls.Certificate, certPath, keyPath string) error {
 			Bytes: c,
 		})
 		if err != nil {
-			return apperror.NewError("failed to encode certificate").AddError(err)
+			return apperror.NewError("encoding certificate failed").AddError(err)
 		}
 	}
 
 	keyOut, err := os.OpenFile(filepath.Clean(keyPath), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
-		return apperror.NewError("failed to create key file").AddError(err)
+		return apperror.NewError("creating key file failed").AddError(err)
 	}
-	defer apperror.Catch(keyOut.Close, "failed to close key file")
+	defer apperror.Catch(keyOut.Close, "closing key file failed")
 
 	privBytes, err := x509.MarshalPKCS8PrivateKey(cert.PrivateKey)
 	if err != nil {
-		return apperror.NewError("failed to marshal private key").AddError(err)
+		return apperror.NewError("marshaling private key failed").AddError(err)
 	}
 
 	err = pem.Encode(keyOut, &pem.Block{
@@ -212,7 +212,7 @@ func WriteCertificate(cert tls.Certificate, certPath, keyPath string) error {
 		Bytes: privBytes,
 	})
 	if err != nil {
-		return apperror.NewError("failed to encode private key").AddError(err)
+		return apperror.NewError("encoding private key failed").AddError(err)
 	}
 
 	return nil
