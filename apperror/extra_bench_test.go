@@ -16,8 +16,8 @@ func BenchmarkWhere(b *testing.B) {
 
 func BenchmarkErrorsIsChain8(b *testing.B) {
 	base := errors.New("base")
-	var err error = base
-	for i := 0; i < 8; i++ {
+	err := base
+	for range 8 {
 		err = apperror.Wrap(err)
 	}
 	b.ReportAllocs()
@@ -31,8 +31,8 @@ func BenchmarkErrorsIsChain8(b *testing.B) {
 func BenchmarkChainErrorStringFresh8(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		var err error = errors.New("base")
-		for j := 0; j < 8; j++ {
+		err := errors.New("base")
+		for range 8 {
 			err = apperror.Wrap(err)
 		}
 		_ = err.Error()

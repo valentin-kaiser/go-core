@@ -12,7 +12,7 @@ import (
 
 func wrapChain(depth int, base error) error {
 	err := base
-	for i := 0; i < depth; i++ {
+	for range depth {
 		err = apperror.Wrap(err)
 	}
 	return err
