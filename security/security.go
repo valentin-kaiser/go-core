@@ -38,6 +38,16 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
+// Key and password constants.
+const (
+	// keyHexLength is the length of the hex encoded key returned by StringToKey32.
+	keyHexLength = 32
+	// passwordAlphabet is the character set of generated passwords.
+	passwordAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-#!+/"
+	// secretFileMode is the file mode of files holding secrets such as keys and passphrases.
+	secretFileMode = 0o600
+)
+
 // GetRandomBytes Generates random Bytes using crypto/rand which is significantly
 // slower than math/rand but cryptographically secure. This Should be used whenever
 // cryptographic keys should be generated.
@@ -76,7 +86,7 @@ func StringToKey32Bytes(inp string) []byte {
 // StringToKey32 produces a 32byte slice from the input string using SHA256
 func StringToKey32(inp string) string {
 	hash := sha256.Sum256([]byte(inp))
-	return hex.EncodeToString(hash[:])[:32]
+	return hex.EncodeToString(hash[:])[:keyHexLength]
 }
 
 // GetRandomBytesBase64 Returns the Base64 Encoded Equivalent of calling GetRandomBytes.
@@ -97,7 +107,7 @@ func GenerateRandomPassword(length int) (string, error) {
 		return "", nil
 	}
 
-	var letters = []rune("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-#!+/")
+	var letters = []rune(passwordAlphabet)
 	gen := make([]rune, length)
 
 	for i := range gen {
@@ -119,7 +129,7 @@ func ReadOrSavePassphrase(file string, length int) ([]byte, error) {
 		if err != nil {
 			return nil, apperror.NewError("generating passphrase failed").AddError(err)
 		}
-		err = os.WriteFile(file, []byte(passphrase), 0600)
+		err = os.WriteFile(file, []byte(passphrase), secretFileMode)
 		if err != nil {
 			return nil, apperror.NewErrorf("writing passphrase file %s failed", file).AddError(err)
 		}

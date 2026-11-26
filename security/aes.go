@@ -12,6 +12,13 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
+// AES key sizes in bytes.
+const (
+	aesKey128Bytes = 16
+	aesKey192Bytes = 24
+	aesKey256Bytes = 32
+)
+
 // AesCipher is a struct that provides methods for encrypting and decrypting data using AES.
 // It uses the crypto/aes and crypto/cipher packages from the Go standard library.
 type AesCipher struct {
@@ -55,7 +62,7 @@ func NewAesCipher() *AesCipher {
 // WithAES128 sets the key size to 128 bits (16 bytes).
 func (a *AesCipher) WithAES128() *AesCipher {
 	var err error
-	a.passphrase, err = GetRandomBytes(16)
+	a.passphrase, err = GetRandomBytes(aesKey128Bytes)
 	if err != nil {
 		a.Error = apperror.NewError("generating AES-128 key failed").AddError(err)
 	}
@@ -65,7 +72,7 @@ func (a *AesCipher) WithAES128() *AesCipher {
 // WithAES192 sets the key size to 192 bits (24 bytes).
 func (a *AesCipher) WithAES192() *AesCipher {
 	var err error
-	a.passphrase, err = GetRandomBytes(24)
+	a.passphrase, err = GetRandomBytes(aesKey192Bytes)
 	if err != nil {
 		a.Error = apperror.NewError("generating AES-192 key failed").AddError(err)
 	}
@@ -75,7 +82,7 @@ func (a *AesCipher) WithAES192() *AesCipher {
 // WithAES256 sets the key size to 256 bits (32 bytes).
 func (a *AesCipher) WithAES256() *AesCipher {
 	var err error
-	a.passphrase, err = GetRandomBytes(32)
+	a.passphrase, err = GetRandomBytes(aesKey256Bytes)
 	if err != nil {
 		a.Error = apperror.NewError("generating AES-256 key failed").AddError(err)
 	}
