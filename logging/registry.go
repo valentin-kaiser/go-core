@@ -162,12 +162,10 @@ func SetPackageLevel(pkg string, level Level) {
 		if !ok {
 			return
 		}
-
 		a.SetLevel(level)
 		return
 	}
 
-	// Create a package-specific adapter based on the global one
 	var newAdapter Adapter
 	switch adapter := global.Load().adapter.(type) {
 	case *ZerologAdapter:
@@ -175,7 +173,7 @@ func SetPackageLevel(pkg string, level Level) {
 	case *StandardAdapter:
 		newAdapter = NewStandardAdapterWithLogger(adapter.logger)
 	default:
-		newAdapter = NewNoOpAdapter() // Fallback to NoOpAdapter if unknown type
+		newAdapter = NewNoOpAdapter()
 	}
 
 	newAdapter.SetLevel(level)

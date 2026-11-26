@@ -181,7 +181,6 @@ func Run(config *Config, start func(s *Service) error, stop func(s *Service) err
 		if err != nil {
 			return apperror.NewError("starting service failed").AddError(err)
 		}
-
 		return apperror.Wrap(<-s.err)
 	}
 

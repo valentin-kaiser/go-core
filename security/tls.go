@@ -93,7 +93,6 @@ func IsCertificateExpired(cert tls.Certificate) (bool, error) {
 		if err != nil {
 			return false, apperror.NewError("parsing certificate failed").AddError(err)
 		}
-
 		if time.Now().After(x509Cert.NotAfter) {
 			return true, nil
 		}
@@ -111,12 +110,10 @@ func ValidateCertificate(cert tls.Certificate) error {
 		if err != nil {
 			return apperror.NewError("parsing certificate failed").AddError(err)
 		}
-
 		now := time.Now()
 		if now.Before(x509Cert.NotBefore) {
 			return apperror.NewErrorf("certificate not valid before %s", x509Cert.NotBefore)
 		}
-
 		if now.After(x509Cert.NotAfter) {
 			return apperror.NewErrorf("certificate expired on %s", x509Cert.NotAfter)
 		}

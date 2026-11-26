@@ -189,7 +189,6 @@ func PrintEnvVars() {
 		if f.Hidden {
 			return
 		}
-
 		e := entry{
 			name:     EnvVarName(f.Name),
 			value:    f.Value.Type(),
@@ -288,7 +287,6 @@ func Override(name string, value any, usage string) {
 
 	newCommandLine := pflag.NewFlagSet("", pflag.ContinueOnError)
 
-	// Copy all flags except the one we're overriding
 	pflag.CommandLine.VisitAll(func(flag *pflag.Flag) {
 		if flag.Name != name {
 			newCommandLine.AddFlag(flag)
@@ -344,7 +342,6 @@ func Unregister(name string) {
 
 	newCommandLine := pflag.NewFlagSet("", pflag.ContinueOnError)
 
-	// Copy all flags except the one we're unregistering
 	pflag.CommandLine.VisitAll(func(flag *pflag.Flag) {
 		if flag.Name != name {
 			newCommandLine.AddFlag(flag)

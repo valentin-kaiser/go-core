@@ -220,12 +220,10 @@ func (e Error) Is(target error) bool {
 		return false
 	}
 
-	// Check if target is also an Error type
 	if t, ok := target.(Error); ok {
 		return e.Message == t.Message
 	}
 
-	// Check if target's error message matches this error's message
 	return e.Message == target.Error()
 }
 
@@ -415,9 +413,7 @@ func Where(level int) string {
 	var sb strings.Builder
 	for {
 		frame, more := frames.Next()
-		// Format: file:line (func)
 		fmt.Fprintf(&sb, "%s:%d (%s)\n", frame.File, frame.Line, frame.Function)
-
 		if !more {
 			break
 		}
