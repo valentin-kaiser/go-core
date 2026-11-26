@@ -326,16 +326,16 @@ func TestSetDefault(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
 	}
-	i18n.SetDefault(b)
+	i18n.SetGlobalBundle(b)
 	t.Cleanup(func() { resetBundle(t) })
 
 	if got := i18n.T(i18n.German, "x"); got != "y" {
-		t.Errorf("T after SetDefault = %q, want %q", got, "y")
+		t.Errorf("T after SetGlobalBundle = %q, want %q", got, "y")
 	}
 
 	// Default returns the same bundle
 	if i18n.GlobalBundle() != b {
-		t.Error("Default did not return the bundle set by SetDefault")
+		t.Error("Default did not return the bundle set by SetGlobalBundle")
 	}
 }
 

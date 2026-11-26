@@ -76,7 +76,7 @@ func Middleware(b *Bundle) func(http.Handler) http.Handler {
 func GlobalMiddleware() func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			b := globalBundle.Load()
+			b := global()
 			lang := resolveFromRequest(b, r)
 			ctx := WithLanguage(r.Context(), lang)
 			ctx = WithRequest(ctx, r)

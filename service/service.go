@@ -7,8 +7,9 @@
 //
 // The package automatically detects whether the application is running in interactive
 // mode (console/terminal) or as a system service, and adjusts behavior accordingly.
-// When running as a service, it automatically configures the data directory in the
-// platform's machine-wide application data location.
+// When running as a service, ConfigureDataPath switches the data directory to the
+// platform's machine-wide application data location; call it from main before the flags
+// and the configuration are read.
 //
 // Features:
 //   - Cross-platform service management (Windows, Linux, macOS)
@@ -129,13 +130,15 @@ import (
 	"github.com/kardianos/service"
 	"github.com/valentin-kaiser/go-core/v2/apperror"
 	"github.com/valentin-kaiser/go-core/v2/flag"
-	"github.com/valentin-kaiser/go-core/v2/logging"
+	"sync"
 )
 
-var (
-	interactive = false
-	logger      = logging.PackageLogger("service")
-)
+// interactive reports whether the process runs in an interactive session. The detection
+// queries the service manager, so it runs on first use instead of at import.
+var interactive = sync.OnceValue(func() bool {
+	systems := service.AvailableSystems()
+	return systems[len(systems)-1].Interactive()
+})
 
 // Config is an alias for service.Config providing system service configuration options.
 // It includes service name, display name, description, dependencies, and platform-specific settings.
@@ -200,7 +203,7 @@ func Run(config *Config, start func(s *Runner) error, stop func(s *Runner) error
 		return apperror.NewError("service stop function is nil")
 	}
 
-	if interactive {
+	if interactive() {
 		err := s.Start(nil)
 		if err != nil {
 			return apperror.NewError("starting service failed").AddError(err)
@@ -223,19 +226,20 @@ func Run(config *Config, start func(s *Runner) error, stop func(s *Runner) error
 
 // IsInteractive returns true if the service is running in interactive mode
 func IsInteractive() bool {
-	return interactive
+	return interactive()
 }
 
-func init() {
-	var err error
-	interactive = service.AvailableSystems()[len(service.AvailableSystems())-1].Interactive()
-	if !interactive {
+// ConfigureDataPath points flag.Path at the machine-wide data directory when the process runs
+// as a service and makes it absolute. Call it from main before flag.Init and config.Read.
+func ConfigureDataPath() error {
+	if !interactive() {
 		flag.Path = flag.ServiceDataPath()
 	}
 
-	flag.Path, err = filepath.Abs(flag.Path)
+	path, err := filepath.Abs(flag.Path)
 	if err != nil {
-		logger.Error().Err(err).Msg("determining absolute path failed")
-		return
+		return apperror.NewError("determining absolute path of data directory failed").AddError(err)
 	}
+	flag.Path = path
+	return nil
 }

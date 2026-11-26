@@ -113,7 +113,10 @@ const (
 // Global default bundle with package-level convenience functions
 // ---------------------------------------------------------------------------
 
-var globalBundle atomic.Pointer[Bundle]
+var (
+	globalBundle atomic.Pointer[Bundle]
+	globalOnce   sync.Once
+)
 
 // Language represents a BCP 47 language code.
 type Language string
@@ -364,12 +367,12 @@ func WithMap(lang Language, translations map[string]string) Option {
 // Supported returns all languages that have translations loaded in the global
 // default bundle. If no translations have been loaded yet the list may be empty.
 func Supported() []Language {
-	return globalBundle.Load().Languages()
+	return global().Languages()
 }
 
 // Valid checks if a language code has translations loaded in the global bundle.
 func Valid(lang string) bool {
-	return globalBundle.Load().HasLanguage(Language(strings.ToLower(strings.TrimSpace(lang))))
+	return global().HasLanguage(Language(strings.ToLower(strings.TrimSpace(lang))))
 }
 
 // Parse normalizes a language string. If the language has no translations
@@ -379,23 +382,24 @@ func Parse(lang string) Language {
 	if l == "" {
 		return Default
 	}
-	if globalBundle.Load().HasLanguage(l) {
+	if global().HasLanguage(l) {
 		return l
 	}
 	return Default
 }
 
-// SetDefault replaces the global default bundle. It should be called early
+// SetGlobalBundle replaces the global default bundle. It should be called early
 // during application startup before any T/Tf calls are made.
 // This function is safe for concurrent use.
-func SetDefault(b *Bundle) {
+func SetGlobalBundle(b *Bundle) {
+	globalOnce.Do(func() {})
 	globalBundle.Store(b)
 }
 
 // GlobalBundle returns the global default bundle.
 // This function is safe for concurrent use.
 func GlobalBundle() *Bundle {
-	return globalBundle.Load()
+	return global()
 }
 
 // Init initialises the global default bundle with the given options, replacing
@@ -406,6 +410,7 @@ func Init(opts ...Option) error {
 	if err != nil {
 		return fmt.Errorf("creating bundle failed: %w", err)
 	}
+	globalOnce.Do(func() {})
 	globalBundle.Store(bundle)
 	return nil
 }
@@ -413,20 +418,20 @@ func Init(opts ...Option) error {
 // T translates a key using the global default bundle.
 // This function is safe for concurrent use.
 func T(lang Language, key string) string {
-	return globalBundle.Load().T(lang, key)
+	return global().T(lang, key)
 }
 
 // Tf translates and formats a key using the global default bundle.
 // This function is safe for concurrent use.
 func Tf(lang Language, key string, args ...any) string {
-	return globalBundle.Load().Tf(lang, key, args...)
+	return global().Tf(lang, key, args...)
 }
 
 // TCTX translates a key using the language resolved from the given context
 // and the global default bundle. See [Bundle.TCTX] for the resolution order.
 // This function is safe for concurrent use.
 func TCTX(ctx context.Context, key string) string {
-	return globalBundle.Load().TCTX(ctx, key)
+	return global().TCTX(ctx, key)
 }
 
 // TfCTX translates and formats a key using the language resolved from the
@@ -434,7 +439,7 @@ func TCTX(ctx context.Context, key string) string {
 // resolution order.
 // This function is safe for concurrent use.
 func TfCTX(ctx context.Context, key string, args ...any) string {
-	return globalBundle.Load().TfCTX(ctx, key, args...)
+	return global().TfCTX(ctx, key, args...)
 }
 
 // flattenJSON recursively walks a nested map[string]any and writes dot-separated
@@ -501,10 +506,14 @@ func loadDir(b *Bundle, fsys fs.FS, dir string) error {
 	return errors.Join(errs...)
 }
 
-func init() {
-	bundle, err := New()
-	if err != nil {
-		panic(fmt.Sprintf("initializing i18n bundle failed: %v", err))
-	}
-	globalBundle.Store(bundle)
+// global returns the global bundle and loads the embedded translations on first use.
+func global() *Bundle {
+	globalOnce.Do(func() {
+		bundle, err := New()
+		if err != nil {
+			panic(fmt.Sprintf("loading embedded translations failed: %v", err))
+		}
+		globalBundle.Store(bundle)
+	})
+	return globalBundle.Load()
 }
