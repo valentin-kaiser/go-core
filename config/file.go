@@ -120,52 +120,56 @@ func (s *fileSource) Watch(ctx context.Context, onChange func(map[string]any)) (
 	}
 
 	watchCtx, cancel := context.WithCancel(ctx)
-	target := filepath.Clean(s.configFile())
-
-	go func() {
-		defer apperror.Catch(watcher.Close, "closing configuration file watcher failed")
-
-		// Debounce bursts of events from a single save (e.g. a truncate
-		// followed by a write, or a rename-based atomic save that fires a
-		// remove and a create back to back) into a single reload.
-		debounce := time.NewTimer(0)
-		if !debounce.Stop() {
-			<-debounce.C
-		}
-		defer debounce.Stop()
-
-		for {
-			select {
-			case <-watchCtx.Done():
-				return
-			case watchErr, ok := <-watcher.Errors:
-				if !ok {
-					return
-				}
-				apperror.Catch(func() error { return watchErr }, "watching configuration file failed")
-			case event, ok := <-watcher.Events:
-				if !ok {
-					return
-				}
-				if filepath.Clean(event.Name) != target {
-					continue
-				}
-				if event.Op&(fsnotify.Write|fsnotify.Create) == 0 {
-					continue
-				}
-				debounce.Reset(reloadDebounce)
-			case <-debounce.C:
-				values, err := s.Load(watchCtx)
-				if err != nil {
-					apperror.Catch(func() error { return err }, "loading changed configuration file failed")
-					continue
-				}
-				onChange(values)
-			}
-		}
-	}()
+	go s.watchEvents(watchCtx, watcher, filepath.Clean(s.configFile()), onChange)
 
 	return cancel, nil
+}
+
+func (s *fileSource) watchEvents(ctx context.Context, watcher *fsnotify.Watcher, target string, onChange func(map[string]any)) {
+	defer apperror.Catch(watcher.Close, "closing configuration file watcher failed")
+
+	// Debounce bursts of events from a single save (e.g. a truncate
+	// followed by a write, or a rename-based atomic save that fires a
+	// remove and a create back to back) into a single reload.
+	debounce := time.NewTimer(0)
+	if !debounce.Stop() {
+		<-debounce.C
+	}
+	defer debounce.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case watchErr, ok := <-watcher.Errors:
+			if !ok {
+				return
+			}
+			apperror.Catch(func() error { return watchErr }, "watching configuration file failed")
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if filepath.Clean(event.Name) != target {
+				continue
+			}
+			if event.Op&(fsnotify.Write|fsnotify.Create) == 0 {
+				continue
+			}
+			debounce.Reset(reloadDebounce)
+		case <-debounce.C:
+			s.reload(ctx, onChange)
+		}
+	}
+}
+
+func (s *fileSource) reload(ctx context.Context, onChange func(map[string]any)) {
+	values, err := s.Load(ctx)
+	if err != nil {
+		apperror.Catch(func() error { return err }, "loading changed configuration file failed")
+		return
+	}
+	onChange(values)
 }
 
 // flattenYAML walks a YAML-decoded map and flattens nested maps into dotted
@@ -176,23 +180,14 @@ func flattenYAML(data map[string]any, prefix string, out map[string]any) {
 		if prefix != "" {
 			fullKey = prefix + keySeparator + key
 		}
-
 		if nested, ok := value.(map[string]any); ok {
 			flattenYAML(nested, fullKey, out)
 			continue
 		}
-
 		if nestedInterface, ok := value.(map[any]any); ok {
-			nestedString := make(map[string]any)
-			for k, v := range nestedInterface {
-				if keyStr, ok := k.(string); ok {
-					nestedString[keyStr] = v
-				}
-			}
-			flattenYAML(nestedString, fullKey, out)
+			flattenYAML(stringKeyedMap(nestedInterface), fullKey, out)
 			continue
 		}
-
 		out[strings.ToLower(fullKey)] = value
 	}
 }

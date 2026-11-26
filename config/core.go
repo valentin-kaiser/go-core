@@ -500,11 +500,7 @@ func (m *manager) startWatch(ctx context.Context) error {
 				continue
 			}
 			cancel()
-			for _, prev := range cancels {
-				if prev != nil {
-					prev()
-				}
-			}
+			cancelAll(cancels)
 			return apperror.NewErrorf("watching %s source failed", s.Name()).AddError(err)
 		}
 		if c != nil {
@@ -528,12 +524,16 @@ func (m *manager) stopWatch() {
 	m.watchCtx = nil
 	mutex.Unlock()
 
+	cancelAll(cancels)
+	if rootCancel != nil {
+		rootCancel()
+	}
+}
+
+func cancelAll(cancels []func()) {
 	for _, c := range cancels {
 		if c != nil {
 			c()
 		}
-	}
-	if rootCancel != nil {
-		rootCancel()
 	}
 }
