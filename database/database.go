@@ -43,6 +43,8 @@
 //	func main() {
 //		flag.Init()
 //
+//		ctx := context.Background()
+//
 //		// Create a new database instance with sqlc integration
 //		db := database.New[sqlc.Queries](database.DriverSQLite, "main")
 //
@@ -65,15 +67,14 @@
 //		})
 //
 //		// Connect to the database using DSN string
-//		db.Connect(time.Second, "file:test.db")
-//		defer db.Disconnect()
+//		db.Connect(ctx, time.Second, "file:test.db")
+//		defer db.Disconnect(ctx)
 //
 //		// Wait for connection to be established
-//		db.AwaitConnection()
+//		db.AwaitConnection(ctx)
 //
 //		// Use Query method to execute type-safe sqlc queries
-//		ctx := context.Background()
-//		err := db.Query(func(q *sqlc.Queries) error {
+//		err := db.Query(ctx, func(q *sqlc.Queries) error {
 //			user, err := q.GetUser(ctx, 1)
 //			if err != nil {
 //				return err
@@ -88,18 +89,22 @@
 //
 // Multi-Instance Example:
 //
+//	ctx := context.Background()
+//
 //	// Connect to multiple databases simultaneously with different sqlc Queries
 //	postgres := database.New[pgSqlc.Queries](database.DriverPostgres, "postgres-main")
 //	mysql := database.New[mysqlSqlc.Queries](database.DriverMySQL, "mysql-analytics")
 //	sqlite := database.New[sqliteSqlc.Queries](database.DriverSQLite, "sqlite-cache")
 //
-//	postgres.Connect(time.Second, "postgres://postgres:secret@localhost:5432/maindb?sslmode=disable")
+//	postgres.Connect(ctx, time.Second, "postgres://postgres:secret@localhost:5432/maindb?sslmode=disable")
 //
-//	mysql.Connect(time.Second, "root:password@tcp(localhost:3306)/analytics")
+//	mysql.Connect(ctx, time.Second, "root:password@tcp(localhost:3306)/analytics")
 //
-//	sqlite.Connect(time.Second, ":memory:")
+//	sqlite.Connect(ctx, time.Second, ":memory:")
 //
 // Middleware Example:
+//
+//	ctx := context.Background()
 //
 //	// Create a new database instance with logging middleware
 //	db := database.New[sqlc.Queries](database.DriverSQLite, "main")
@@ -110,12 +115,11 @@
 //	db.RegisterMiddleware(loggingMiddleware)
 //
 //	// Connect to the database using DSN string
-//	db.Connect(time.Second, "file:example.db")
-//	defer db.Disconnect()
+//	db.Connect(ctx, time.Second, "file:example.db")
+//	defer db.Disconnect(ctx)
 //
 //	// All SQL statements will now be logged with timing information
-//	ctx := context.Background()
-//	db.Query(func(q *sqlc.Queries) error {
+//	db.Query(ctx, func(q *sqlc.Queries) error {
 //		return q.CreateUser(ctx, sqlc.CreateUserParams{
 //			Name:  "John Doe",
 //			Email: "john@example.com",
@@ -123,6 +127,8 @@
 //	})
 //
 // Debug Mode Example:
+//
+//	ctx := context.Background()
 //
 //	// Create a database instance and register LoggingMiddleware
 //	db := database.New[sqlc.Queries](database.DriverSQLite, "main")
@@ -133,23 +139,21 @@
 //	loggingMiddleware.Disable() // Disabled by default
 //	db.RegisterMiddleware(loggingMiddleware)
 //
-//	db.Connect(time.Second, "file:example.db")
-//	defer db.Disconnect()
-//
-//	ctx := context.Background()
+//	db.Connect(ctx, time.Second, "file:example.db")
+//	defer db.Disconnect(ctx)
 //
 //	// Regular query - no debug logging (middleware is disabled)
-//	db.Query(func(q *sqlc.Queries) error {
+//	db.Query(ctx, func(q *sqlc.Queries) error {
 //		return q.GetUser(ctx, 1)
 //	})
 //
 //	// Debug query - temporarily enables logging for this specific query
-//	db.Debug().Query(func(q *sqlc.Queries) error {
+//	db.Debug().Query(ctx, func(q *sqlc.Queries) error {
 //		return q.GetUser(ctx, 1)
 //	})
 //
 //	// You can also use Debug() with Execute
-//	db.Debug().Execute(func(dbConn *sql.DB) error {
+//	db.Debug().Execute(ctx, func(dbConn *sql.DB) error {
 //		_, err := dbConn.ExecContext(ctx, "UPDATE users SET active = ? WHERE id = ?", true, 1)
 //		return err
 //	})
@@ -208,10 +212,11 @@ const (
 	mysqlIdentifierQuote = "`"
 	ansiIdentifierQuote  = "\""
 
-	backupDirMode      os.FileMode = 0o750
-	statementLogLength             = 50
-	pingTimeout                    = 2 * time.Second
-	pingRetryPause                 = 100 * time.Millisecond
+	backupDirMode           os.FileMode = 0o750
+	statementLogLength                  = 50
+	pingTimeout                         = 2 * time.Second
+	pingRetryPause                      = 100 * time.Millisecond
+	awaitConnectionInterval             = time.Second
 )
 
 // Driver is the name of a supported database/sql driver.
@@ -248,7 +253,7 @@ type Connection[Q any] struct {
 func New[Q any](driver Driver, name string) *Connection[Q] {
 	return &Connection[Q]{
 		driver:           driver,
-		done:             make(chan bool),
+		done:             make(chan bool, 1),
 		logger:           logging.PackageLogger(loggerNamePrefix + name),
 		onConnectHandler: make([]func(db *sql.DB) error, 0),
 		middlewares:      make([]Middleware, 0),
@@ -268,7 +273,7 @@ func (d *Connection[Q]) Get() *sql.DB {
 // This method requires that a LoggingMiddleware has been registered with RegisterMiddleware.
 // It temporarily enables debug-level logging for the specific query or execution that follows.
 // The debug handle shares the same underlying connection and configuration as the parent instance.
-// Example: db.Debug().Query(func(q *sqlc.Queries) error { return q.GetUser(ctx, id) })
+// Example: db.Debug().Query(ctx, func(q *sqlc.Queries) error { return q.GetUser(ctx, id) })
 func (d *Connection[Q]) Debug() *Connection[Q] {
 	if d.debug {
 		return d
@@ -287,9 +292,14 @@ func (d *Connection[Q]) Debug() *Connection[Q] {
 }
 
 // Execute executes a function with a database connection.
-// It will return an error if the database is not connected or if the function returns an error.
-func (d *Connection[Q]) Execute(call func(db *sql.DB) error) error {
+// It will return an error if ctx has ended, the database is not connected or if the function returns an error.
+func (d *Connection[Q]) Execute(ctx context.Context, call func(db *sql.DB) error) error {
 	defer interruption.Catch()
+
+	err := ctx.Err()
+	if err != nil {
+		return apperror.NewError("executing database call failed").AddError(err)
+	}
 
 	parent := d
 	if d.debug && d.parent != nil {
@@ -312,7 +322,7 @@ func (d *Connection[Q]) Execute(call func(db *sql.DB) error) error {
 		defer restore()
 	}
 
-	err := call(instance)
+	err = call(instance)
 	if err != nil {
 		return err
 	}
@@ -321,10 +331,15 @@ func (d *Connection[Q]) Execute(call func(db *sql.DB) error) error {
 }
 
 // Query executes a function with sqlc-generated Queries instance.
-// It will return an error if the database is not connected or if the function returns an error.
-// Example: db.Query(func(q *sqlc.Queries) error { return q.GetUser(ctx, id) })
-func (d *Connection[Q]) Query(call func(q *Q) error) error {
+// It will return an error if ctx has ended, the database is not connected or if the function returns an error.
+// Example: db.Query(ctx, func(q *sqlc.Queries) error { return q.GetUser(ctx, id) })
+func (d *Connection[Q]) Query(ctx context.Context, call func(q *Q) error) error {
 	defer interruption.Catch()
+
+	err := ctx.Err()
+	if err != nil {
+		return apperror.NewError("querying database failed").AddError(err)
+	}
 
 	parent := d
 	if d.debug && d.parent != nil {
@@ -367,7 +382,7 @@ func (d *Connection[Q]) Query(call func(q *Q) error) error {
 // Transaction executes a function within a database transaction.
 // It will return an error if the database is not connected or if the function returns an error.
 // If the function returns an error, the transaction will be rolled back.
-func (d *Connection[Q]) Transaction(call func(tx *sql.Tx) error) error {
+func (d *Connection[Q]) Transaction(ctx context.Context, call func(tx *sql.Tx) error) error {
 	d.dbMutex.RLock()
 	dbInstance := d.db
 	d.dbMutex.RUnlock()
@@ -376,7 +391,7 @@ func (d *Connection[Q]) Transaction(call func(tx *sql.Tx) error) error {
 		return apperror.NewError("database is not connected")
 	}
 
-	tx, err := dbInstance.Begin()
+	tx, err := dbInstance.BeginTx(ctx, nil)
 	if err != nil {
 		return apperror.NewError("beginning transaction failed").AddError(err)
 	}
@@ -405,8 +420,8 @@ func (d *Connection[Q]) Transaction(call func(tx *sql.Tx) error) error {
 // QueryTransaction executes a function with a sqlc-generated Queries instance within a database transaction.
 // It will return an error if the database is not connected or if the function returns an error.
 // If the function returns an error, the transaction will be rolled back.
-// Example: db.QueryTransaction(func(q *sqlc.Queries) error { return q.CreateUser(ctx, params) })
-func (d *Connection[Q]) QueryTransaction(call func(q *Q) error) error {
+// Example: db.QueryTransaction(ctx, func(q *sqlc.Queries) error { return q.CreateUser(ctx, params) })
+func (d *Connection[Q]) QueryTransaction(ctx context.Context, call func(q *Q) error) error {
 	defer interruption.Catch()
 
 	parent := d
@@ -434,7 +449,7 @@ func (d *Connection[Q]) QueryTransaction(call func(q *Q) error) error {
 		defer restore()
 	}
 
-	tx, err := dbInstance.Begin()
+	tx, err := dbInstance.BeginTx(ctx, nil)
 	if err != nil {
 		return apperror.NewError("beginning transaction failed").AddError(err)
 	}
@@ -470,14 +485,14 @@ func (d *Connection[Q]) QueryTransaction(call func(q *Q) error) error {
 }
 
 // TestConnection tests the database connection by attempting to connect and ping the database.
-func (d *Connection[Q]) TestConnection(dsn string) error {
-	instance, err := d.connect(d.driver, dsn)
+func (d *Connection[Q]) TestConnection(ctx context.Context, dsn string) error {
+	instance, err := d.connect(ctx, d.driver, dsn)
 	if err != nil {
 		return apperror.NewError("connection test failed").AddError(err)
 	}
 	defer apperror.Catch(instance.Close, "closing database connection failed")
 
-	err = instance.Ping()
+	err = instance.PingContext(ctx)
 	if err != nil {
 		return apperror.NewError("ping test failed").AddError(err)
 	}
@@ -510,8 +525,9 @@ func (d *Connection[Q]) Reconnect(dsn string) {
 	d.failed.Store(false)
 }
 
-// Disconnect will stop the database connection and wait for the connection to be closed
-func (d *Connection[Q]) Disconnect() error {
+// Disconnect will stop the database connection and wait for the connection to be closed.
+// It returns an error if ctx ends before the connection maintenance has stopped.
+func (d *Connection[Q]) Disconnect(ctx context.Context) error {
 	d.logger.Trace().Msg("closing connection...")
 	d.cancel.Store(true)
 	if d.connected.Load() && d.db != nil {
@@ -520,26 +536,40 @@ func (d *Connection[Q]) Disconnect() error {
 			return apperror.NewError("closing database connection failed").AddError(err)
 		}
 	}
-	<-d.done
+	select {
+	case <-d.done:
+	case <-ctx.Done():
+		return apperror.NewError("waiting for database connection to close failed").AddError(ctx.Err())
+	}
 	d.logger.Trace().Msg("connection closed")
 	return nil
 }
 
-// AwaitConnection will block until the database is connected
-func (d *Connection[Q]) AwaitConnection() {
+// AwaitConnection will block until the database is connected.
+// It returns an error if ctx ends before the database is connected.
+func (d *Connection[Q]) AwaitConnection(ctx context.Context) error {
+	ticker := time.NewTicker(awaitConnectionInterval)
+	defer ticker.Stop()
+
 	for !d.connected.Load() {
-		time.Sleep(time.Second)
+		select {
+		case <-ctx.Done():
+			return apperror.NewError("awaiting database connection failed").AddError(ctx.Err())
+		case <-ticker.C:
+		}
 	}
+	return nil
 }
 
 // Connect will try to connect to the database every interval until it is connected
-// It will also check if the connection is still alive every interval and reconnect if it is not
-func (d *Connection[Q]) Connect(interval time.Duration, dsn string) {
+// It will also check if the connection is still alive every interval and reconnect if it is not.
+// The maintenance stops when ctx ends or Disconnect is called.
+func (d *Connection[Q]) Connect(ctx context.Context, interval time.Duration, dsn string) {
 	d.setDSN(dsn)
 	go func() {
 		for {
-			d.maintainConnection(interval)
-			if d.cancel.Load() {
+			d.maintainConnection(ctx, interval)
+			if d.cancel.Load() || ctx.Err() != nil {
 				d.done <- true
 				return
 			}
@@ -547,12 +577,12 @@ func (d *Connection[Q]) Connect(interval time.Duration, dsn string) {
 	}()
 }
 
-func (d *Connection[Q]) maintainConnection(interval time.Duration) {
+func (d *Connection[Q]) maintainConnection(ctx context.Context, interval time.Duration) {
 	defer interruption.Catch()
-	defer time.Sleep(interval)
+	defer sleepContext(ctx, interval)
 
 	if !d.connected.Load() {
-		d.establishConnection()
+		d.establishConnection(ctx)
 		return
 	}
 
@@ -566,7 +596,7 @@ func (d *Connection[Q]) maintainConnection(interval time.Duration) {
 	}
 
 	const maxRetries = 3
-	lastErr := pingWithRetries(dbInstance, maxRetries)
+	lastErr := pingWithRetries(ctx, dbInstance, maxRetries)
 	if lastErr != nil && d.connected.Load() {
 		d.logger.Error().Err(lastErr).Field("attempts", maxRetries).Msg("connection lost after ping attempts")
 		d.connected.Store(false)
@@ -574,8 +604,8 @@ func (d *Connection[Q]) maintainConnection(interval time.Duration) {
 	}
 }
 
-func (d *Connection[Q]) establishConnection() {
-	instance, err := d.connect(d.driver, d.getDSN())
+func (d *Connection[Q]) establishConnection(ctx context.Context) {
+	instance, err := d.connect(ctx, d.driver, d.getDSN())
 	if err != nil {
 		// Prevent spamming the logs with connection errors
 		if !d.failed.Load() {
@@ -624,13 +654,24 @@ func (d *Connection[Q]) establishConnection() {
 	d.logger.Debug().Msg("connection established")
 }
 
+// sleepContext waits for the duration or until ctx ends.
+func sleepContext(ctx context.Context, duration time.Duration) {
+	timer := time.NewTimer(duration)
+	defer timer.Stop()
+
+	select {
+	case <-timer.C:
+	case <-ctx.Done():
+	}
+}
+
 // pingWithRetries pings the database up to maxRetries times and returns the last error, or nil
 // once a ping succeeds. Retrying prevents treating transient connection pool errors as database failures.
-func pingWithRetries(db *sql.DB, maxRetries int) error {
+func pingWithRetries(ctx context.Context, db *sql.DB, maxRetries int) error {
 	var lastErr error
 	for i := range maxRetries {
-		ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
-		err := db.PingContext(ctx)
+		pingCtx, cancel := context.WithTimeout(ctx, pingTimeout)
+		err := db.PingContext(pingCtx)
 		cancel()
 		if err == nil {
 			return nil
@@ -638,7 +679,7 @@ func pingWithRetries(db *sql.DB, maxRetries int) error {
 		lastErr = err
 		// Brief pause between retries to allow bad connections to be removed from pool
 		if i < maxRetries-1 {
-			time.Sleep(pingRetryPause)
+			sleepContext(ctx, pingRetryPause)
 		}
 	}
 	return lastErr
@@ -727,7 +768,7 @@ func (d *Connection[Q]) enableDebugLogging() (restore func(), err error) {
 }
 
 // connect will try to connect to the database and return the connection
-func (d *Connection[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
+func (d *Connection[Q]) connect(ctx context.Context, driver Driver, dsn string) (*sql.DB, error) {
 	d.middlewareMutex.RLock()
 	middlewares := make([]Middleware, len(d.middlewares))
 	copy(middlewares, d.middlewares)
@@ -742,7 +783,7 @@ func (d *Connection[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
 		return nil, apperror.NewError("opening database connection failed").AddError(err)
 	}
 
-	err = conn.Ping()
+	err = conn.PingContext(ctx)
 	if err != nil {
 		pingErr := apperror.NewError("pinging database failed").AddError(err)
 		closeErr := conn.Close()
@@ -760,7 +801,7 @@ func (d *Connection[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
 // For MySQL/MariaDB: creates an SQL dump
 // For PostgreSQL: creates an SQL dump
 // Returns an error if the database is not connected or if the backup fails.
-func (d *Connection[Q]) Backup(path string, schema string) error {
+func (d *Connection[Q]) Backup(ctx context.Context, path string, schema string) error {
 	if !d.connected.Load() {
 		return apperror.NewError("database is not connected")
 	}
@@ -781,7 +822,7 @@ func (d *Connection[Q]) Backup(path string, schema string) error {
 		dbInstance := d.db
 		d.dbMutex.RUnlock()
 
-		_, err := dbInstance.Exec(sqliteCheckpointStatement)
+		_, err := dbInstance.ExecContext(ctx, sqliteCheckpointStatement)
 		if err != nil {
 			return apperror.NewError("checkpointing WAL failed").AddError(err)
 		}
@@ -808,7 +849,7 @@ func (d *Connection[Q]) Backup(path string, schema string) error {
 			return apperror.NewError("database instance is nil")
 		}
 
-		return d.backupMySQL(dbInstance, path)
+		return d.backupMySQL(ctx, dbInstance, path)
 
 	case DriverPostgres:
 		d.dbMutex.RLock()
@@ -819,7 +860,7 @@ func (d *Connection[Q]) Backup(path string, schema string) error {
 			return apperror.NewError("database instance is nil")
 		}
 
-		return d.backupPostgres(dbInstance, path, schema)
+		return d.backupPostgres(ctx, dbInstance, path, schema)
 
 	default:
 		return apperror.NewErrorf("unsupported database driver for backup: %v", d.driver)
@@ -832,7 +873,7 @@ func (d *Connection[Q]) Backup(path string, schema string) error {
 // For PostgreSQL: uses psql to restore from SQL dump
 // Returns an error if the database is not connected or if the restore fails.
 // WARNING: This will overwrite the current database. Ensure you have a backup before restoring.
-func (d *Connection[Q]) Restore(backupPath string) error {
+func (d *Connection[Q]) Restore(ctx context.Context, backupPath string) error {
 	if !d.connected.Load() {
 		return apperror.NewError("database is not connected")
 	}
@@ -895,7 +936,7 @@ func (d *Connection[Q]) Restore(backupPath string) error {
 
 		// SET NAMES and SET FOREIGN_KEY_CHECKS in the dump apply to one connection, so all
 		// statements have to run on the same one, not on whichever the pool hands out
-		conn, err := dbInstance.Conn(context.Background())
+		conn, err := dbInstance.Conn(ctx)
 		if err != nil {
 			return apperror.NewError("getting database connection failed").AddError(err)
 		}
@@ -904,16 +945,16 @@ func (d *Connection[Q]) Restore(backupPath string) error {
 		// Every statement is its own transaction otherwise, and each commit waits for the disk. The
 		// CREATE and DROP statements of the dump commit implicitly, so the rows of a table go in as
 		// one transaction.
-		_, err = conn.ExecContext(context.Background(), mysqlAutocommitOff)
+		_, err = conn.ExecContext(ctx, mysqlAutocommitOff)
 		if err != nil {
 			return apperror.NewError("starting restore failed").AddError(err)
 		}
 		// The connection goes back to the pool, so it must not stay in this mode
-		defer resetRestoreSession(conn)
+		defer resetRestoreSession(ctx, conn)
 
 		// Statements run as they are read, so the dump is never held in memory as a whole
 		err = forEachStatement(backupFile, func(stmt string) error {
-			_, err := conn.ExecContext(context.Background(), stmt)
+			_, err := conn.ExecContext(ctx, stmt)
 			if err != nil {
 				return apperror.NewErrorf("executing statement %s failed", stmt[:min(statementLogLength, len(stmt))]).AddError(err)
 			}
@@ -923,14 +964,15 @@ func (d *Connection[Q]) Restore(backupPath string) error {
 			// Roll back what is still open. Earlier CREATE and DROP statements have committed
 			// implicitly and cannot be undone.
 			restoreErr := apperror.NewError("restoring backup failed").AddError(err)
-			_, rbErr := conn.ExecContext(context.Background(), mysqlRollback)
+			// The restore may have failed because ctx ended, and the rollback has to run anyway
+			_, rbErr := conn.ExecContext(context.WithoutCancel(ctx), mysqlRollback)
 			if rbErr != nil {
 				return restoreErr.AddError(apperror.NewError("rolling back restore failed").AddError(rbErr))
 			}
 			return restoreErr
 		}
 
-		_, err = conn.ExecContext(context.Background(), mysqlCommit)
+		_, err = conn.ExecContext(ctx, mysqlCommit)
 		if err != nil {
 			return apperror.NewError("committing restore failed").AddError(err)
 		}
@@ -953,14 +995,14 @@ func (d *Connection[Q]) Restore(backupPath string) error {
 		}
 		defer apperror.Catch(backupFile.Close, "closing backup file failed")
 
-		tx, err := dbInstance.Begin()
+		tx, err := dbInstance.BeginTx(ctx, nil)
 		if err != nil {
 			return apperror.NewError("beginning transaction failed").AddError(err)
 		}
 
 		// Statements run as they are read, so the dump is never held in memory as a whole
 		err = forEachStatement(backupFile, func(stmt string) error {
-			_, err := tx.Exec(stmt)
+			_, err := tx.ExecContext(ctx, stmt)
 			if err != nil {
 				return apperror.NewErrorf("executing statement %s failed", stmt[:min(statementLogLength, len(stmt))]).AddError(err)
 			}
@@ -1001,10 +1043,10 @@ func (d *Connection[Q]) removeStaleSQLiteFiles(databasePath string) {
 	}
 }
 
-func resetRestoreSession(conn *sql.Conn) {
+func resetRestoreSession(ctx context.Context, conn *sql.Conn) {
 	for _, stmt := range []string{mysqlAutocommitOn, mysqlForeignKeyChecksOn} {
 		apperror.Catch(func() error {
-			_, err := conn.ExecContext(context.Background(), stmt)
+			_, err := conn.ExecContext(context.WithoutCancel(ctx), stmt)
 			return err
 		}, "resetting restore session settings failed")
 	}

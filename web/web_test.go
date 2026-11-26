@@ -31,7 +31,7 @@ func TestServerStartAsync(t *testing.T) {
 
 	done := startServer(t, server, port)
 
-	err := server.Stop()
+	err := server.Stop(t.Context())
 	if err != nil {
 		t.Fatalf("stopping server failed: %v", err)
 	}
@@ -52,7 +52,7 @@ func TestServerErrorHandling(t *testing.T) {
 	}
 
 	// Test that Start() respects existing errors
-	server.Start()
+	server.Start(t.Context())
 	if server.Error.Error() != "test error" {
 		t.Error("Start() should preserve existing errors")
 	}

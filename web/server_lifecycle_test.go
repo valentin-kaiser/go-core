@@ -77,7 +77,7 @@ func waitDone(t *testing.T, done <-chan error, what string) {
 func startServer(t *testing.T, server *web.Server, port uint16) chan error {
 	t.Helper()
 	done := make(chan error, 1)
-	server.StartAsync(done)
+	server.StartAsync(t.Context(), done)
 	waitListening(t, port)
 	return done
 }
@@ -163,7 +163,7 @@ func TestServerRedirectRule(t *testing.T) {
 		}
 	}
 
-	err := server.Stop()
+	err := server.Stop(t.Context())
 	if err != nil {
 		t.Fatalf("stopping server failed: %v", err)
 	}
@@ -185,7 +185,7 @@ func TestServerBlacklistPlainAddresses(t *testing.T) {
 		t.Fatalf("GET %s status = %d, want %d", okPath, resp.status, http.StatusForbidden)
 	}
 
-	err := server.Stop()
+	err := server.Stop(t.Context())
 	if err != nil {
 		t.Fatalf("stopping server failed: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestServerBlacklistPlainAddresses(t *testing.T) {
 }
 
 func TestServerShutdown(t *testing.T) {
-	err := web.New().Shutdown()
+	err := web.New().Shutdown(t.Context())
 	if err != nil {
 		t.Fatalf("Shutdown of a server that never started returned error: %v", err)
 	}
@@ -221,7 +221,7 @@ func TestServerShutdown(t *testing.T) {
 	server := web.New().WithHost(loopbackHost).WithHTTPPort(port)
 	done := startServer(t, server, port)
 
-	err = server.Shutdown()
+	err = server.Shutdown(t.Context())
 	if err != nil {
 		t.Fatalf("Shutdown returned error: %v", err)
 	}
@@ -234,11 +234,11 @@ func TestServerRestart(t *testing.T) {
 	first := startServer(t, server, port)
 
 	restarted := make(chan error, 1)
-	go func() { restarted <- server.Restart() }()
+	go func() { restarted <- server.Restart(t.Context()) }()
 
 	waitDone(t, first, "first StartAsync")
 	waitListening(t, port)
-	err := server.Stop()
+	err := server.Stop(t.Context())
 	if err != nil {
 		t.Fatalf("stopping restarted server failed: %v", err)
 	}
@@ -251,11 +251,11 @@ func TestServerRestartAsync(t *testing.T) {
 	first := startServer(t, server, port)
 
 	restarted := make(chan error, 1)
-	server.RestartAsync(restarted)
+	server.RestartAsync(t.Context(), restarted)
 
 	waitDone(t, first, "first StartAsync")
 	waitListening(t, port)
-	err := server.Stop()
+	err := server.Stop(t.Context())
 	if err != nil {
 		t.Fatalf("stopping restarted server failed: %v", err)
 	}

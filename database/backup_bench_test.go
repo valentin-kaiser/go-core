@@ -22,11 +22,11 @@ func BenchmarkBackupSQLite(b *testing.B) {
 	dir := b.TempDir()
 	dbPath := filepath.Join(dir, "bench.db")
 	db := database.New[TestQueries](database.DriverSQLite, "bench-backup")
-	db.Connect(connectInterval, "file:"+dbPath)
+	db.Connect(b.Context(), connectInterval, "file:"+dbPath)
 	cleanupDisconnect(b, db)
-	db.AwaitConnection()
+	awaitDatabase(b, db)
 
-	err := db.Execute(func(sqlDB *sql.DB) error {
+	err := db.Execute(b.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec(createPayloadTable)
 		if err != nil {
 			return err
@@ -60,7 +60,7 @@ func BenchmarkBackupSQLite(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		err := db.Backup(target, "")
+		err := db.Backup(b.Context(), target, "")
 		if err != nil {
 			b.Fatal(err)
 		}

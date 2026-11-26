@@ -51,7 +51,7 @@ const (
 //
 //	out := make(chan proto.Message, 10)
 //	factory := func() proto.Message { return &MyResponse{} }
-//	go client.ServerStream(ctx, url.URL{Scheme: "http", Host: "localhost:8080", Path: "/MyService/MyMethod"}, req, factory, out)
+//	go jrpc.ServerStream(ctx, client, &url.URL{Scheme: "http", Host: "localhost:8080", Path: "/MyService/MyMethod"}, req, out, factory)
 //	for msg := range out {
 //	    // Process each response message
 //	}
@@ -318,7 +318,7 @@ func WithUnmarshalOptions(opts protojson.UnmarshalOptions) ClientOption {
 //   - factory: Factory function to create new response message instances
 //
 // Returns an error if the connection fails or an error occurs during streaming.
-func ServerStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, req proto.Message, out chan<- T, factory func() T) error {
+func ServerStream[T proto.Message](ctx context.Context, c *Client, u *url.URL, req proto.Message, out chan<- T, factory func() T) error {
 	if u == nil {
 		return apperror.NewError("url cannot be nil")
 	}
@@ -370,7 +370,7 @@ func ServerStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, r
 //   - resp: The response message (will be populated when stream completes)
 //
 // Returns an error if the connection fails or an error occurs during streaming.
-func ClientStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, in <-chan T, resp proto.Message) error {
+func ClientStream[T proto.Message](ctx context.Context, c *Client, u *url.URL, in <-chan T, resp proto.Message) error {
 	if u == nil {
 		return apperror.NewError("url cannot be nil")
 	}
@@ -423,7 +423,7 @@ func ClientStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, i
 //   - respFactory: Factory function to create new response message instances
 //
 // Returns an error if the connection fails or an error occurs during streaming.
-func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx context.Context, u *url.URL, in <-chan TReq, out chan<- TResp, respFactory func() TResp) error {
+func BidirectionalStream[TReq proto.Message, TResp proto.Message](ctx context.Context, c *Client, u *url.URL, in <-chan TReq, out chan<- TResp, respFactory func() TResp) error {
 	if u == nil {
 		return apperror.NewError("url cannot be nil")
 	}

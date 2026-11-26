@@ -51,7 +51,7 @@
 //	          WithHost("localhost").
 //	          WithPort(8080).
 //	          WithJRPC(jrpc.Register(&MyService{})).
-//	          Start().Error
+//	          Start(context.Background()).Error
 //	      if err != nil {
 //	          log.Fatal().Err(err).Msg("server exited")
 //	      }

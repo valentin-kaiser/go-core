@@ -13,9 +13,9 @@ func connectedTyped(t *testing.T) *database.Connection[TestQueries] {
 	t.Helper()
 	db := database.New[TestQueries](database.DriverSQLite, "typed")
 	db.RegisterQueriesFunc(func(c database.DBTX) *TestQueries { return NewTestQueries(c) })
-	db.Connect(connectInterval, memoryDSN)
+	db.Connect(t.Context(), connectInterval, memoryDSN)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 	return db
 }
 
@@ -23,7 +23,7 @@ func TestRegisterQueriesFuncQueryAndTransaction(t *testing.T) {
 	db := connectedTyped(t)
 
 	called := false
-	err := db.Query(func(q *TestQueries) error {
+	err := db.Query(t.Context(), func(q *TestQueries) error {
 		called = q != nil
 		return nil
 	})
@@ -32,14 +32,14 @@ func TestRegisterQueriesFuncQueryAndTransaction(t *testing.T) {
 	}
 
 	called = false
-	err = db.QueryTransaction(func(q *TestQueries) error {
+	err = db.QueryTransaction(t.Context(), func(q *TestQueries) error {
 		called = q != nil
 		return nil
 	})
 	if err != nil || !called {
 		t.Fatalf("QueryTransaction: err=%v called=%v", err, called)
 	}
-	err = db.Transaction(func(_ *sql.Tx) error { return nil })
+	err = db.Transaction(t.Context(), func(_ *sql.Tx) error { return nil })
 	if err != nil {
 		t.Fatalf("Transaction: %v", err)
 	}
@@ -50,12 +50,12 @@ func TestRegisterQueriesReflective(t *testing.T) {
 	db := database.New[TestQueries](database.DriverSQLite, "reflect")
 	db.RegisterQueries(NewTestQueries)
 	cleanupDisconnect(t, db)
-	db.Connect(connectInterval, memoryDSN)
-	db.AwaitConnection()
+	db.Connect(t.Context(), connectInterval, memoryDSN)
+	awaitDatabase(t, db)
 
 	for i := range queryRounds {
 		var got *TestQueries
-		err := db.Query(func(q *TestQueries) error {
+		err := db.Query(t.Context(), func(q *TestQueries) error {
 			got = q
 			return nil
 		})

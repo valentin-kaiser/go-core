@@ -234,7 +234,7 @@ func TestMiddleware_Integration(t *testing.T) {
 	// Connect to in-memory SQLite database
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
 
 	// Wait for connection
@@ -245,7 +245,7 @@ func TestMiddleware_Integration(t *testing.T) {
 	}
 
 	// Execute a query that should trigger middleware
-	err := db.Execute(func(sqlDB *sql.DB) error {
+	err := db.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec("CREATE TABLE IF NOT EXISTS test_table (id INTEGER PRIMARY KEY, name TEXT)")
 		return err
 	})
@@ -273,7 +273,7 @@ func TestMiddleware_Chaining(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
 
 	awaitConnected(t, db)
@@ -282,7 +282,7 @@ func TestMiddleware_Chaining(t *testing.T) {
 		t.Fatal("Database should be connected")
 	}
 
-	err := db.Execute(func(sqlDB *sql.DB) error {
+	err := db.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec("SELECT 1")
 		return err
 	})
@@ -303,7 +303,7 @@ func TestMiddleware_NilMiddleware(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
 
 	awaitConnected(t, db)
@@ -398,8 +398,8 @@ func TestMiddleware_DriverReuse(t *testing.T) {
 
 	// First connection - count drivers before and after
 	driversBeforeFirst := sql.Drivers()
-	db1.Connect(connectInterval, dsn)
-	db1.AwaitConnection()
+	db1.Connect(t.Context(), connectInterval, dsn)
+	awaitDatabase(t, db1)
 	driversAfterFirst := sql.Drivers()
 
 	// Should have registered a new wrapped driver
@@ -409,13 +409,13 @@ func TestMiddleware_DriverReuse(t *testing.T) {
 	}
 
 	// Disconnect and reconnect
-	err := db1.Disconnect()
+	err := db1.Disconnect(t.Context())
 	if err != nil {
 		t.Fatalf("failed to disconnect: %v", err)
 	}
 
-	db1.Connect(connectInterval, dsn)
-	db1.AwaitConnection()
+	db1.Connect(t.Context(), connectInterval, dsn)
+	awaitDatabase(t, db1)
 	driversAfterReconnect := sql.Drivers()
 
 	// Should NOT register a new driver on reconnect (reuse existing)
@@ -428,8 +428,8 @@ func TestMiddleware_DriverReuse(t *testing.T) {
 	db2.RegisterQueries(NewTestQueries)
 	db2.RegisterMiddleware(loggingMW) // Use the same instance
 
-	db2.Connect(connectInterval, dsn)
-	db2.AwaitConnection()
+	db2.Connect(t.Context(), connectInterval, dsn)
+	awaitDatabase(t, db2)
 	driversAfterSecondDB := sql.Drivers()
 
 	// Should reuse the same wrapped driver (same middleware instance)
@@ -455,8 +455,8 @@ func TestMiddleware_DifferentInstances(t *testing.T) {
 	dsn := memoryDSN
 
 	driversBeforeFirst := sql.Drivers()
-	db1.Connect(connectInterval, dsn)
-	db1.AwaitConnection()
+	db1.Connect(t.Context(), connectInterval, dsn)
+	awaitDatabase(t, db1)
 	driversAfterFirst := sql.Drivers()
 
 	// Create second database with DIFFERENT middleware instance
@@ -465,8 +465,8 @@ func TestMiddleware_DifferentInstances(t *testing.T) {
 	loggingMW2 := database.NewLoggingMiddleware(logger) // Different instance
 	db2.RegisterMiddleware(loggingMW2)
 
-	db2.Connect(connectInterval, dsn)
-	db2.AwaitConnection()
+	db2.Connect(t.Context(), connectInterval, dsn)
+	awaitDatabase(t, db2)
 	driversAfterSecond := sql.Drivers()
 
 	// Should have registered TWO new drivers (one for each middleware instance)

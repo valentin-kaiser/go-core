@@ -369,7 +369,7 @@ func TestManager(t *testing.T) {
 	}, "the handler to be called")
 
 	// Stop manager: it waits for the worker to finish the job, which makes the job state safe to read
-	err = manager.Stop()
+	err = manager.Stop(t.Context())
 	if err != nil {
 		t.Fatalf("Failed to stop manager: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestManagerRetry(t *testing.T) {
 	}, "the retried job to run twice")
 
 	// Stop manager: it waits for the worker to finish the job, which makes the job state safe to read
-	err = manager.Stop()
+	err = manager.Stop(t.Context())
 	if err != nil {
 		t.Fatalf("Failed to stop manager: %v", err)
 	}
@@ -521,7 +521,7 @@ func TestManagerScheduled(t *testing.T) {
 	}
 
 	// Stop manager
-	err = manager.Stop()
+	err = manager.Stop(t.Context())
 	if err != nil {
 		t.Fatalf("Failed to stop manager: %v", err)
 	}
@@ -578,7 +578,7 @@ func TestBatchManager(t *testing.T) {
 	}, "all batch jobs to be processed")
 
 	// Stop manager: it waits for the workers to finish the jobs, which makes the job states safe to read
-	err = manager.Stop()
+	err = manager.Stop(t.Context())
 	if err != nil {
 		t.Fatalf("Failed to stop manager: %v", err)
 	}

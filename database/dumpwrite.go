@@ -2,6 +2,7 @@ package database
 
 import (
 	"bufio"
+	"context"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
@@ -252,7 +253,7 @@ func quotedColumns(columns []string, driver Driver) (string, error) {
 }
 
 // backupMySQL writes an SQL dump of the whole MySQL/MariaDB database
-func (d *Connection[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
+func (d *Connection[Q]) backupMySQL(ctx context.Context, dbInstance *sql.DB, path string) (err error) {
 	file, err := os.Create(filepath.Clean(path))
 	if err != nil {
 		return apperror.NewError("creating backup file failed").AddError(err)
@@ -280,7 +281,7 @@ func (d *Connection[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error)
 		return apperror.NewError("writing charset settings failed").AddError(err)
 	}
 
-	rows, err := dbInstance.Query(mysqlShowTables)
+	rows, err := dbInstance.QueryContext(ctx, mysqlShowTables)
 	if err != nil {
 		return apperror.NewError("listing tables failed").AddError(err)
 	}
@@ -303,7 +304,7 @@ func (d *Connection[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error)
 			continue
 		}
 		var tableName, createStmt string
-		err = dbInstance.QueryRow("SHOW CREATE TABLE "+quotedTable).Scan(&tableName, &createStmt)
+		err = dbInstance.QueryRowContext(ctx, "SHOW CREATE TABLE "+quotedTable).Scan(&tableName, &createStmt)
 		if err != nil {
 			d.logger.Warn().Err(err).Field("table", table).Msg("getting table schema failed")
 			continue
@@ -312,7 +313,7 @@ func (d *Connection[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error)
 		if err != nil {
 			return apperror.NewError("writing table schema failed").AddError(err)
 		}
-		dataRows, err := dbInstance.Query(selectAllFrom + quotedTable) //nolint:gosec,unqueryvet // quotedTable is escaped by quoteIdentifier; a dump needs every column
+		dataRows, err := dbInstance.QueryContext(ctx, selectAllFrom+quotedTable) //nolint:gosec,unqueryvet // quotedTable is escaped by quoteIdentifier; a dump needs every column
 		if err != nil {
 			d.logger.Warn().Err(err).Field("table", table).Msg("reading table data failed")
 			continue
@@ -358,7 +359,7 @@ func (d *Connection[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error)
 }
 
 // backupPostgres writes an SQL dump of the tables of a schema of a PostgreSQL database
-func (d *Connection[Q]) backupPostgres(dbInstance *sql.DB, path string, schema string) (err error) {
+func (d *Connection[Q]) backupPostgres(ctx context.Context, dbInstance *sql.DB, path string, schema string) (err error) {
 	file, err := os.Create(filepath.Clean(path))
 	if err != nil {
 		return apperror.NewError("creating backup file failed").AddError(err)
@@ -386,7 +387,7 @@ func (d *Connection[Q]) backupPostgres(dbInstance *sql.DB, path string, schema s
 		return apperror.NewError("quoting schema name failed").AddError(err)
 	}
 
-	rows, err := dbInstance.Query(`
+	rows, err := dbInstance.QueryContext(ctx, `
 		SELECT tablename
 		FROM pg_tables
 		WHERE schemaname = $1
@@ -409,7 +410,7 @@ func (d *Connection[Q]) backupPostgres(dbInstance *sql.DB, path string, schema s
 
 	for _, table := range tables {
 		var createStmt string
-		err = dbInstance.QueryRow(`
+		err = dbInstance.QueryRowContext(ctx, `
 			SELECT 'CREATE TABLE IF NOT EXISTS "' || c.relname || '" (' ||
 				string_agg(a.attname || ' ' || pg_catalog.format_type(a.atttypid, a.atttypmod) ||
 					CASE WHEN a.attnotnull THEN ' NOT NULL' ELSE '' END, ', ') ||
@@ -432,7 +433,7 @@ func (d *Connection[Q]) backupPostgres(dbInstance *sql.DB, path string, schema s
 		if err != nil {
 			return apperror.NewError("quoting table name failed").AddError(err)
 		}
-		dataRows, err := dbInstance.Query(selectAllFrom + quotedSchema + "." + quotedTable) //nolint:gosec,unqueryvet // both identifiers are escaped by quoteIdentifier; a dump needs every column
+		dataRows, err := dbInstance.QueryContext(ctx, selectAllFrom+quotedSchema+"."+quotedTable) //nolint:gosec,unqueryvet // both identifiers are escaped by quoteIdentifier; a dump needs every column
 		if err != nil {
 			d.logger.Warn().Err(err).Field("table", table).Msg("reading table data failed")
 			continue

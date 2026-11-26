@@ -186,15 +186,17 @@ func WaitForShutdown(ctx context.Context) {
 //	func main() {
 //		defer interruption.Handle()
 //
+//		ctx := context.Background()
+//
 //		defer interruption.SetupGracefulShutdown([]func() error{
 //			func() error {
 //				log.Info().Msg("database disconnecting...")
-//				// database.Disconnect()
+//				// database.Disconnect(ctx)
 //				return nil
 //			},
 //			func() error {
 //				log.Info().Msg("web server stopping...")
-//				// web.Instance().Stop()
+//				// web.Instance().Stop(ctx)
 //				return nil
 //			},
 //		}, os.Interrupt, syscall.SIGTERM)

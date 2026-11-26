@@ -41,10 +41,11 @@
 //		})
 //
 //		// Start the manager
-//		if err := manager.Start(context.Background()); err != nil {
+//		ctx := context.Background()
+//		if err := manager.Start(ctx); err != nil {
 //			panic(err)
 //		}
-//		defer manager.Stop()
+//		defer manager.Stop(ctx)
 //
 //		// Enqueue a job
 //		job := queue.NewJob("email").
@@ -54,7 +55,7 @@
 //			}).
 //			Build()
 //
-//		if err := manager.Enqueue(context.Background(), job); err != nil {
+//		if err := manager.Enqueue(ctx, job); err != nil {
 //			panic(err)
 //		}
 //
@@ -339,8 +340,9 @@ func (m *Scheduler) Start(ctx context.Context) error {
 	return nil
 }
 
-// Stop stops the queue manager gracefully
-func (m *Scheduler) Stop() error {
+// Stop stops the queue manager gracefully.
+// It stops waiting for the workers when ctx ends or the stop timeout has passed.
+func (m *Scheduler) Stop(ctx context.Context) error {
 	if !m.running.CompareAndSwap(1, 0) {
 		return apperror.NewError("manager is not running")
 	}
@@ -354,6 +356,9 @@ func (m *Scheduler) Stop() error {
 
 	close(m.shutdownChan)
 
+	stopCtx, release := context.WithTimeout(ctx, stopTimeout)
+	defer release()
+
 	done := make(chan struct{})
 	go func() {
 		m.workerWg.Wait()
@@ -363,7 +368,7 @@ func (m *Scheduler) Stop() error {
 	select {
 	case <-done:
 		logger.Debug().Msg("queue manager stopped")
-	case <-time.After(stopTimeout):
+	case <-stopCtx.Done():
 		logger.Warn().Msg("timeout waiting for workers to stop")
 	}
 

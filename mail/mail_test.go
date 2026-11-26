@@ -343,7 +343,7 @@ func TestManagerStartStop(t *testing.T) {
 	manager := mail.NewMailer(config, queueManager)
 
 	// Test start
-	err := manager.Start()
+	err := manager.Start(t.Context())
 	if err != nil {
 		t.Errorf("Expected no error starting manager, got: %v", err)
 	}
@@ -353,7 +353,7 @@ func TestManagerStartStop(t *testing.T) {
 	}
 
 	// Test double start
-	err = manager.Start()
+	err = manager.Start(t.Context())
 	if err == nil {
 		t.Error("Expected error when starting already running manager")
 	}
@@ -408,7 +408,7 @@ func TestManagerSendAsync(t *testing.T) {
 	manager := mail.NewMailer(config, queueManager)
 
 	// Start manager (this will automatically start the queue manager)
-	err := manager.Start()
+	err := manager.Start(t.Context())
 	if err != nil {
 		t.Fatalf("Failed to start mail manager: %v", err)
 	}
@@ -446,7 +446,7 @@ func TestManagerSendAsyncQueueDisabled(t *testing.T) {
 	config.Queue.Enabled = false
 
 	manager := mail.NewMailer(config, nil)
-	err := manager.Start()
+	err := manager.Start(t.Context())
 	if err != nil {
 		t.Fatalf("Failed to start mail manager: %v", err)
 	}

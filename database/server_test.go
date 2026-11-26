@@ -40,7 +40,7 @@ const dumpRoundtripQuery = "SELECT id, txt, bin, num, ts, flag FROM dump_roundtr
 func connectServer(tb testing.TB, driver database.Driver, name, dsn string) *database.Connection[TestQueries] {
 	tb.Helper()
 	db := database.New[TestQueries](driver, name)
-	db.Connect(connectInterval, dsn)
+	db.Connect(tb.Context(), connectInterval, dsn)
 	cleanupDisconnect(tb, db)
 	await.Until(tb, serverConnectWait, db.Connected,
 		"the "+name+" server; start the test services with: docker compose -f test/compose.yaml up -d")
@@ -72,7 +72,7 @@ var trickyStrings = []string{
 
 func execAll(tb testing.TB, db *database.Connection[TestQueries], statements ...string) {
 	tb.Helper()
-	err := db.Execute(func(c *sql.DB) error {
+	err := db.Execute(tb.Context(), func(c *sql.DB) error {
 		for _, s := range statements {
 			_, err := c.Exec(s)
 			if err != nil {
@@ -98,7 +98,7 @@ type dumpRow struct {
 func readRows(tb testing.TB, db *database.Connection[TestQueries]) []dumpRow {
 	tb.Helper()
 	var out []dumpRow
-	err := db.Execute(func(c *sql.DB) error {
+	err := db.Execute(tb.Context(), func(c *sql.DB) error {
 		rows, err := c.Query(dumpRoundtripQuery)
 		if err != nil {
 			return err
@@ -148,7 +148,7 @@ func TestMySQLBackupRestoreRoundTrip(t *testing.T) {
 	t.Cleanup(func() { execAll(t, db, dropRoundtripTable) })
 
 	when := time.Date(2026, 3, 4, 5, 6, 7, 123456000, time.UTC)
-	err := db.Execute(func(c *sql.DB) error {
+	err := db.Execute(t.Context(), func(c *sql.DB) error {
 		for i, s := range trickyStrings {
 			_, err := c.Exec("INSERT INTO dump_roundtrip VALUES (?, ?, ?, ?, ?, ?)", i+1, s, []byte{0, 1, 2, 255, 254, byte(i)}, float64(i)+0.1, when, i%2)
 			if err != nil {
@@ -175,7 +175,7 @@ func TestMySQLBackupRestoreRoundTrip(t *testing.T) {
 	want := readRows(t, db)
 
 	backup := filepath.Join(t.TempDir(), "mysql.sql")
-	err = db.Backup(backup, "")
+	err = db.Backup(t.Context(), backup, "")
 	if err != nil {
 		t.Fatalf("Backup: %v", err)
 	}
@@ -192,7 +192,7 @@ func TestMySQLBackupRestoreRoundTrip(t *testing.T) {
 	}
 
 	execAll(t, db, "DELETE FROM dump_roundtrip")
-	err = db.Restore(backup)
+	err = db.Restore(t.Context(), backup)
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestPostgresBackupRestoreRoundTrip(t *testing.T) {
 	t.Cleanup(func() { execAll(t, db, dropRoundtripTable) })
 
 	when := time.Date(2026, 3, 4, 5, 6, 7, 123456000, time.UTC)
-	err := db.Execute(func(c *sql.DB) error {
+	err := db.Execute(t.Context(), func(c *sql.DB) error {
 		for i, s := range trickyStrings {
 			_, err := c.Exec("INSERT INTO dump_roundtrip VALUES ($1, $2, $3, $4, $5, $6)", i+1, s, []byte{0, 1, 2, 255, 254, byte(i)}, float64(i)+0.1, when, i%2 == 0)
 			if err != nil {
@@ -234,7 +234,7 @@ func TestPostgresBackupRestoreRoundTrip(t *testing.T) {
 	want := readRows(t, db)
 
 	backup := filepath.Join(t.TempDir(), "postgres.sql")
-	err = db.Backup(backup, "public")
+	err = db.Backup(t.Context(), backup, "public")
 	if err != nil {
 		t.Fatalf("Backup: %v", err)
 	}
@@ -248,7 +248,7 @@ func TestPostgresBackupRestoreRoundTrip(t *testing.T) {
 	}
 
 	execAll(t, db, "DELETE FROM dump_roundtrip")
-	err = db.Restore(backup)
+	err = db.Restore(t.Context(), backup)
 	if err != nil {
 		t.Fatalf("Restore: %v", err)
 	}
@@ -273,13 +273,13 @@ func TestMySQLRestoreWithForeignKeys(t *testing.T) {
 	})
 
 	backup := filepath.Join(t.TempDir(), "fk.sql")
-	err := db.Backup(backup, "")
+	err := db.Backup(t.Context(), backup, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Remove both tables, the way a restore into an empty database starts
-	err = db.Execute(func(c *sql.DB) error {
+	err = db.Execute(t.Context(), func(c *sql.DB) error {
 		conn, err := c.Conn(t.Context())
 		if err != nil {
 			return err
@@ -302,13 +302,13 @@ func TestMySQLRestoreWithForeignKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = db.Restore(backup)
+	err = db.Restore(t.Context(), backup)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	var children, parents int
-	err = db.Execute(func(c *sql.DB) error {
+	err = db.Execute(t.Context(), func(c *sql.DB) error {
 		err := c.QueryRow("SELECT COUNT(*) FROM a_fk_child").Scan(&children)
 		if err != nil {
 			return err

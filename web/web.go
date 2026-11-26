@@ -19,6 +19,7 @@
 //
 // import (
 //
+//	"context"
 //	"net/http"
 //
 //	"github.com/valentin-kaiser/go-core/v2/web"
@@ -26,6 +27,7 @@
 // )
 //
 //	func main() {
+//		ctx := context.Background()
 //		done := make(chan error)
 //		web.Instance().
 //			WithHost("localhost").
@@ -38,13 +40,13 @@
 //			WithGzip().
 //			WithLog().
 //			WithHandlerFunc("/", handler).
-//			StartAsync(done)
+//			StartAsync(ctx, done)
 //
 //		if err := <-done; err != nil {
 //			panic(err)
 //		}
 //
-//		err := web.Instance().Stop()
+//		err := web.Instance().Stop(ctx)
 //		if err != nil {
 //			panic(err)
 //		}
@@ -200,9 +202,10 @@ func Instance() *Server {
 	return instance
 }
 
-// Start starts the web server
-// All middlewares and handlers that should be registered must be registered before calling this function
-func (s *Server) Start() *Server {
+// Start starts the web server and blocks until it has stopped.
+// All middlewares and handlers that should be registered must be registered before calling this function.
+// When ctx ends the servers are shut down gracefully.
+func (s *Server) Start(ctx context.Context) *Server {
 	defer interruption.Catch()
 
 	if s.Error != nil {
@@ -219,7 +222,7 @@ func (s *Server) Start() *Server {
 		return s
 	}
 
-	group, _ := errgroup.WithContext(context.Background())
+	var group errgroup.Group
 
 	s.mutex.Lock()
 	s.servers = make(map[string]*http.Server)
@@ -234,6 +237,10 @@ func (s *Server) Start() *Server {
 		})
 	}
 
+	stopped := make(chan struct{})
+	defer close(stopped)
+	go s.shutdownOnDone(ctx, stopped)
+
 	err := group.Wait()
 	if err != nil {
 		s.Error = err
@@ -241,9 +248,28 @@ func (s *Server) Start() *Server {
 	return s
 }
 
+// shutdownOnDone shuts the servers down once ctx ends, unless stopped is closed first.
+func (s *Server) shutdownOnDone(ctx context.Context, stopped <-chan struct{}) {
+	defer interruption.Catch()
+
+	select {
+	case <-stopped:
+		return
+	case <-ctx.Done():
+	}
+
+	// ctx has ended already, the shutdown still needs its own grace period
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	err := s.shutdownServers(context.WithoutCancel(ctx), "context done, shutting down webservers...")
+	if err != nil {
+		logger.Error().Err(err).Msg("shutting down webservers after context end failed")
+	}
+}
+
 // StartAsync starts the web server asynchronously
-// It will return immediately and the server will run in the background
-func (s *Server) StartAsync(done chan error) {
+// It will return immediately and the server will run in the background until ctx ends or it is stopped
+func (s *Server) StartAsync(ctx context.Context, done chan error) {
 	defer interruption.Catch()
 
 	if s.Error != nil {
@@ -252,7 +278,7 @@ func (s *Server) StartAsync(done chan error) {
 	}
 
 	go func() {
-		err := s.Start().Error
+		err := s.Start(ctx).Error
 		if err != nil {
 			done <- err
 			s.Error = nil
@@ -264,48 +290,57 @@ func (s *Server) StartAsync(done chan error) {
 }
 
 // Stop stops the web server
-// Close does not attempt to close any hijacked connections, such as WebSockets.
-func (s *Server) Stop() error {
+// It shuts the servers down gracefully and closes them if that fails or ctx ends first.
+// Hijacked connections, such as WebSockets, are not closed.
+func (s *Server) Stop(ctx context.Context) error {
 	defer interruption.Catch()
 
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
+	shutdownErr := s.shutdownServers(ctx, "stopping webservers...")
+	if shutdownErr == nil {
+		return nil
+	}
+
+	stopErr := apperror.NewError("stopping webservers failed").AddError(shutdownErr)
 	for serverKey, server := range s.servers {
-		if server != nil {
-			err := server.Close()
-			if err != nil {
-				return apperror.NewErrorf("stopping %s server failed", serverKey).AddError(err)
-			}
+		if server == nil {
+			continue
+		}
+		err := server.Close()
+		if err != nil {
+			stopErr = stopErr.AddError(apperror.NewErrorf("closing %s server failed", serverKey).AddError(err))
 		}
 	}
 
-	return nil
+	return stopErr
 }
 
 // Shutdown gracefully shuts down the web server
 // It will wait for all active connections to finish before shutting down
-// Make sure the program doesn't exit and waits instead for Shutdown to return
-func (s *Server) Shutdown() error {
+// Make sure the program doesn't exit and waits instead for Shutdown to return.
+// It gives up when ctx ends or the shutdown timeout has passed.
+func (s *Server) Shutdown(ctx context.Context) error {
 	defer interruption.Catch()
 
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
-	return s.shutdownServers("shutting down webservers...")
+	return s.shutdownServers(ctx, "shutting down webservers...")
 }
 
 // Restart gracefully shuts down the web server and starts it again
 // It will wait for all active connections to finish before shutting down
-func (s *Server) Restart() error {
+func (s *Server) Restart(ctx context.Context) error {
 	defer interruption.Catch()
 
 	s.mutex.RLock()
-	err := s.shutdownServers("restarting webservers...")
+	err := s.shutdownServers(ctx, "restarting webservers...")
 	s.mutex.RUnlock()
 	if err != nil {
 		return err
 	}
 
-	err = s.Start().Error
+	err = s.Start(ctx).Error
 	if err != nil {
 		return apperror.NewError("starting webserver failed").AddError(err)
 	}
@@ -315,18 +350,18 @@ func (s *Server) Restart() error {
 
 // RestartAsync gracefully shuts down the web server and starts it again asynchronously
 // It will wait for all active connections to finish before shutting down
-func (s *Server) RestartAsync(done chan error) {
+func (s *Server) RestartAsync(ctx context.Context, done chan error) {
 	defer interruption.Catch()
 
 	s.mutex.RLock()
-	err := s.shutdownServers("restarting webservers...")
+	err := s.shutdownServers(ctx, "restarting webservers...")
 	s.mutex.RUnlock()
 	if err != nil {
 		done <- err
 		return
 	}
 
-	s.StartAsync(done)
+	s.StartAsync(ctx, done)
 }
 
 // WithHandler adds a custom handler to the server
@@ -1200,13 +1235,13 @@ func (s *Server) serveRedirect(w http.ResponseWriter, r *http.Request, rule *Red
 
 // shutdownServers gracefully shuts down all running servers and logs the given message first.
 // The caller must hold the read lock.
-func (s *Server) shutdownServers(message string) error {
+func (s *Server) shutdownServers(ctx context.Context, message string) error {
 	if len(s.servers) == 0 {
 		return nil
 	}
 
 	logger.Trace().Msg(message)
-	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), shutdownTimeout)
+	shutdownCtx, shutdownRelease := context.WithTimeout(ctx, shutdownTimeout)
 	defer shutdownRelease()
 
 	for key, server := range s.servers {

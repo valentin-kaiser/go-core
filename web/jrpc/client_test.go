@@ -494,7 +494,7 @@ func TestClientServerStreamNilRequest(t *testing.T) {
 	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
 
 	u := mustParseURL(t, nilArgumentURL)
-	err := jrpc.ServerStream(client, context.Background(), u, nil, out, factory)
+	err := jrpc.ServerStream(context.Background(), client, u, nil, out, factory)
 	if err == nil {
 		t.Fatal("expected error for nil request")
 	}
@@ -507,7 +507,7 @@ func TestClientServerStreamNilChannel(t *testing.T) {
 	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
 
 	u := mustParseURL(t, nilArgumentURL)
-	err := jrpc.ServerStream(client, context.Background(), u, req, nil, factory)
+	err := jrpc.ServerStream(context.Background(), client, u, req, nil, factory)
 	if err == nil {
 		t.Fatal("expected error for nil output channel")
 	}
@@ -520,7 +520,7 @@ func TestClientServerStreamNilFactory(t *testing.T) {
 	out := make(chan *emptypb.Empty, 1)
 
 	u := mustParseURL(t, nilArgumentURL)
-	err := jrpc.ServerStream(client, context.Background(), u, req, out, nil)
+	err := jrpc.ServerStream(context.Background(), client, u, req, out, nil)
 	if err == nil {
 		t.Fatal("expected error for nil response factory")
 	}
@@ -532,7 +532,7 @@ func TestClientClientStreamNilChannel(t *testing.T) {
 	resp := &emptypb.Empty{}
 
 	u := mustParseURL(t, nilArgumentURL)
-	err := jrpc.ClientStream[*emptypb.Empty](client, context.Background(), u, nil, resp)
+	err := jrpc.ClientStream[*emptypb.Empty](context.Background(), client, u, nil, resp)
 	if err == nil {
 		t.Fatal("expected error for nil input channel")
 	}
@@ -544,7 +544,7 @@ func TestClientClientStreamNilResponse(t *testing.T) {
 	in := make(chan *emptypb.Empty, 1)
 
 	u := mustParseURL(t, nilArgumentURL)
-	err := jrpc.ClientStream(client, context.Background(), u, in, nil)
+	err := jrpc.ClientStream(context.Background(), client, u, in, nil)
 	if err == nil {
 		t.Fatal("expected error for nil response")
 	}
@@ -557,7 +557,7 @@ func TestClientBidirectionalStreamNilInputChannel(t *testing.T) {
 	u := mustParseURL(t, nilArgumentURL)
 	out := make(chan *emptypb.Empty, 1)
 
-	err := jrpc.BidirectionalStream[*emptypb.Empty](client, context.Background(), u, nil, out, factory)
+	err := jrpc.BidirectionalStream[*emptypb.Empty](context.Background(), client, u, nil, out, factory)
 	if err == nil {
 		t.Fatal("expected error for nil input channel")
 	}
@@ -570,7 +570,7 @@ func TestClientBidirectionalStreamNilOutputChannel(t *testing.T) {
 	u := mustParseURL(t, nilArgumentURL)
 	in := make(chan *emptypb.Empty, 1)
 
-	err := jrpc.BidirectionalStream(client, context.Background(), u, in, nil, factory)
+	err := jrpc.BidirectionalStream(context.Background(), client, u, in, nil, factory)
 	if err == nil {
 		t.Fatal("expected error for nil output channel")
 	}
@@ -583,7 +583,7 @@ func TestClientBidirectionalStreamNilFactory(t *testing.T) {
 	in := make(chan *emptypb.Empty, 1)
 	out := make(chan *emptypb.Empty, 1)
 
-	err := jrpc.BidirectionalStream(client, context.Background(), u, in, out, nil)
+	err := jrpc.BidirectionalStream(context.Background(), client, u, in, out, nil)
 	if err == nil {
 		t.Fatal("expected error for nil response factory")
 	}
@@ -681,7 +681,7 @@ func TestClientServerStreamConnection(t *testing.T) {
 	// Start server stream in goroutine
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- jrpc.ServerStream(client, context.Background(), u, req, out, factory)
+		errCh <- jrpc.ServerStream(context.Background(), client, u, req, out, factory)
 	}()
 
 	// Read messages from output channel
@@ -716,7 +716,7 @@ func TestClientServerStreamConnectionFailure(t *testing.T) {
 	req := &emptypb.Empty{}
 	u := mustParseURL(t, closedPortURL)
 
-	err := jrpc.ServerStream(client, context.Background(), u, req, out, factory)
+	err := jrpc.ServerStream(context.Background(), client, u, req, out, factory)
 
 	// Should get connection error
 	if err == nil {
@@ -785,7 +785,7 @@ func TestClientClientStreamConnection(t *testing.T) {
 	// Start client stream in goroutine
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- jrpc.ClientStream(client, context.Background(), u, in, resp)
+		errCh <- jrpc.ClientStream(context.Background(), client, u, in, resp)
 	}()
 
 	// Send messages through input channel
@@ -823,7 +823,7 @@ func TestClientClientStreamConnectionFailure(t *testing.T) {
 
 	resp := &wrapperspb.StringValue{}
 	u := mustParseURL(t, closedPortURL)
-	err := jrpc.ClientStream(client, context.Background(), u, in, resp)
+	err := jrpc.ClientStream(context.Background(), client, u, in, resp)
 
 	// Should get connection error
 	if err == nil {
@@ -889,7 +889,7 @@ func TestClientBidirectionalStreamConnection(t *testing.T) {
 	// Start bidirectional stream in goroutine
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- jrpc.BidirectionalStream(client, ctx, u, in, out, factory)
+		errCh <- jrpc.BidirectionalStream(ctx, client, u, in, out, factory)
 	}()
 
 	// Send a few messages
@@ -958,7 +958,7 @@ func TestClientBidirectionalStreamConnectionFailure(t *testing.T) {
 	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
 
 	u := mustParseURL(t, closedPortURL)
-	err := jrpc.BidirectionalStream(client, context.Background(), u, in, out, factory)
+	err := jrpc.BidirectionalStream(context.Background(), client, u, in, out, factory)
 
 	// Should get connection error
 	if err == nil {
@@ -1178,7 +1178,7 @@ func TestWebSocketDialerConfiguration(t *testing.T) {
 	// Start streaming in another goroutine
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		err := jrpc.ServerStream(client, ctx, u, req, out, factory)
+		err := jrpc.ServerStream(ctx, client, u, req, out, factory)
 		t.Logf("server stream ended: %v", err)
 	})
 
@@ -1225,7 +1225,7 @@ func TestWebSocketConnectionClosure(t *testing.T) {
 	u := mustParseURL(t, server.URL+testMethodPath)
 
 	// This should fail because server closes immediately
-	err := jrpc.ServerStream(client, context.Background(), u, req, out, factory)
+	err := jrpc.ServerStream(context.Background(), client, u, req, out, factory)
 
 	// We expect some error (either connection closed or read error)
 	if err == nil {

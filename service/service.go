@@ -87,6 +87,7 @@
 //			Description: "HTTP web server running as a system service",
 //		}
 //
+//		ctx := context.Background()
 //		var server *web.Server
 //
 //		start := func(s *service.Service) error {
@@ -97,7 +98,7 @@
 //			})
 //
 //			go func() {
-//				if err := server.Start(); err != nil {
+//				if err := server.Start(ctx).Error; err != nil {
 //					logging.PackageLogger("main").Error().Err(err).Msg("Server failed")
 //				}
 //			}()
@@ -107,7 +108,7 @@
 //
 //		stop := func(s *service.Service) error {
 //			if server != nil {
-//				return server.Shutdown()
+//				return server.Shutdown(ctx)
 //			}
 //			return nil
 //		}

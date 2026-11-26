@@ -167,17 +167,16 @@ type Stats struct {
 
 // Mailer manages email sending and SMTP server functionality
 type Mailer struct {
-	config          *Config
-	sender          Sender
-	server          Server
-	Templates *Templates
-	queueManager    *queue.Scheduler
-	stats           *Stats
-	statsMutex      sync.RWMutex
-	running         atomic.Int32
-	ctx             context.Context
-	cancel          context.CancelFunc
-	wg              sync.WaitGroup
+	config       *Config
+	sender       Sender
+	server       Server
+	Templates    *Templates
+	queueManager *queue.Scheduler
+	stats        *Stats
+	statsMutex   sync.RWMutex
+	running      atomic.Int32
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
 }
 
 // NewMailer creates a new mail manager with the specified configuration and queue manager.
@@ -198,14 +197,10 @@ type Mailer struct {
 //	queueMgr := queue.NewMailer()
 //	mailMgr := mail.NewMailer(config, queueMgr)
 func NewMailer(config *Config, queueManager *queue.Scheduler) *Mailer {
-	ctx, cancel := context.WithCancel(context.Background())
-
 	manager := &Mailer{
 		config:       config,
 		queueManager: queueManager,
 		stats:        &Stats{},
-		ctx:          ctx,
-		cancel:       cancel,
 	}
 
 	manager.Templates = NewTemplates(config.Templates)
@@ -218,15 +213,20 @@ func NewMailer(config *Config, queueManager *queue.Scheduler) *Mailer {
 	return manager
 }
 
-// Start starts the mail manager
-func (m *Mailer) Start() error {
+// Start starts the mail manager.
+// The queue and the SMTP server run until ctx ends or Stop is called.
+func (m *Mailer) Start(ctx context.Context) error {
 	if !m.running.CompareAndSwap(0, 1) {
 		return apperror.NewError("mail manager is already running")
 	}
 
+	runCtx, cancel := context.WithCancel(ctx)
+	m.cancel = cancel
+
 	if m.config.Queue.Enabled && m.queueManager != nil {
-		err := m.queueManager.Start(m.ctx)
+		err := m.queueManager.Start(runCtx)
 		if err != nil {
+			cancel()
 			m.running.Store(0)
 			return apperror.NewError("starting queue manager failed").AddError(err)
 		}
@@ -235,7 +235,7 @@ func (m *Mailer) Start() error {
 
 	if m.config.Server.Enabled && m.server != nil {
 		m.wg.Go(func() {
-			err := m.server.Start(m.ctx)
+			err := m.server.Start(runCtx)
 			if err != nil {
 				logger.Error().Err(err).Msg("starting SMTP server failed")
 			}
@@ -261,7 +261,7 @@ func (m *Mailer) Stop(ctx context.Context) error {
 	}
 
 	if m.config.Queue.Enabled && m.queueManager != nil {
-		err := m.queueManager.Stop()
+		err := m.queueManager.Stop(ctx)
 		if err != nil {
 			logger.Error().Err(err).Msg("stopping queue manager failed")
 		}

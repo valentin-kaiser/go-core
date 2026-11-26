@@ -23,7 +23,7 @@ const (
 // fillDumpTable creates a table of 20000 rows with text, a binary value and a timestamp
 func fillDumpTable(b *testing.B, db *database.Connection[TestQueries], create string, placeholder func(int) string) {
 	b.Helper()
-	err := db.Execute(func(c *sql.DB) error {
+	err := db.Execute(b.Context(), func(c *sql.DB) error {
 		for _, s := range []string{dropBenchTable, create} {
 			_, err := c.Exec(s)
 			if err != nil {
@@ -52,7 +52,7 @@ func fillDumpTable(b *testing.B, db *database.Connection[TestQueries], create st
 		b.Fatal(err)
 	}
 	b.Cleanup(func() {
-		err := db.Execute(func(c *sql.DB) error {
+		err := db.Execute(b.Context(), func(c *sql.DB) error {
 			_, err := c.Exec(dropBenchTable)
 			return err
 		})
@@ -69,7 +69,7 @@ func benchBackupRestore(b *testing.B, db *database.Connection[TestQueries], sche
 	b.Run("Backup", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			err := db.Backup(path, schema)
+			err := db.Backup(b.Context(), path, schema)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -84,7 +84,7 @@ func benchBackupRestore(b *testing.B, db *database.Connection[TestQueries], sche
 	b.Run("Restore", func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
-			err := db.Restore(path)
+			err := db.Restore(b.Context(), path)
 			if err != nil {
 				b.Fatal(err)
 			}

@@ -19,9 +19,9 @@ const (
 func TestReconnectClosesReplacedPool(t *testing.T) {
 	db := database.New[TestQueries](database.DriverSQLite, "reconnect-close")
 	db.RegisterQueries(NewTestQueries)
-	db.Connect(reconnectCheckInterval, memoryDSN)
+	db.Connect(t.Context(), reconnectCheckInterval, memoryDSN)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	old := db.Get()
 	err := old.Ping()
@@ -36,7 +36,7 @@ func TestReconnectClosesReplacedPool(t *testing.T) {
 	if err == nil {
 		t.Fatal("the replaced pool is still open after reconnect")
 	}
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 	err = db.Get().Ping()
 	if err != nil {
 		t.Fatalf("new pool is not usable: %v", err)

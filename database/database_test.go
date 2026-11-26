@@ -67,11 +67,11 @@ func TestDatabase_Connect_SQLite(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
 
 	// Wait for connection
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	if !db.Connected() {
 		t.Error("Database should be connected")
@@ -89,7 +89,7 @@ func TestDatabase_Connect_InvalidConfig(t *testing.T) {
 
 	dsn := invalidDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
 
 	// Wait a bit; a failed attempt can not be observed, so this waits a fixed time
@@ -107,14 +107,14 @@ func TestDatabase_Disconnect(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
-	db.AwaitConnection()
+	db.Connect(t.Context(), connectInterval, dsn)
+	awaitDatabase(t, db)
 
 	if !db.Connected() {
 		t.Fatal("Database should be connected")
 	}
 
-	err := db.Disconnect()
+	err := db.Disconnect(t.Context())
 	if err != nil {
 		t.Errorf("Disconnect() returned error: %v", err)
 	}
@@ -129,8 +129,8 @@ func TestDatabase_Reconnect(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
-	db.AwaitConnection()
+	db.Connect(t.Context(), connectInterval, dsn)
+	awaitDatabase(t, db)
 
 	if !db.Connected() {
 		t.Fatal("Database should be connected")
@@ -155,12 +155,12 @@ func TestDatabase_Execute(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	// Create a table
-	err := db.Execute(func(sqlDB *sql.DB) error {
+	err := db.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec("CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)")
 		return err
 	})
@@ -169,7 +169,7 @@ func TestDatabase_Execute(t *testing.T) {
 	}
 
 	// Insert data
-	err = db.Execute(func(sqlDB *sql.DB) error {
+	err = db.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec("INSERT INTO users (name) VALUES (?)", "Alice")
 		return err
 	})
@@ -178,7 +178,7 @@ func TestDatabase_Execute(t *testing.T) {
 	}
 
 	// Query data
-	err = db.Execute(func(sqlDB *sql.DB) error {
+	err = db.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		var name string
 		err := sqlDB.QueryRow("SELECT name FROM users WHERE id = 1").Scan(&name)
 		if err != nil {
@@ -198,7 +198,7 @@ func TestDatabase_Execute(t *testing.T) {
 func TestDatabase_Execute_NotConnected(t *testing.T) {
 	db := database.New[TestQueries](database.DriverSQLite, testDatabaseName)
 
-	err := db.Execute(func(_ *sql.DB) error {
+	err := db.Execute(t.Context(), func(_ *sql.DB) error {
 		return nil
 	})
 	if err == nil {
@@ -213,12 +213,12 @@ func TestDatabase_Query(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	// Create a table first
-	err := db.Execute(func(sqlDB *sql.DB) error {
+	err := db.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec(createUsersTable)
 		return err
 	})
@@ -227,7 +227,7 @@ func TestDatabase_Query(t *testing.T) {
 	}
 
 	// Use Query method
-	err = db.Query(func(q *TestQueries) error {
+	err = db.Query(t.Context(), func(q *TestQueries) error {
 		_, err := q.db.ExecContext(context.Background(), "INSERT INTO users (name) VALUES (?)", "Bob")
 		return err
 	})
@@ -242,11 +242,11 @@ func TestDatabase_Query_NotRegistered(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
-	err := db.Query(func(_ *TestQueries) error {
+	err := db.Query(t.Context(), func(_ *TestQueries) error {
 		return nil
 	})
 	if err == nil {
@@ -260,12 +260,12 @@ func TestDatabase_Transaction(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	// Create table
-	err := db.Execute(func(sqlDB *sql.DB) error {
+	err := db.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec("CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)")
 		if err != nil {
 			return err
@@ -278,7 +278,7 @@ func TestDatabase_Transaction(t *testing.T) {
 	}
 
 	// Successful transaction
-	err = db.Transaction(func(tx *sql.Tx) error {
+	err = db.Transaction(t.Context(), func(tx *sql.Tx) error {
 		_, err := tx.Exec("UPDATE accounts SET balance = balance - 50 WHERE id = 1")
 		if err != nil {
 			return err
@@ -291,7 +291,7 @@ func TestDatabase_Transaction(t *testing.T) {
 	}
 
 	// Verify transaction was committed
-	err = db.Execute(func(sqlDB *sql.DB) error {
+	err = db.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		var balance int
 		err := sqlDB.QueryRow("SELECT balance FROM accounts WHERE id = 1").Scan(&balance)
 		if err != nil {
@@ -313,12 +313,12 @@ func TestDatabase_Transaction_Rollback(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	// Create table
-	err := db.Execute(func(sqlDB *sql.DB) error {
+	err := db.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec("CREATE TABLE IF NOT EXISTS accounts (id INTEGER PRIMARY KEY, balance INTEGER)")
 		if err != nil {
 			return err
@@ -331,7 +331,7 @@ func TestDatabase_Transaction_Rollback(t *testing.T) {
 	}
 
 	// Failed transaction (should rollback)
-	err = db.Transaction(func(tx *sql.Tx) error {
+	err = db.Transaction(t.Context(), func(tx *sql.Tx) error {
 		_, err := tx.Exec("UPDATE accounts SET balance = balance - 50 WHERE id = 1")
 		if err != nil {
 			return err
@@ -343,7 +343,7 @@ func TestDatabase_Transaction_Rollback(t *testing.T) {
 	}
 
 	// Verify transaction was rolled back
-	err = db.Execute(func(sqlDB *sql.DB) error {
+	err = db.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		var balance int
 		err := sqlDB.QueryRow("SELECT balance FROM accounts WHERE id = 1").Scan(&balance)
 		if err != nil {
@@ -372,16 +372,16 @@ func TestDatabase_RegisterOnConnectHandler(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	if !handlerCalled.Load() {
 		t.Error("OnConnect handler should have been called")
 	}
 
 	// Verify table was created
-	err := db.Execute(func(sqlDB *sql.DB) error {
+	err := db.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec("INSERT INTO test_table (id) VALUES (1)")
 		return err
 	})
@@ -399,9 +399,9 @@ func TestDatabase_RegisterOnConnectHandler_Nil(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	if !db.Connected() {
 		t.Error("Database should be connected even with nil handler")
@@ -422,12 +422,12 @@ func TestDatabase_RegisterMiddleware(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	// Execute query to verify middleware is working
-	err := db.Execute(func(sqlDB *sql.DB) error {
+	err := db.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec("SELECT 1")
 		return err
 	})
@@ -464,12 +464,12 @@ func TestDatabase_Debug(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	// Create table
-	err := db.Execute(func(sqlDB *sql.DB) error {
+	err := db.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec(createUsersTable)
 		return err
 	})
@@ -478,7 +478,7 @@ func TestDatabase_Debug(t *testing.T) {
 	}
 
 	// Regular execute (logging disabled)
-	err = db.Execute(func(sqlDB *sql.DB) error {
+	err = db.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec("INSERT INTO users (name) VALUES ('Alice')")
 		return err
 	})
@@ -487,7 +487,7 @@ func TestDatabase_Debug(t *testing.T) {
 	}
 
 	// Debug execute (logging should be temporarily enabled)
-	err = db.Debug().Execute(func(sqlDB *sql.DB) error {
+	err = db.Debug().Execute(t.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec("INSERT INTO users (name) VALUES ('Bob')")
 		return err
 	})
@@ -496,7 +496,7 @@ func TestDatabase_Debug(t *testing.T) {
 	}
 
 	// Debug query
-	err = db.Debug().Query(func(q *TestQueries) error {
+	err = db.Debug().Query(t.Context(), func(q *TestQueries) error {
 		_, err := q.db.ExecContext(context.Background(), "INSERT INTO users (name) VALUES (?)", "Charlie")
 		return err
 	})
@@ -512,12 +512,12 @@ func TestDatabase_Debug_WithoutMiddleware(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	// Create table
-	err := db.Execute(func(sqlDB *sql.DB) error {
+	err := db.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec(createUsersTable)
 		return err
 	})
@@ -526,7 +526,7 @@ func TestDatabase_Debug_WithoutMiddleware(t *testing.T) {
 	}
 
 	// Debug without LoggingMiddleware should fail
-	err = db.Debug().Execute(func(sqlDB *sql.DB) error {
+	err = db.Debug().Execute(t.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec("INSERT INTO users (name) VALUES ('Alice')")
 		return err
 	})
@@ -545,12 +545,12 @@ func TestDatabase_Backup_SQLite(t *testing.T) {
 	dbPath := filepath.Join(dir, "test_backup.db")
 	dsn := "file:" + dbPath
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	// Create table and insert data
-	err := db.Execute(func(sqlDB *sql.DB) error {
+	err := db.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec(createUsersTable)
 		if err != nil {
 			return err
@@ -565,7 +565,7 @@ func TestDatabase_Backup_SQLite(t *testing.T) {
 	// Backup database
 	backupPath := filepath.Join(dir, "test_backup_file.db")
 
-	err = db.Backup(backupPath, "")
+	err = db.Backup(t.Context(), backupPath, "")
 	if err != nil {
 		t.Errorf("Backup() failed: %v", err)
 	}
@@ -583,11 +583,11 @@ func TestDatabase_Backup_InMemory(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
-	err := db.Backup(inMemoryBackupPath, "")
+	err := db.Backup(t.Context(), inMemoryBackupPath, "")
 	if err == nil {
 		t.Error("Backup() should fail for in-memory database")
 	}
@@ -601,12 +601,12 @@ func TestDatabase_Restore_SQLite(t *testing.T) {
 	db1 := database.New[TestQueries](database.DriverSQLite, "test1")
 	dsn1 := "file:" + filepath.Join(dir, "test_restore_orig.db")
 
-	db1.Connect(connectInterval, dsn1)
+	db1.Connect(t.Context(), connectInterval, dsn1)
 	cleanupDisconnect(t, db1)
-	db1.AwaitConnection()
+	awaitDatabase(t, db1)
 
 	// Create table and insert data
-	err := db1.Execute(func(sqlDB *sql.DB) error {
+	err := db1.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec(createUsersTable)
 		if err != nil {
 			return err
@@ -621,7 +621,7 @@ func TestDatabase_Restore_SQLite(t *testing.T) {
 	// Backup
 	backupPath := filepath.Join(dir, "test_restore_backup.db")
 
-	err = db1.Backup(backupPath, "")
+	err = db1.Backup(t.Context(), backupPath, "")
 	if err != nil {
 		t.Fatalf("Backup failed: %v", err)
 	}
@@ -630,12 +630,12 @@ func TestDatabase_Restore_SQLite(t *testing.T) {
 	db2 := database.New[TestQueries](database.DriverSQLite, "test2")
 	dsn2 := "file:" + filepath.Join(dir, "test_restore_target.db")
 
-	db2.Connect(connectInterval, dsn2)
+	db2.Connect(t.Context(), connectInterval, dsn2)
 	cleanupDisconnect(t, db2)
-	db2.AwaitConnection()
+	awaitDatabase(t, db2)
 
 	// Restore
-	err = db2.Restore(backupPath)
+	err = db2.Restore(t.Context(), backupPath)
 	if err != nil {
 		t.Errorf("Restore() failed: %v", err)
 	}
@@ -644,7 +644,7 @@ func TestDatabase_Restore_SQLite(t *testing.T) {
 	awaitConnected(t, db2)
 
 	// Verify data was restored
-	err = db2.Execute(func(sqlDB *sql.DB) error {
+	err = db2.Execute(t.Context(), func(sqlDB *sql.DB) error {
 		var name string
 		err := sqlDB.QueryRow("SELECT name FROM users WHERE id = 1").Scan(&name)
 		if err != nil {
@@ -670,9 +670,9 @@ func TestDatabase_Connected(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	if !db.Connected() {
 		t.Error("Database should be connected after Connect()")
@@ -689,9 +689,9 @@ func TestDatabase_Get(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	sqlDB := db.Get()
 	if sqlDB == nil {
@@ -711,11 +711,11 @@ func TestDatabase_AwaitConnection(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
 
 	// This should block until connected
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	if !db.Connected() {
 		t.Error("Database should be connected after AwaitConnection()")
@@ -727,12 +727,12 @@ func BenchmarkDatabase_Execute(b *testing.B) {
 	db := database.New[TestQueries](database.DriverSQLite, benchDatabaseName)
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(b.Context(), connectInterval, dsn)
 	cleanupDisconnect(b, db)
-	db.AwaitConnection()
+	awaitDatabase(b, db)
 
 	// Setup
-	err := db.Execute(func(sqlDB *sql.DB) error {
+	err := db.Execute(b.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec(createBenchTable)
 		return err
 	})
@@ -742,7 +742,7 @@ func BenchmarkDatabase_Execute(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		err := db.Execute(func(sqlDB *sql.DB) error {
+		err := db.Execute(b.Context(), func(sqlDB *sql.DB) error {
 			_, err := sqlDB.Exec(insertBenchRow, benchValue)
 			return err
 		})
@@ -759,12 +759,12 @@ func BenchmarkDatabase_Query(b *testing.B) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(b.Context(), connectInterval, dsn)
 	cleanupDisconnect(b, db)
-	db.AwaitConnection()
+	awaitDatabase(b, db)
 
 	// Setup
-	err := db.Execute(func(sqlDB *sql.DB) error {
+	err := db.Execute(b.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec(createBenchTable)
 		return err
 	})
@@ -774,7 +774,7 @@ func BenchmarkDatabase_Query(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		err := db.Query(func(q *TestQueries) error {
+		err := db.Query(b.Context(), func(q *TestQueries) error {
 			_, err := q.db.ExecContext(context.Background(), insertBenchRow, benchValue)
 			return err
 		})
@@ -789,12 +789,12 @@ func BenchmarkDatabase_Transaction(b *testing.B) {
 	db := database.New[TestQueries](database.DriverSQLite, benchDatabaseName)
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(b.Context(), connectInterval, dsn)
 	cleanupDisconnect(b, db)
-	db.AwaitConnection()
+	awaitDatabase(b, db)
 
 	// Setup
-	err := db.Execute(func(sqlDB *sql.DB) error {
+	err := db.Execute(b.Context(), func(sqlDB *sql.DB) error {
 		_, err := sqlDB.Exec(createBenchTable)
 		return err
 	})
@@ -804,7 +804,7 @@ func BenchmarkDatabase_Transaction(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		err := db.Transaction(func(tx *sql.Tx) error {
+		err := db.Transaction(b.Context(), func(tx *sql.Tx) error {
 			_, err := tx.Exec(insertBenchRow, benchValue)
 			return err
 		})
@@ -819,9 +819,9 @@ func BenchmarkDatabase_Get(b *testing.B) {
 	db := database.New[TestQueries](database.DriverSQLite, benchDatabaseName)
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(b.Context(), connectInterval, dsn)
 	cleanupDisconnect(b, db)
-	db.AwaitConnection()
+	awaitDatabase(b, db)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -834,9 +834,9 @@ func BenchmarkDatabase_Connected(b *testing.B) {
 	db := database.New[TestQueries](database.DriverSQLite, benchDatabaseName)
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(b.Context(), connectInterval, dsn)
 	cleanupDisconnect(b, db)
-	db.AwaitConnection()
+	awaitDatabase(b, db)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -848,7 +848,7 @@ func BenchmarkDatabase_Connected(b *testing.B) {
 func TestDatabase_Transaction_NotConnected(t *testing.T) {
 	db := database.New[TestQueries](database.DriverSQLite, "test-tx-not-connected")
 
-	err := db.Transaction(func(_ *sql.Tx) error {
+	err := db.Transaction(t.Context(), func(_ *sql.Tx) error {
 		return nil
 	})
 	if err == nil {
@@ -874,12 +874,12 @@ func TestDatabase_Execute_WithError(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	expectedErr := errors.New("test error")
-	err := db.Execute(func(_ *sql.DB) error {
+	err := db.Execute(t.Context(), func(_ *sql.DB) error {
 		return expectedErr
 	})
 	if err != expectedErr {
@@ -894,12 +894,12 @@ func TestDatabase_Query_WithError(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	expectedErr := errors.New("test error")
-	err := db.Query(func(_ *TestQueries) error {
+	err := db.Query(t.Context(), func(_ *TestQueries) error {
 		return expectedErr
 	})
 	if err != expectedErr {
@@ -926,9 +926,9 @@ func TestDatabase_MultipleOnConnectHandlers(t *testing.T) {
 
 	dsn := memoryDSN
 
-	db.Connect(connectInterval, dsn)
+	db.Connect(t.Context(), connectInterval, dsn)
 	cleanupDisconnect(t, db)
-	db.AwaitConnection()
+	awaitDatabase(t, db)
 
 	if !handler1Called.Load() {
 		t.Error("First handler should have been called")
@@ -938,7 +938,9 @@ func TestDatabase_MultipleOnConnectHandlers(t *testing.T) {
 	}
 }
 
-func cleanupDisconnect(tb testing.TB, db interface{ Disconnect() error }) {
+func cleanupDisconnect(tb testing.TB, db interface {
+	Disconnect(ctx context.Context) error
+}) {
 	tb.Helper()
 	tb.Cleanup(func() { disconnect(tb, db) })
 }
@@ -948,10 +950,23 @@ func awaitConnected(tb testing.TB, db interface{ Connected() bool }) {
 	await.Until(tb, connectTimeout, db.Connected, "the database to connect")
 }
 
-func disconnect(tb testing.TB, db interface{ Disconnect() error }) {
+func disconnect(tb testing.TB, db interface {
+	Disconnect(ctx context.Context) error
+}) {
 	tb.Helper()
-	err := db.Disconnect()
+	// Cleanup functions run after the test context has ended, but the disconnect still has to complete
+	err := db.Disconnect(context.Background())
 	if err != nil {
 		tb.Errorf("disconnecting database failed: %v", err)
+	}
+}
+
+func awaitDatabase(tb testing.TB, db interface {
+	AwaitConnection(ctx context.Context) error
+}) {
+	tb.Helper()
+	err := db.AwaitConnection(tb.Context())
+	if err != nil {
+		tb.Fatalf("awaiting database connection failed: %v", err)
 	}
 }
