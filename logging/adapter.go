@@ -17,9 +17,6 @@ package logging
 
 import "log"
 
-// Level represents log levels
-type Level int
-
 // Log level constants define the severity levels for logging operations.
 // These levels are ordered from most verbose (VerboseLevel) to least verbose (DisabledLevel).
 const (
@@ -33,6 +30,9 @@ const (
 	PanicLevel    Level = 5  // PanicLevel logs error events that will cause the application to panic
 	DisabledLevel Level = 6  // DisabledLevel disables all logging
 )
+
+// Level represents log levels
+type Level int
 
 // String returns the string representation of the log level
 func (l Level) String() string {
@@ -92,11 +92,6 @@ type Field struct {
 	Value any
 }
 
-// F is a helper function to create fields
-func F(key string, value any) Field {
-	return Field{Key: key, Value: value}
-}
-
 // Event represents a log event with a fluent interface
 type Event interface {
 	// Add fields to the event
@@ -112,6 +107,11 @@ type Event interface {
 
 	// Log the formatted message
 	Msgf(format string, v ...any)
+}
+
+// F is a helper function to create fields
+func F(key string, value any) Field {
+	return Field{Key: key, Value: value}
 }
 
 // IsEnabled reports whether the adapter would write an event of the given level.

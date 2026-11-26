@@ -8,11 +8,6 @@ import (
 	"sync/atomic"
 )
 
-// adapterBox lets the global adapter, an interface value, live in an atomic.Pointer
-type adapterBox struct {
-	adapter Adapter
-}
-
 var (
 	// global is the default adapter used when no package-specific adapter is set.
 	// It is read on every log call, so it is an atomic pointer instead of a mutex-guarded value.
@@ -25,31 +20,9 @@ var (
 	anonymous atomic.Bool
 )
 
-func init() {
-	global.Store(&adapterBox{adapter: NewNoOpAdapter()})
-}
-
-// SetGlobalAdapter sets the global logging adapter for all packages
-// This will be used as the default for all packages unless they have a specific adapter
-func SetGlobalAdapter(adapter Adapter) {
-	global.Store(&adapterBox{adapter: adapter})
-}
-
-// GetGlobalAdapter returns the current global adapter
-func GetGlobalAdapter[T Adapter]() (T, bool) {
-	a, ok := global.Load().adapter.(T)
-	return a, ok
-}
-
-// GetGlobalAdapterInterface returns the current global adapter as an interface
-func GetGlobalAdapterInterface() Adapter {
-	return global.Load().adapter
-}
-
-// SetPackageAdapter sets a specific adapter for a package
-// This overrides the global adapter for the specified package
-func SetPackageAdapter(pkg string, adapter Adapter) {
-	packages.Store(pkg, adapter)
+// adapterBox lets the global adapter, an interface value, live in an atomic.Pointer
+type adapterBox struct {
+	adapter Adapter
 }
 
 // DynamicAdapter wraps the package lookup to always use the current adapter
@@ -128,6 +101,43 @@ func (d *DynamicAdapter) Logger() *log.Logger {
 	return d.current().Logger()
 }
 
+// current returns the current adapter for this package
+func (d *DynamicAdapter) current() Adapter {
+	if adapter, ok := packages.Load(d.pkg); ok {
+		a, ok := adapter.(Adapter)
+		if !ok {
+			return global.Load().adapter
+		}
+		return a
+	}
+
+	// WithPackage caches the derived adapter per package, so this does not allocate
+	return global.Load().adapter.WithPackage(d.pkg)
+}
+
+// SetGlobalAdapter sets the global logging adapter for all packages
+// This will be used as the default for all packages unless they have a specific adapter
+func SetGlobalAdapter(adapter Adapter) {
+	global.Store(&adapterBox{adapter: adapter})
+}
+
+// GetGlobalAdapter returns the current global adapter
+func GetGlobalAdapter[T Adapter]() (T, bool) {
+	a, ok := global.Load().adapter.(T)
+	return a, ok
+}
+
+// GetGlobalAdapterInterface returns the current global adapter as an interface
+func GetGlobalAdapterInterface() Adapter {
+	return global.Load().adapter
+}
+
+// SetPackageAdapter sets a specific adapter for a package
+// This overrides the global adapter for the specified package
+func SetPackageAdapter(pkg string, adapter Adapter) {
+	packages.Store(pkg, adapter)
+}
+
 // Debug sets whether to use caller tracking
 func Debug(d bool) {
 	debug.Store(d)
@@ -197,18 +207,8 @@ func ListPackages() []string {
 	return p
 }
 
-// current returns the current adapter for this package
-func (d *DynamicAdapter) current() Adapter {
-	if adapter, ok := packages.Load(d.pkg); ok {
-		a, ok := adapter.(Adapter)
-		if !ok {
-			return global.Load().adapter
-		}
-		return a
-	}
-
-	// WithPackage caches the derived adapter per package, so this does not allocate
-	return global.Load().adapter.WithPackage(d.pkg)
+func init() {
+	global.Store(&adapterBox{adapter: NewNoOpAdapter()})
 }
 
 // callerInfo resolves the call site skip frames above itself.

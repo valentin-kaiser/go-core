@@ -9,20 +9,6 @@ import (
 // groupSeparator joins the names of nested slog groups into one field key.
 const groupSeparator = "."
 
-// SLogger returns a slog logger backed by the current global logging adapter.
-func SLogger() *slog.Logger {
-	return NewSlogLogger(GetGlobalAdapterInterface())
-}
-
-// NewSlogLogger creates a slog logger backed by the provided logging adapter.
-func NewSlogLogger(adapter Adapter) *slog.Logger {
-	if adapter == nil {
-		adapter = NewNoOpAdapter()
-	}
-
-	return slog.New(&slogHandler{adapter: adapter})
-}
-
 type slogHandler struct {
 	adapter Adapter
 	attrs   []slog.Attr
@@ -98,6 +84,20 @@ func (h *slogHandler) eventFor(level slog.Level) Event {
 	}
 
 	return h.adapter.Error()
+}
+
+// SLogger returns a slog logger backed by the current global logging adapter.
+func SLogger() *slog.Logger {
+	return NewSlogLogger(GetGlobalAdapterInterface())
+}
+
+// NewSlogLogger creates a slog logger backed by the provided logging adapter.
+func NewSlogLogger(adapter Adapter) *slog.Logger {
+	if adapter == nil {
+		adapter = NewNoOpAdapter()
+	}
+
+	return slog.New(&slogHandler{adapter: adapter})
 }
 
 func slogToLevel(level slog.Level) Level {
