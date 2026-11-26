@@ -282,14 +282,14 @@ func (d *Database[Q]) Execute(call func(db *sql.DB) error) error {
 	parent.dbMutex.RUnlock()
 
 	if !parent.connected.Load() || instance == nil {
-		return apperror.NewErrorf("database is not connected")
+		return apperror.NewError("database is not connected")
 	}
 
 	// If in debug mode, temporarily enable logging middleware
 	if d.debug {
 		loggingMW := d.findLoggingMiddleware()
 		if loggingMW == nil {
-			return apperror.NewErrorf("debug mode requires LoggingMiddleware to be registered")
+			return apperror.NewError("debug mode requires LoggingMiddleware to be registered")
 		}
 		wasEnabled := loggingMW.IsEnabled()
 		loggingMW.SetEnabled(true)
@@ -317,7 +317,7 @@ func (d *Database[Q]) Query(call func(q *Q) error) error {
 	}
 
 	if parent.queries == nil && parent.queriesFunc == nil {
-		return apperror.NewErrorf("queries constructor not registered")
+		return apperror.NewError("queries constructor not registered")
 	}
 
 	parent.dbMutex.RLock()
@@ -325,14 +325,14 @@ func (d *Database[Q]) Query(call func(q *Q) error) error {
 	parent.dbMutex.RUnlock()
 
 	if !parent.connected.Load() || dbInstance == nil {
-		return apperror.NewErrorf("database is not connected")
+		return apperror.NewError("database is not connected")
 	}
 
 	// If in debug mode, temporarily enable logging middleware
 	if d.debug {
 		loggingMW := d.findLoggingMiddleware()
 		if loggingMW == nil {
-			return apperror.NewErrorf("debug mode requires LoggingMiddleware to be registered")
+			return apperror.NewError("debug mode requires LoggingMiddleware to be registered")
 		}
 		wasEnabled := loggingMW.IsEnabled()
 		loggingMW.SetEnabled(true)
@@ -341,7 +341,7 @@ func (d *Database[Q]) Query(call func(q *Q) error) error {
 
 	queries, err := parent.newQueries(dbInstance)
 	if err != nil {
-		return err
+		return apperror.NewError("creating queries failed").AddError(err)
 	}
 
 	err = call(queries)
@@ -361,19 +361,19 @@ func (d *Database[Q]) Transaction(call func(tx *sql.Tx) error) error {
 	d.dbMutex.RUnlock()
 
 	if !d.connected.Load() || dbInstance == nil {
-		return apperror.NewErrorf("database is not connected")
+		return apperror.NewError("database is not connected")
 	}
 
 	tx, err := dbInstance.Begin()
 	if err != nil {
-		return apperror.NewErrorf("failed to begin transaction").AddError(err)
+		return apperror.NewError("beginning transaction failed").AddError(err)
 	}
 
 	err = call(tx)
 	if err != nil {
 		rbErr := tx.Rollback()
 		if rbErr != nil {
-			return apperror.NewErrorf("failed to rollback transaction").AddError(rbErr).AddError(err)
+			return apperror.NewError("rolling back transaction failed").AddError(rbErr).AddError(err)
 		}
 		return err
 	}
@@ -382,9 +382,9 @@ func (d *Database[Q]) Transaction(call func(tx *sql.Tx) error) error {
 	if err != nil {
 		rbErr := tx.Rollback()
 		if rbErr != nil {
-			return apperror.NewErrorf("failed to rollback transaction").AddError(rbErr).AddError(err)
+			return apperror.NewError("rolling back transaction failed").AddError(rbErr).AddError(err)
 		}
-		return apperror.NewErrorf("failed to commit transaction").AddError(err)
+		return apperror.NewError("committing transaction failed").AddError(err)
 	}
 
 	return nil
@@ -404,7 +404,7 @@ func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 	}
 
 	if parent.queries == nil && parent.queriesFunc == nil {
-		return apperror.NewErrorf("queries constructor not registered")
+		return apperror.NewError("queries constructor not registered")
 	}
 
 	parent.dbMutex.RLock()
@@ -412,14 +412,14 @@ func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 	parent.dbMutex.RUnlock()
 
 	if !parent.connected.Load() || dbInstance == nil {
-		return apperror.NewErrorf("database is not connected")
+		return apperror.NewError("database is not connected")
 	}
 
 	// If in debug mode, temporarily enable logging middleware
 	if d.debug {
 		loggingMW := d.findLoggingMiddleware()
 		if loggingMW == nil {
-			return apperror.NewErrorf("debug mode requires LoggingMiddleware to be registered")
+			return apperror.NewError("debug mode requires LoggingMiddleware to be registered")
 		}
 		wasEnabled := loggingMW.IsEnabled()
 		loggingMW.SetEnabled(true)
@@ -429,16 +429,16 @@ func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 	// Begin transaction
 	tx, err := dbInstance.Begin()
 	if err != nil {
-		return apperror.NewErrorf("failed to begin transaction").AddError(err)
+		return apperror.NewError("beginning transaction failed").AddError(err)
 	}
 
 	queries, err := parent.newQueries(tx)
 	if err != nil {
 		rbErr := tx.Rollback()
 		if rbErr != nil {
-			return apperror.NewErrorf("failed to rollback transaction").AddError(rbErr).AddError(err)
+			return apperror.NewError("rolling back transaction failed").AddError(rbErr).AddError(err)
 		}
-		return err
+		return apperror.NewError("creating queries failed").AddError(err)
 	}
 
 	// Execute the user's function
@@ -446,7 +446,7 @@ func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 	if err != nil {
 		rbErr := tx.Rollback()
 		if rbErr != nil {
-			return apperror.NewErrorf("failed to rollback transaction").AddError(rbErr).AddError(err)
+			return apperror.NewError("rolling back transaction failed").AddError(rbErr).AddError(err)
 		}
 		return err
 	}
@@ -455,9 +455,9 @@ func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 	if err != nil {
 		rbErr := tx.Rollback()
 		if rbErr != nil {
-			return apperror.NewErrorf("failed to rollback transaction").AddError(rbErr).AddError(err)
+			return apperror.NewError("rolling back transaction failed").AddError(rbErr).AddError(err)
 		}
-		return apperror.NewErrorf("failed to commit transaction").AddError(err)
+		return apperror.NewError("committing transaction failed").AddError(err)
 	}
 
 	return nil
@@ -511,7 +511,7 @@ func (d *Database[Q]) Disconnect() error {
 	if d.connected.Load() && d.db != nil {
 		err := d.db.Close()
 		if err != nil {
-			return apperror.NewErrorf("failed to close database connection").AddError(err)
+			return apperror.NewError("closing database connection failed").AddError(err)
 		}
 	}
 	<-d.done
@@ -561,7 +561,7 @@ func (d *Database[Q]) Connect(interval time.Duration, dsn string) {
 					if replaced != nil && replaced != instance {
 						err := replaced.Close()
 						if err != nil {
-							d.logger.Warn().Err(err).Msg("failed to close replaced connection pool")
+							d.logger.Warn().Err(err).Msg("closing replaced connection pool failed")
 						}
 					}
 
@@ -708,19 +708,23 @@ func (d *Database[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
 	copy(middlewares, d.middlewares)
 	d.middlewareMutex.RUnlock()
 
-	driverName := wrap(string(driver), middlewares)
+	driverName, err := wrap(string(driver), middlewares)
+	if err != nil {
+		return nil, apperror.NewError("wrapping database driver with middleware failed").AddError(err)
+	}
 	conn, err := sql.Open(driverName, escapeDSNParams(dsn))
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("opening database connection failed").AddError(err)
 	}
 
 	err = conn.Ping()
 	if err != nil {
+		pingErr := apperror.NewError("pinging database failed").AddError(err)
 		closeErr := conn.Close()
 		if closeErr != nil {
-			return nil, apperror.Wrap(errors.Join(err, closeErr))
+			return nil, pingErr.AddError(closeErr)
 		}
-		return nil, apperror.Wrap(err)
+		return nil, pingErr
 	}
 
 	return conn, nil
@@ -733,19 +737,19 @@ func (d *Database[Q]) connect(driver Driver, dsn string) (*sql.DB, error) {
 // Returns an error if the database is not connected or if the backup fails.
 func (d *Database[Q]) Backup(path string, schema string) error {
 	if !d.connected.Load() {
-		return apperror.NewErrorf("database is not connected")
+		return apperror.NewError("database is not connected")
 	}
 
 	dir := filepath.Dir(path)
 	err := os.MkdirAll(dir, 0750)
 	if err != nil {
-		return apperror.NewErrorf("failed to create backup directory").AddError(err)
+		return apperror.NewError("creating backup directory failed").AddError(err)
 	}
 
 	switch d.driver {
 	case DriverSQLite:
 		if !strings.HasPrefix(d.getDSN(), "file:") {
-			return apperror.NewErrorf("database backup is only supported for file-based SQLite databases")
+			return apperror.NewError("database backup is only supported for file-based SQLite databases")
 		}
 
 		d.dbMutex.RLock()
@@ -755,19 +759,19 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 		// Execute a checkpoint to ensure all WAL data is in the main database file
 		_, err := dbInstance.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
 		if err != nil {
-			return apperror.NewErrorf("failed to checkpoint WAL").AddError(err)
+			return apperror.NewError("checkpointing WAL failed").AddError(err)
 		}
 
 		// Parse and validate the SQLite DSN to get the file path
 		sourceFilePath, err := parseSQLiteFilePath(d.getDSN())
 		if err != nil {
-			return apperror.Wrap(err)
+			return apperror.NewError("parsing SQLite file path failed").AddError(err)
 		}
 
 		// Copy the database file
 		err = copyFile(sourceFilePath, path)
 		if err != nil {
-			return apperror.NewErrorf("failed to copy database file").AddError(err)
+			return apperror.NewError("copying database file failed").AddError(err)
 		}
 
 		d.logger.Info().Msgf("database backup created: %s", path)
@@ -779,7 +783,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 		d.dbMutex.RUnlock()
 
 		if dbInstance == nil {
-			return apperror.NewErrorf("database instance is nil")
+			return apperror.NewError("database instance is nil")
 		}
 
 		return d.backupMySQL(dbInstance, path)
@@ -790,7 +794,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 		d.dbMutex.RUnlock()
 
 		if dbInstance == nil {
-			return apperror.NewErrorf("database instance is nil")
+			return apperror.NewError("database instance is nil")
 		}
 
 		return d.backupPostgres(dbInstance, path, schema)
@@ -808,7 +812,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 // WARNING: This will overwrite the current database. Ensure you have a backup before restoring.
 func (d *Database[Q]) Restore(backupPath string) error {
 	if !d.connected.Load() {
-		return apperror.NewErrorf("database is not connected")
+		return apperror.NewError("database is not connected")
 	}
 
 	_, err := os.Stat(backupPath)
@@ -819,7 +823,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 	switch d.driver {
 	case DriverSQLite:
 		if !strings.HasPrefix(d.getDSN(), "file:") {
-			return apperror.NewErrorf("restore is only supported for file-based SQLite databases")
+			return apperror.NewError("restore is only supported for file-based SQLite databases")
 		}
 
 		d.dbMutex.RLock()
@@ -829,7 +833,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		if dbInstance != nil {
 			err := dbInstance.Close()
 			if err != nil {
-				return apperror.NewErrorf("failed to close database connection").AddError(err)
+				return apperror.NewError("closing database connection failed").AddError(err)
 			}
 		}
 
@@ -838,12 +842,12 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		// Parse and validate the SQLite DSN to get the file path
 		targetPath, err := parseSQLiteFilePath(d.getDSN())
 		if err != nil {
-			return apperror.Wrap(err)
+			return apperror.NewError("parsing SQLite file path failed").AddError(err)
 		}
 
 		err = copyFile(backupPath, targetPath)
 		if err != nil {
-			return apperror.NewErrorf("failed to restore database file").AddError(err)
+			return apperror.NewError("restoring database file failed").AddError(err)
 		}
 
 		for _, suffix := range []string{sqliteWALSuffix, sqliteSHMSuffix} {
@@ -864,54 +868,62 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		d.dbMutex.RUnlock()
 
 		if dbInstance == nil {
-			return apperror.NewErrorf("database instance is nil")
+			return apperror.NewError("database instance is nil")
 		}
 
 		backupFile, err := os.Open(filepath.Clean(backupPath))
 		if err != nil {
-			return apperror.NewErrorf("failed to read backup file").AddError(err)
+			return apperror.NewError("opening backup file failed").AddError(err)
 		}
-		defer func() { _ = backupFile.Close() }()
+		defer apperror.Catch(backupFile.Close, "closing backup file failed")
 
 		// SET NAMES and SET FOREIGN_KEY_CHECKS in the dump apply to one connection, so all
 		// statements have to run on the same one, not on whichever the pool hands out
 		conn, err := dbInstance.Conn(context.Background())
 		if err != nil {
-			return apperror.NewErrorf("failed to get a database connection").AddError(err)
+			return apperror.NewError("getting database connection failed").AddError(err)
 		}
-		defer func() { _ = conn.Close() }()
+		defer apperror.Catch(conn.Close, "closing database connection failed")
 
 		// Every statement is its own transaction otherwise, and each commit waits for the disk. The
 		// CREATE and DROP statements of the dump commit implicitly, so the rows of a table go in as
 		// one transaction.
 		_, err = conn.ExecContext(context.Background(), "SET autocommit = 0")
 		if err != nil {
-			return apperror.NewErrorf("failed to start the restore").AddError(err)
+			return apperror.NewError("starting restore failed").AddError(err)
 		}
 		// The connection goes back to the pool, so it must not stay in this mode
 		defer func() {
-			_, _ = conn.ExecContext(context.Background(), "SET autocommit = 1")
-			_, _ = conn.ExecContext(context.Background(), "SET FOREIGN_KEY_CHECKS = 1")
+			for _, stmt := range []string{"SET autocommit = 1", "SET FOREIGN_KEY_CHECKS = 1"} {
+				apperror.Catch(func() error {
+					_, err := conn.ExecContext(context.Background(), stmt)
+					return err
+				}, "resetting restore session settings failed")
+			}
 		}()
 
 		// Statements run as they are read, so the dump is never held in memory as a whole
 		err = forEachStatement(backupFile, func(stmt string) error {
 			_, err := conn.ExecContext(context.Background(), stmt)
 			if err != nil {
-				return apperror.NewErrorf("failed to execute statement: %s", stmt[:min(50, len(stmt))]).AddError(err)
+				return apperror.NewErrorf("executing statement %s failed", stmt[:min(50, len(stmt))]).AddError(err)
 			}
 			return nil
 		})
 		if err != nil {
 			// Roll back what is still open. Earlier CREATE and DROP statements have committed
 			// implicitly and cannot be undone.
-			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
-			return apperror.NewErrorf("failed to restore the backup").AddError(err)
+			restoreErr := apperror.NewError("restoring backup failed").AddError(err)
+			_, rbErr := conn.ExecContext(context.Background(), "ROLLBACK")
+			if rbErr != nil {
+				return restoreErr.AddError(apperror.NewError("rolling back restore failed").AddError(rbErr))
+			}
+			return restoreErr
 		}
 
 		_, err = conn.ExecContext(context.Background(), "COMMIT")
 		if err != nil {
-			return apperror.NewErrorf("failed to commit the restore").AddError(err)
+			return apperror.NewError("committing restore failed").AddError(err)
 		}
 
 		d.logger.Info().Msgf("database restored from backup: %s", backupPath)
@@ -923,40 +935,44 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		d.dbMutex.RUnlock()
 
 		if dbInstance == nil {
-			return apperror.NewErrorf("database instance is nil")
+			return apperror.NewError("database instance is nil")
 		}
 
 		backupFile, err := os.Open(filepath.Clean(backupPath))
 		if err != nil {
-			return apperror.NewErrorf("failed to read backup file").AddError(err)
+			return apperror.NewError("opening backup file failed").AddError(err)
 		}
-		defer func() { _ = backupFile.Close() }()
+		defer apperror.Catch(backupFile.Close, "closing backup file failed")
 
 		tx, err := dbInstance.Begin()
 		if err != nil {
-			return apperror.NewErrorf("failed to begin transaction").AddError(err)
+			return apperror.NewError("beginning transaction failed").AddError(err)
 		}
 
 		// Statements run as they are read, so the dump is never held in memory as a whole
 		err = forEachStatement(backupFile, func(stmt string) error {
 			_, err := tx.Exec(stmt)
 			if err != nil {
-				return apperror.NewErrorf("failed to execute statement: %s", stmt[:min(50, len(stmt))]).AddError(err)
+				return apperror.NewErrorf("executing statement %s failed", stmt[:min(50, len(stmt))]).AddError(err)
 			}
 			return nil
 		})
 		if err != nil {
-			_ = tx.Rollback()
-			return apperror.NewErrorf("failed to restore the backup").AddError(err)
+			restoreErr := apperror.NewError("restoring backup failed").AddError(err)
+			rbErr := tx.Rollback()
+			if rbErr != nil {
+				return restoreErr.AddError(apperror.NewError("rolling back transaction failed").AddError(rbErr))
+			}
+			return restoreErr
 		}
 
 		err = tx.Commit()
 		if err != nil {
 			rbErr := tx.Rollback()
 			if rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
-				return apperror.NewErrorf("failed to rollback transaction").AddError(rbErr).AddError(err)
+				return apperror.NewError("rolling back transaction failed").AddError(rbErr).AddError(err)
 			}
-			return apperror.NewErrorf("failed to commit transaction").AddError(err)
+			return apperror.NewError("committing transaction failed").AddError(err)
 		}
 
 		d.logger.Info().Msgf("database restored from backup: %s", backupPath)
@@ -971,7 +987,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 // Identifiers can only contain alphanumeric characters, underscores, hyphens, and dots
 func validateIdentifier(identifier string) error {
 	if identifier == "" {
-		return apperror.NewErrorf("identifier cannot be empty")
+		return apperror.NewError("identifier cannot be empty")
 	}
 	for _, char := range identifier {
 		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
@@ -986,7 +1002,7 @@ func validateIdentifier(identifier string) error {
 func quoteIdentifier(identifier string, driver Driver) (string, error) {
 	err := validateIdentifier(identifier)
 	if err != nil {
-		return "", apperror.Wrap(err)
+		return "", apperror.NewErrorf("validating identifier %q failed", identifier).AddError(err)
 	}
 	switch driver {
 	case DriverMySQL:
@@ -1011,7 +1027,7 @@ func parseSQLiteFilePath(dsn string) (string, error) {
 	// Remove "file:" prefix
 	pathWithQuery := dsn[5:]
 	if pathWithQuery == "" {
-		return "", apperror.NewErrorf("SQLite DSN contains no file path after 'file:' prefix")
+		return "", apperror.NewError("DSN of SQLite database contains no file path after 'file:' prefix")
 	}
 
 	// Split on '?' to remove query parameters

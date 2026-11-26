@@ -334,7 +334,11 @@ func (m *LoggingMiddleware) AfterExec(ctx context.Context, query string, args []
 
 	var rowsAffected int64
 	if result != nil {
-		rowsAffected, _ = result.RowsAffected()
+		affected, err := result.RowsAffected()
+		if err != nil {
+			m.logger.Trace().Err(err).Msg("reading rows affected failed")
+		}
+		rowsAffected = affected
 	}
 	l := m.logger.Trace().
 		Field("type", "exec").
@@ -422,9 +426,9 @@ func convertNamedValuesToInterface(args []d.NamedValue) []any {
 // wrap wraps a database driver with middleware support
 // It computes a stable driver name based on the middleware types to avoid
 // registering a new driver on every reconnection
-func wrap(driverName string, middlewares []Middleware) string {
+func wrap(driverName string, middlewares []Middleware) (string, error) {
 	if len(middlewares) == 0 {
-		return driverName
+		return driverName, nil
 	}
 
 	// Compute a hash based on the middleware types to create a stable driver name
@@ -436,17 +440,17 @@ func wrap(driverName string, middlewares []Middleware) string {
 
 	// Reuse the driver if already registered
 	if registeredDrivers[wrappedDriverName] {
-		return wrappedDriverName
+		return wrappedDriverName, nil
 	}
 
 	// Get the original driver
 	db, err := sql.Open(driverName, "")
 	if err != nil {
-		return driverName
+		return "", apperror.NewErrorf("opening driver %s failed", driverName).AddError(err)
 	}
 	err = db.Close()
 	if err != nil {
-		return driverName
+		return "", apperror.NewErrorf("closing driver handle %s failed", driverName).AddError(err)
 	}
 
 	originalDriver := db.Driver()
@@ -461,7 +465,7 @@ func wrap(driverName string, middlewares []Middleware) string {
 	})
 
 	registeredDrivers[wrappedDriverName] = true
-	return wrappedDriverName
+	return wrappedDriverName, nil
 }
 
 // computeMiddlewareHash creates a stable hash based on the middleware instances

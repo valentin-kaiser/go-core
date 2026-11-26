@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/database"
 )
 
@@ -18,7 +19,7 @@ func overheadDB(b *testing.B) *database.Database[TestQueries] {
 	db := database.New[TestQueries](database.DriverSQLite, "overhead")
 	db.RegisterQueries(NewTestQueries)
 	db.Connect(100*time.Millisecond, ":memory:")
-	b.Cleanup(func() { _ = db.Disconnect() })
+	b.Cleanup(func() { apperror.Catch(db.Disconnect, "disconnecting database failed") })
 	db.AwaitConnection()
 	return db
 }
@@ -39,7 +40,10 @@ func BenchmarkOverheadQueryNoop(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = db.Query(func(_ *TestQueries) error { return nil })
+		err := db.Query(func(_ *TestQueries) error { return nil })
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -49,7 +53,10 @@ func BenchmarkOverheadQueryNoopParallel(b *testing.B) {
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_ = db.Query(func(_ *TestQueries) error { return nil })
+			err := db.Query(func(_ *TestQueries) error { return nil })
+			if err != nil {
+				b.Error(err)
+			}
 		}
 	})
 }
@@ -59,7 +66,10 @@ func BenchmarkOverheadTransactionNoop(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = db.Transaction(func(_ *sql.Tx) error { return nil })
+		err := db.Transaction(func(_ *sql.Tx) error { return nil })
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -68,7 +78,10 @@ func BenchmarkOverheadQueryTransactionNoop(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = db.QueryTransaction(func(_ *TestQueries) error { return nil })
+		err := db.QueryTransaction(func(_ *TestQueries) error { return nil })
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -77,7 +90,7 @@ func typedOverheadDB(b *testing.B) *database.Database[TestQueries] {
 	db := database.New[TestQueries](database.DriverSQLite, "overhead-typed")
 	db.RegisterQueriesFunc(func(c database.DBTX) *TestQueries { return NewTestQueries(c) })
 	db.Connect(100*time.Millisecond, ":memory:")
-	b.Cleanup(func() { _ = db.Disconnect() })
+	b.Cleanup(func() { apperror.Catch(db.Disconnect, "disconnecting database failed") })
 	db.AwaitConnection()
 	return db
 }
@@ -87,7 +100,10 @@ func BenchmarkOverheadQueryTypedNoop(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = db.Query(func(_ *TestQueries) error { return nil })
+		err := db.Query(func(_ *TestQueries) error { return nil })
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -96,6 +112,9 @@ func BenchmarkOverheadQueryTransactionTypedNoop(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = db.QueryTransaction(func(_ *TestQueries) error { return nil })
+		err := db.QueryTransaction(func(_ *TestQueries) error { return nil })
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }

@@ -30,17 +30,17 @@ func (d *Database[Q]) newQueries(conn DBTX) (*Q, error) {
 	if d.queriesFunc != nil {
 		queries := d.queriesFunc(conn)
 		if queries == nil {
-			return nil, apperror.NewErrorf("queries constructor returned nil")
+			return nil, apperror.NewError("queries constructor returned nil")
 		}
 		return queries, nil
 	}
 
 	fn := reflect.ValueOf(d.queries)
 	if fn.Kind() != reflect.Func {
-		return nil, apperror.NewErrorf("queries constructor is not a function")
+		return nil, apperror.NewError("queries constructor is not a function")
 	}
 	if fn.Type().NumIn() != 1 {
-		return nil, apperror.NewErrorf("queries constructor must take exactly one argument")
+		return nil, apperror.NewError("queries constructor must take exactly one argument")
 	}
 
 	arg := reflect.ValueOf(conn)
@@ -50,12 +50,12 @@ func (d *Database[Q]) newQueries(conn DBTX) (*Q, error) {
 
 	results := fn.Call([]reflect.Value{arg})
 	if len(results) != 1 {
-		return nil, apperror.NewErrorf("queries constructor must return exactly one value")
+		return nil, apperror.NewError("queries constructor must return exactly one value")
 	}
 
 	queries, ok := reflect.TypeAssert[*Q](results[0])
 	if !ok {
-		return nil, apperror.NewErrorf("queries constructor returned unexpected type")
+		return nil, apperror.NewError("queries constructor returned unexpected type")
 	}
 	return queries, nil
 }
