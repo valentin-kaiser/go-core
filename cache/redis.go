@@ -24,51 +24,6 @@ type RedisCache struct {
 	client *redis.Client
 }
 
-// RedisConfig holds configuration for Redis cache
-type RedisConfig struct {
-	Addr         string        `json:"addr"`
-	Password     string        `json:"password"`
-	DB           int           `json:"db"`
-	PoolSize     int           `json:"pool_size"`
-	MinIdleConns int           `json:"min_idle_conns"`
-	MaxRetries   int           `json:"max_retries"`
-	DialTimeout  time.Duration `json:"dial_timeout"`
-	ReadTimeout  time.Duration `json:"read_timeout"`
-	WriteTimeout time.Duration `json:"write_timeout"`
-	IdleTimeout  time.Duration `json:"idle_timeout"`
-}
-
-// DefaultRedisConfig returns a default Redis configuration
-func DefaultRedisConfig() RedisConfig {
-	const (
-		defaultAddr         = "localhost:6379"
-		defaultPoolSize     = 10
-		defaultMinIdleConns = 1
-		defaultMaxRetries   = 3
-		defaultDialTimeout  = 5 * time.Second
-		defaultIOTimeout    = 3 * time.Second
-		defaultIdleTimeout  = 5 * time.Minute
-	)
-
-	return RedisConfig{
-		Addr:         defaultAddr,
-		Password:     "",
-		DB:           0,
-		PoolSize:     defaultPoolSize,
-		MinIdleConns: defaultMinIdleConns,
-		MaxRetries:   defaultMaxRetries,
-		DialTimeout:  defaultDialTimeout,
-		ReadTimeout:  defaultIOTimeout,
-		WriteTimeout: defaultIOTimeout,
-		IdleTimeout:  defaultIdleTimeout,
-	}
-}
-
-// Changed checks if the Redis configuration has changed compared to another configuration.
-func (rc *RedisConfig) Changed(n *RedisConfig) bool {
-	return config.Changed(rc, n)
-}
-
 // NewRedisCache creates a new Redis-backed cache with default cache configuration.
 // It establishes a new Redis client connection using the provided Redis configuration
 // and applies default cache settings (LRU eviction, 1 hour TTL, etc.).
@@ -511,4 +466,49 @@ func (rc *RedisCache) GetSet(ctx context.Context, key string, value any) (any, b
 	rc.updateStats(func(s *Stats) { s.Sets++; s.Hits++ })
 	rc.emitEvent(EventSet, key, value, nil)
 	return oldValue, true, nil
+}
+
+// RedisConfig holds configuration for Redis cache
+type RedisConfig struct {
+	Addr         string        `json:"addr"`
+	Password     string        `json:"password"`
+	DB           int           `json:"db"`
+	PoolSize     int           `json:"pool_size"`
+	MinIdleConns int           `json:"min_idle_conns"`
+	MaxRetries   int           `json:"max_retries"`
+	DialTimeout  time.Duration `json:"dial_timeout"`
+	ReadTimeout  time.Duration `json:"read_timeout"`
+	WriteTimeout time.Duration `json:"write_timeout"`
+	IdleTimeout  time.Duration `json:"idle_timeout"`
+}
+
+// DefaultRedisConfig returns a default Redis configuration
+func DefaultRedisConfig() RedisConfig {
+	const (
+		defaultAddr         = "localhost:6379"
+		defaultPoolSize     = 10
+		defaultMinIdleConns = 1
+		defaultMaxRetries   = 3
+		defaultDialTimeout  = 5 * time.Second
+		defaultIOTimeout    = 3 * time.Second
+		defaultIdleTimeout  = 5 * time.Minute
+	)
+
+	return RedisConfig{
+		Addr:         defaultAddr,
+		Password:     "",
+		DB:           0,
+		PoolSize:     defaultPoolSize,
+		MinIdleConns: defaultMinIdleConns,
+		MaxRetries:   defaultMaxRetries,
+		DialTimeout:  defaultDialTimeout,
+		ReadTimeout:  defaultIOTimeout,
+		WriteTimeout: defaultIOTimeout,
+		IdleTimeout:  defaultIdleTimeout,
+	}
+}
+
+// Changed checks if the Redis configuration has changed compared to another configuration.
+func (rc *RedisConfig) Changed(n *RedisConfig) bool {
+	return config.Changed(rc, n)
 }
