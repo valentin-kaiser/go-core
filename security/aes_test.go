@@ -8,26 +8,34 @@ import (
 	"github.com/valentin-kaiser/go-core/security"
 )
 
+const (
+	aes256KeyLength   = 32
+	firstKeyMaterial  = "key1key1key1key1key1key1key1key1"
+	secondKeyMaterial = "key2key2key2key2key2key2key2key2"
+	sharedKeyMaterial = "testkeyfortesting123456789012345"
+	benchPlaintext    = "benchmark test data for encryption"
+)
+
 func TestAesCipherEncryptDecrypt(t *testing.T) {
 	testCases := []struct {
 		name      string
 		plaintext string
 		keySize   int
 	}{
-		{"AES128 short", "hello", 16},
-		{"AES192 short", "hello", 24},
-		{"AES256 short", "hello", 32},
-		{"AES128 long", "This is a longer text that should be encrypted and decrypted correctly", 16},
-		{"AES256 long", "This is a longer text that should be encrypted and decrypted correctly", 32},
-		{"AES128 empty", "", 16},
-		{"AES256 unicode", "Hello, 世界! 🌍", 32},
+		{name: "AES128 short", plaintext: "hello", keySize: 16},
+		{name: "AES192 short", plaintext: "hello", keySize: 24},
+		{name: "AES256 short", plaintext: "hello", keySize: 32},
+		{name: "AES128 long", plaintext: "This is a longer text that should be encrypted and decrypted correctly", keySize: 16},
+		{name: "AES256 long", plaintext: "This is a longer text that should be encrypted and decrypted correctly", keySize: 32},
+		{name: "AES128 empty", plaintext: "", keySize: 16},
+		{name: "AES256 unicode", plaintext: "Hello, 世界! 🌍", keySize: 32},
 	}
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
 			// Generate a key of the specified size
 			key := make([]byte, tc.keySize)
-			copy(key, "testkeyfortesting123456789012345")
+			copy(key, sharedKeyMaterial)
 
 			cipher := security.NewAesCipher().WithPassphrase(key)
 
@@ -106,8 +114,8 @@ func TestAesCipherDecryptTooShort(t *testing.T) {
 
 func TestAesCipherDecryptWrongKey(t *testing.T) {
 	// Encrypt with one key
-	key1 := make([]byte, 32)
-	copy(key1, "key1key1key1key1key1key1key1key1")
+	key1 := make([]byte, aes256KeyLength)
+	copy(key1, firstKeyMaterial)
 
 	cipher1 := security.NewAesCipher().WithPassphrase(key1)
 	var encrypted bytes.Buffer
@@ -118,8 +126,8 @@ func TestAesCipherDecryptWrongKey(t *testing.T) {
 	}
 
 	// Try to decrypt with different key
-	key2 := make([]byte, 32)
-	copy(key2, "key2key2key2key2key2key2key2key2")
+	key2 := make([]byte, aes256KeyLength)
+	copy(key2, secondKeyMaterial)
 
 	cipher2 := security.NewAesCipher().WithPassphrase(key2)
 	var decrypted bytes.Buffer
@@ -168,7 +176,7 @@ func TestAesCipherErrorPropagation(t *testing.T) {
 // Benchmark tests
 func BenchmarkAesCipherEncrypt(b *testing.B) {
 	cipher := security.NewAesCipher().WithAES256()
-	text := "benchmark test data for encryption"
+	text := benchPlaintext
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -186,12 +194,12 @@ func TestAesCipherInvalidKey(t *testing.T) {
 		keySize int
 		valid   bool
 	}{
-		{"Valid AES128", 16, true},
-		{"Valid AES192", 24, true},
-		{"Valid AES256", 32, true},
-		{"Invalid too short", 8, false},
-		{"Invalid too long", 48, false},
-		{"Invalid odd size", 17, false},
+		{name: "Valid AES128", keySize: 16, valid: true},
+		{name: "Valid AES192", keySize: 24, valid: true},
+		{name: "Valid AES256", keySize: 32, valid: true},
+		{name: "Invalid too short", keySize: 8, valid: false},
+		{name: "Invalid too long", keySize: 48, valid: false},
+		{name: "Invalid odd size", keySize: 17, valid: false},
 	}
 
 	for _, tc := range testCases {
