@@ -10,25 +10,102 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
+// Cron expression constants.
+const (
+	presetYearly   = "@yearly"
+	presetAnnually = "@annually"
+	presetMonthly  = "@monthly"
+	presetWeekly   = "@weekly"
+	presetDaily    = "@daily"
+	presetMidnight = "@midnight"
+	presetHourly   = "@hourly"
+
+	cronSpecYearly  = "0 0 0 1 1 *"
+	cronSpecMonthly = "0 0 0 1 * *"
+	cronSpecWeekly  = "0 0 0 * * 0"
+	cronSpecDaily   = "0 0 0 * * *"
+	cronSpecHourly  = "0 0 * * * *"
+
+	cronFieldsWithoutSeconds = 5
+	cronFieldsWithSeconds    = 6
+
+	// Offsets of the fields relative to the minute field.
+	cronHourIndex      = 1
+	cronDayIndex       = 2
+	cronMonthIndex     = 3
+	cronDayOfWeekIndex = 4
+
+	cronSecondMin    = 0
+	cronSecondMax    = 59
+	cronMinuteMin    = 0
+	cronMinuteMax    = 59
+	cronHourMin      = 0
+	cronHourMax      = 23
+	cronDayMin       = 1
+	cronDayMax       = 31
+	cronMonthMin     = 1
+	cronMonthMax     = 12
+	cronDayOfWeekMin = 0
+	cronDayOfWeekMax = 6
+
+	// cronSearchYears limits the search for the next run to prevent infinite loops.
+	cronSearchYears = 4
+
+	cronWildcard       = "*"
+	cronAnyMarker      = "?"
+	cronStepSeparator  = "/"
+	cronRangeSeparator = "-"
+	cronListSeparator  = ","
+	cronStepParts      = 2
+	cronRangeParts     = 2
+)
+
+// Month numbers used by Months.
+const (
+	monthJanuary = iota + 1
+	monthFebruary
+	monthMarch
+	monthApril
+	monthMay
+	monthJune
+	monthJuly
+	monthAugust
+	monthSeptember
+	monthOctober
+	monthNovember
+	monthDecember
+)
+
+// Weekday numbers used by Days.
+const (
+	daySunday = iota
+	dayMonday
+	dayTuesday
+	dayWednesday
+	dayThursday
+	dayFriday
+	daySaturday
+)
+
 var (
 	// Presets are predefined cron expressions for common schedules
 	Presets = map[string]string{
-		"@yearly":   "0 0 0 1 1 *", // Run once a year, midnight, Jan. 1st
-		"@annually": "0 0 0 1 1 *", // Alias for @yearly
-		"@monthly":  "0 0 0 1 * *", // Run once a month, midnight, first of month
-		"@weekly":   "0 0 0 * * 0", // Run once a week, midnight between Sat/Sun
-		"@daily":    "0 0 0 * * *", // Run once a day, midnight
-		"@midnight": "0 0 0 * * *", // Alias for @daily
-		"@hourly":   "0 0 * * * *", // Run once an hour, beginning of hour
+		presetYearly:   cronSpecYearly,  // Run once a year, midnight, Jan. 1st
+		presetAnnually: cronSpecYearly,  // Alias for @yearly
+		presetMonthly:  cronSpecMonthly, // Run once a month, midnight, first of month
+		presetWeekly:   cronSpecWeekly,  // Run once a week, midnight between Sat/Sun
+		presetDaily:    cronSpecDaily,   // Run once a day, midnight
+		presetMidnight: cronSpecDaily,   // Alias for @daily
+		presetHourly:   cronSpecHourly,  // Run once an hour, beginning of hour
 	}
 	// Months is a map of month names to their numeric values
 	Months = map[string]int{
-		"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
-		"JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12,
+		"JAN": monthJanuary, "FEB": monthFebruary, "MAR": monthMarch, "APR": monthApril, "MAY": monthMay, "JUN": monthJune,
+		"JUL": monthJuly, "AUG": monthAugust, "SEP": monthSeptember, "OCT": monthOctober, "NOV": monthNovember, "DEC": monthDecember,
 	}
 	// Days is a map of day names to their numeric values
 	Days = map[string]int{
-		"SUN": 0, "MON": 1, "TUE": 2, "WED": 3, "THU": 4, "FRI": 5, "SAT": 6,
+		"SUN": daySunday, "MON": dayMonday, "TUE": dayTuesday, "WED": dayWednesday, "THU": dayThursday, "FRI": dayFriday, "SAT": daySaturday,
 	}
 )
 
@@ -80,7 +157,7 @@ func (s *TaskScheduler) ParseCronSpec(cronSpec string) (*CronExpression, error) 
 
 	fields := strings.Fields(cronSpec)
 
-	if len(fields) != 5 && len(fields) != 6 {
+	if len(fields) != cronFieldsWithoutSeconds && len(fields) != cronFieldsWithSeconds {
 		return nil, apperror.NewError("cron expression must have exactly 5 fields (minute hour day month day-of-week) or 6 fields (second minute hour day month day-of-week)")
 	}
 
@@ -88,8 +165,8 @@ func (s *TaskScheduler) ParseCronSpec(cronSpec string) (*CronExpression, error) 
 	var err error
 	fieldOffset := 0
 
-	if len(fields) == 6 {
-		secondField, err := s.parseCronField(fields[0], 0, 59)
+	if len(fields) == cronFieldsWithSeconds {
+		secondField, err := s.parseCronField(fields[0], cronSecondMin, cronSecondMax)
 		if err != nil {
 			return nil, apperror.NewError("parsing second field failed").AddError(err)
 		}
@@ -97,27 +174,27 @@ func (s *TaskScheduler) ParseCronSpec(cronSpec string) (*CronExpression, error) 
 		fieldOffset = 1
 	}
 
-	expr.Minute, err = s.parseCronField(fields[fieldOffset], 0, 59)
+	expr.Minute, err = s.parseCronField(fields[fieldOffset], cronMinuteMin, cronMinuteMax)
 	if err != nil {
 		return nil, apperror.NewError("parsing minute field failed").AddError(err)
 	}
 
-	expr.Hour, err = s.parseCronField(fields[fieldOffset+1], 0, 23)
+	expr.Hour, err = s.parseCronField(fields[fieldOffset+cronHourIndex], cronHourMin, cronHourMax)
 	if err != nil {
 		return nil, apperror.NewError("parsing hour field failed").AddError(err)
 	}
 
-	expr.Day, err = s.parseCronFieldWithNames(fields[fieldOffset+2], 1, 31, nil)
+	expr.Day, err = s.parseCronFieldWithNames(fields[fieldOffset+cronDayIndex], cronDayMin, cronDayMax, nil)
 	if err != nil {
 		return nil, apperror.NewError("parsing day field failed").AddError(err)
 	}
 
-	expr.Month, err = s.parseCronFieldWithNames(fields[fieldOffset+3], 1, 12, Months)
+	expr.Month, err = s.parseCronFieldWithNames(fields[fieldOffset+cronMonthIndex], cronMonthMin, cronMonthMax, Months)
 	if err != nil {
 		return nil, apperror.NewError("parsing month field failed").AddError(err)
 	}
 
-	expr.DayOfWeek, err = s.parseCronFieldWithNames(fields[fieldOffset+4], 0, 6, Days)
+	expr.DayOfWeek, err = s.parseCronFieldWithNames(fields[fieldOffset+cronDayOfWeekIndex], cronDayOfWeekMin, cronDayOfWeekMax, Days)
 	if err != nil {
 		return nil, apperror.NewError("parsing day-of-week field failed").AddError(err)
 	}
@@ -144,22 +221,22 @@ func (s *TaskScheduler) sort(field *CronField) {
 func (s *TaskScheduler) parseCronField(field string, low, high int) (CronField, error) {
 	cronField := CronField{Min: low, Max: high}
 
-	if field == "*" {
+	if field == cronWildcard {
 		for i := low; i <= high; i++ {
 			cronField.Values = append(cronField.Values, i)
 		}
 		return cronField, nil
 	}
 
-	if strings.Contains(field, "/") {
+	if strings.Contains(field, cronStepSeparator) {
 		return s.parseStepField(field, low, high, cronField)
 	}
 
-	if strings.Contains(field, "-") {
+	if strings.Contains(field, cronRangeSeparator) {
 		return s.parseRangeField(field, low, high, cronField)
 	}
 
-	if strings.Contains(field, ",") {
+	if strings.Contains(field, cronListSeparator) {
 		return s.parseListField(field, low, high, cronField)
 	}
 
@@ -171,11 +248,11 @@ func (s *TaskScheduler) parseCronFieldWithNames(field string, low, high int, nam
 	cronField := CronField{Min: low, Max: high}
 
 	// Handle ? character (equivalent to *)
-	if field == "?" {
-		field = "*"
+	if field == cronAnyMarker {
+		field = cronWildcard
 	}
 
-	if field == "*" {
+	if field == cronWildcard {
 		for i := low; i <= high; i++ {
 			cronField.Values = append(cronField.Values, i)
 		}
@@ -183,15 +260,15 @@ func (s *TaskScheduler) parseCronFieldWithNames(field string, low, high int, nam
 	}
 
 	normalizedField := s.normalizeFieldNames(field, nameMap)
-	if strings.Contains(normalizedField, "/") {
+	if strings.Contains(normalizedField, cronStepSeparator) {
 		return s.parseStepField(normalizedField, low, high, cronField)
 	}
 
-	if strings.Contains(normalizedField, "-") {
+	if strings.Contains(normalizedField, cronRangeSeparator) {
 		return s.parseRangeField(normalizedField, low, high, cronField)
 	}
 
-	if strings.Contains(normalizedField, ",") {
+	if strings.Contains(normalizedField, cronListSeparator) {
 		return s.parseListField(normalizedField, low, high, cronField)
 	}
 
@@ -213,8 +290,8 @@ func (s *TaskScheduler) normalizeFieldNames(field string, nameMap map[string]int
 
 // parseStepField parses a step field (e.g., "*/5", "1-10/2")
 func (s *TaskScheduler) parseStepField(field string, low, high int, cronField CronField) (CronField, error) {
-	parts := strings.Split(field, "/")
-	if len(parts) != 2 {
+	parts := strings.Split(field, cronStepSeparator)
+	if len(parts) != cronStepParts {
 		return cronField, apperror.NewError("invalid step format")
 	}
 
@@ -224,16 +301,16 @@ func (s *TaskScheduler) parseStepField(field string, low, high int, cronField Cr
 	}
 
 	var start, end int
-	if parts[0] == "*" {
+	if parts[0] == cronWildcard {
 		start, end = low, high
 		for i := start; i <= end; i += step {
 			cronField.Values = append(cronField.Values, i)
 		}
 		return cronField, nil
 	}
-	if parts[0] != "*" && strings.Contains(parts[0], "-") {
-		rangeParts := strings.Split(parts[0], "-")
-		if len(rangeParts) != 2 {
+	if parts[0] != cronWildcard && strings.Contains(parts[0], cronRangeSeparator) {
+		rangeParts := strings.Split(parts[0], cronRangeSeparator)
+		if len(rangeParts) != cronRangeParts {
 			return cronField, apperror.NewError("invalid range format")
 		}
 		start, err = strconv.Atoi(rangeParts[0])
@@ -249,7 +326,7 @@ func (s *TaskScheduler) parseStepField(field string, low, high int, cronField Cr
 		}
 		return cronField, nil
 	}
-	if parts[0] != "*" && !strings.Contains(parts[0], "-") {
+	if parts[0] != cronWildcard && !strings.Contains(parts[0], cronRangeSeparator) {
 		start, err = strconv.Atoi(parts[0])
 		if err != nil || start < low || start > high {
 			return cronField, apperror.NewError("invalid step start")
@@ -265,8 +342,8 @@ func (s *TaskScheduler) parseStepField(field string, low, high int, cronField Cr
 
 // parseRangeField parses a range field (e.g., "1-5")
 func (s *TaskScheduler) parseRangeField(field string, low, high int, cronField CronField) (CronField, error) {
-	parts := strings.Split(field, "-")
-	if len(parts) != 2 {
+	parts := strings.Split(field, cronRangeSeparator)
+	if len(parts) != cronRangeParts {
 		return cronField, apperror.NewError("invalid range format")
 	}
 
@@ -288,7 +365,7 @@ func (s *TaskScheduler) parseRangeField(field string, low, high int, cronField C
 
 // parseListField parses a list field (e.g., "1,3,5")
 func (s *TaskScheduler) parseListField(field string, low, high int, cronField CronField) (CronField, error) {
-	parts := strings.SplitSeq(field, ",")
+	parts := strings.SplitSeq(field, cronListSeparator)
 	for part := range parts {
 		value, err := strconv.Atoi(strings.TrimSpace(part))
 		if err != nil || value < low || value > high {
@@ -336,7 +413,7 @@ func (s *TaskScheduler) calculateNextCronRun(cronSpec string, after time.Time) (
 	}
 
 	// Limit search to prevent infinite loops (max 4 years)
-	maxYear := t.Year() + 4
+	maxYear := t.Year() + cronSearchYears
 
 	for year := t.Year(); year <= maxYear; year++ {
 		startMonth := 1
@@ -354,7 +431,7 @@ func (s *TaskScheduler) calculateNextCronRun(cronSpec string, after time.Time) (
 			continue
 		}
 
-		for month := nextMonth; month <= 12; {
+		for month := nextMonth; month <= cronMonthMax; {
 			if !s.fieldMatches(expr.Month, month) {
 				nextValidMonth, found := s.findNextValidValue(expr.Month, month+1)
 				if !found {
@@ -423,7 +500,7 @@ func (s *TaskScheduler) calculateNextCronRun(cronSpec string, after time.Time) (
 					continue
 				}
 
-				for hour := nextHour; hour <= 23; {
+				for hour := nextHour; hour <= cronHourMax; {
 					if !s.fieldMatches(expr.Hour, hour) {
 						nextValidHour, found := s.findNextValidValue(expr.Hour, hour+1)
 						if !found {
@@ -448,7 +525,7 @@ func (s *TaskScheduler) calculateNextCronRun(cronSpec string, after time.Time) (
 						continue
 					}
 
-					for minute := nextMinute; minute <= 59; {
+					for minute := nextMinute; minute <= cronMinuteMax; {
 						if !s.fieldMatches(expr.Minute, minute) {
 							nextValidMinute, found := s.findNextValidValue(expr.Minute, minute+1)
 							if !found {
@@ -475,7 +552,7 @@ func (s *TaskScheduler) calculateNextCronRun(cronSpec string, after time.Time) (
 								continue
 							}
 
-							for second := nextSecond; second <= 59; {
+							for second := nextSecond; second <= cronSecondMax; {
 								if !s.fieldMatches(*expr.Second, second) {
 									nextValidSecond, found := s.findNextValidValue(*expr.Second, second+1)
 									if !found {

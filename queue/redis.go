@@ -3,12 +3,23 @@ package queue
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strconv"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 	"github.com/valentin-kaiser/go-core/apperror"
+)
+
+// Redis key and field constants.
+const (
+	defaultKeyPrefix = "queue"
+	jobKeySegment    = ":job:"
+	pendingSuffix    = ":pending"
+	scheduledSuffix  = ":scheduled"
+	jobDataField     = "data"
+	scanBatchSize    = 100
+	minScoreInfinity = "-inf"
+	decimalBase      = 10
 )
 
 // RedisQueue implements a Redis-backed job queue
@@ -28,7 +39,7 @@ type RedisQueue struct {
 // This function initializes a RedisQueue instance, which provides methods for enqueueing, dequeueing, and scheduling jobs in a Redis-backed job queue.
 func NewRedisQueue(client redis.Cmdable, keyPrefix string) *RedisQueue {
 	if keyPrefix == "" {
-		keyPrefix = "queue"
+		keyPrefix = defaultKeyPrefix
 	}
 	return &RedisQueue{
 		client:    client,
@@ -90,7 +101,7 @@ func (rq *RedisQueue) Dequeue(ctx context.Context, timeout time.Duration) (*Job,
 	if !ok {
 		return nil, apperror.NewErrorf("invalid member type in redis result: expected string, got %T", result.Member)
 	}
-	jobData, err := rq.client.HGet(ctx, rq.jobKey(memberStr), "data").Result()
+	jobData, err := rq.client.HGet(ctx, rq.jobKey(memberStr), jobDataField).Result()
 	if err != nil {
 		return nil, apperror.NewErrorf("reading job %s failed", memberStr).AddError(err)
 	}
@@ -137,7 +148,7 @@ func (rq *RedisQueue) GetJob(ctx context.Context, id string) (*Job, error) {
 		return nil, apperror.NewError("queue is closed")
 	}
 
-	jobData, err := rq.client.HGet(ctx, rq.jobKey(id), "data").Result()
+	jobData, err := rq.client.HGet(ctx, rq.jobKey(id), jobDataField).Result()
 	if err != nil {
 		if err == redis.Nil {
 			return nil, apperror.NewError("job not found")
@@ -256,7 +267,7 @@ func (rq *RedisQueue) scanJobsByStatus(ctx context.Context, status Status, limit
 	count := 0
 
 	for {
-		keys, nextCursor, err := rq.client.Scan(ctx, cursor, rq.keyPrefix+":job:*", 100).Result()
+		keys, nextCursor, err := rq.client.Scan(ctx, cursor, rq.keyPrefix+jobKeySegment+"*", scanBatchSize).Result()
 		if err != nil {
 			return nil, apperror.NewError("scanning jobs failed").AddError(err)
 		}
@@ -266,7 +277,7 @@ func (rq *RedisQueue) scanJobsByStatus(ctx context.Context, status Status, limit
 				break
 			}
 
-			jobData, err := rq.client.HGet(ctx, key, "data").Result()
+			jobData, err := rq.client.HGet(ctx, key, jobDataField).Result()
 			if err != nil {
 				logger.Warn().Err(err).Field("key", key).Msg("reading job while scanning failed")
 				continue
@@ -318,13 +329,13 @@ func (rq *RedisQueue) GetStats(ctx context.Context) (*Stats, error) {
 
 	var cursor uint64
 	for {
-		keys, nextCursor, err := rq.client.Scan(ctx, cursor, rq.keyPrefix+":job:*", 100).Result()
+		keys, nextCursor, err := rq.client.Scan(ctx, cursor, rq.keyPrefix+jobKeySegment+"*", scanBatchSize).Result()
 		if err != nil {
 			return nil, apperror.NewError("scanning jobs failed").AddError(err)
 		}
 
 		for _, key := range keys {
-			jobData, err := rq.client.HGet(ctx, key, "data").Result()
+			jobData, err := rq.client.HGet(ctx, key, jobDataField).Result()
 			if err != nil {
 				continue
 			}
@@ -371,15 +382,15 @@ func (rq *RedisQueue) Close() error {
 
 // Key generation helpers
 func (rq *RedisQueue) jobKey(id string) string {
-	return fmt.Sprintf("%s:job:%s", rq.keyPrefix, id)
+	return rq.keyPrefix + jobKeySegment + id
 }
 
 func (rq *RedisQueue) pendingKey() string {
-	return rq.keyPrefix + ":pending"
+	return rq.keyPrefix + pendingSuffix
 }
 
 func (rq *RedisQueue) scheduledKey() string {
-	return rq.keyPrefix + ":scheduled"
+	return rq.keyPrefix + scheduledSuffix
 }
 
 // MoveScheduledToPending moves scheduled jobs that are ready to be processed
@@ -391,8 +402,8 @@ func (rq *RedisQueue) MoveScheduledToPending(ctx context.Context) error {
 	now := time.Now().Unix()
 
 	jobIDs, err := rq.client.ZRangeByScore(ctx, rq.scheduledKey(), &redis.ZRangeBy{
-		Min: "-inf",
-		Max: strconv.FormatInt(now, 10),
+		Min: minScoreInfinity,
+		Max: strconv.FormatInt(now, decimalBase),
 	}).Result()
 
 	if err != nil {
