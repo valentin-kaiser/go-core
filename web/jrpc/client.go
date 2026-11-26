@@ -64,9 +64,6 @@ type Client struct {
 	unmarshalOpts protojson.UnmarshalOptions
 }
 
-// ClientOption defines a function type for configuring the Client.
-type ClientOption func(*Client)
-
 // NewClient creates a new JSON-RPC client with default settings.
 // Optional ClientOptions can be provided to customize the client's behavior.
 func NewClient(opts ...ClientOption) *Client {
@@ -88,60 +85,6 @@ func NewClient(opts ...ClientOption) *Client {
 		opt(client)
 	}
 	return client
-}
-
-// WithClient sets a custom HTTP client.
-func WithClient(client *http.Client) ClientOption {
-	return func(c *Client) {
-		c.mutex.Lock()
-		defer c.mutex.Unlock()
-		c.httpClient = client
-	}
-}
-
-// WithUserAgent sets a custom User-Agent header for HTTP and WebSocket requests.
-func WithUserAgent(agent string) ClientOption {
-	return func(c *Client) {
-		c.mutex.Lock()
-		defer c.mutex.Unlock()
-		c.userAgent = agent
-	}
-}
-
-// WithTLSConfig sets a custom TLS configuration for WebSocket connections.
-// This is useful for connecting to servers with self-signed certificates or
-// specific TLS requirements.
-//
-// Example for skipping certificate verification (use with caution):
-//
-//	tlsConfig := &tls.Config{InsecureSkipVerify: true}
-//	client := jrpc.NewClient("https://localhost:8080", jrpc.WithTLSConfig(tlsConfig))
-func WithTLSConfig(config *tls.Config) ClientOption {
-	return func(c *Client) {
-		c.mutex.Lock()
-		defer c.mutex.Unlock()
-		c.tlsConfig = config
-	}
-}
-
-// WithMarshalOptions sets custom protojson marshal options for the client.
-// These options control how protocol buffer messages are marshaled to JSON.
-func WithMarshalOptions(opts protojson.MarshalOptions) ClientOption {
-	return func(c *Client) {
-		c.mutex.Lock()
-		defer c.mutex.Unlock()
-		c.marshalOpts = opts
-	}
-}
-
-// WithUnmarshalOptions sets custom protojson unmarshal options for the client.
-// These options control how JSON is unmarshaled into protocol buffer messages.
-func WithUnmarshalOptions(opts protojson.UnmarshalOptions) ClientOption {
-	return func(c *Client) {
-		c.mutex.Lock()
-		defer c.mutex.Unlock()
-		c.unmarshalOpts = opts
-	}
 }
 
 // Call makes a unary RPC call to the specified service and method.
@@ -221,6 +164,148 @@ func (c *Client) Call(ctx context.Context, u *url.URL, req, resp proto.Message, 
 	return nil
 }
 
+// finishClientStream signals the end of the request stream and reads the final response.
+func (c *Client) finishClientStream(conn *websocket.Conn, resp proto.Message) error {
+	closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
+	err := conn.WriteMessage(websocket.CloseMessage, closeMsg)
+	if err != nil {
+		return apperror.NewError("sending close message failed").AddError(err)
+	}
+	// The response may arrive together with a close error, which the WebSocket protocol makes expected here.
+	err = c.readWSMessage(conn, &resp)
+	if err != nil && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+		return apperror.NewError("reading response failed").AddError(err)
+	}
+	return nil
+}
+
+// dialWebSocket establishes a WebSocket connection to the service method endpoint.
+func (c *Client) dialWebSocket(u *url.URL) (*websocket.Conn, *http.Response, error) {
+	c.mutex.RLock()
+	defer c.mutex.RUnlock()
+
+	// Create a copy of the URL to avoid mutating the caller's data
+	dialURL := *u
+
+	switch dialURL.Scheme {
+	case schemeHTTP:
+		dialURL.Scheme = schemeWS
+	case schemeHTTPS:
+		dialURL.Scheme = schemeWSS
+	}
+
+	dialer := websocket.Dialer{
+		HandshakeTimeout: c.httpClient.Timeout,
+		TLSClientConfig:  c.tlsConfig,
+	}
+
+	headers := http.Header{}
+	if c.userAgent != "" {
+		headers.Set(headerUserAgent, c.userAgent)
+	}
+
+	conn, resp, err := dialer.Dial(dialURL.String(), headers)
+	if err != nil {
+		return nil, nil, apperror.NewError("connecting to websocket failed").AddError(err)
+	}
+
+	return conn, resp, nil
+}
+
+// writeWSMessage writes a proto message to the WebSocket connection.
+func (c *Client) writeWSMessage(conn *websocket.Conn, msg proto.Message) error {
+	c.mutex.RLock()
+	data, err := c.marshalOpts.Marshal(msg)
+	c.mutex.RUnlock()
+	if err != nil {
+		return apperror.NewError("marshaling message failed").AddError(err)
+	}
+	err = conn.WriteMessage(websocket.TextMessage, data)
+	if err != nil {
+		return apperror.NewError("writing websocket message failed").AddError(err)
+	}
+	return nil
+}
+
+// readWSMessage reads a proto message from the WebSocket connection.
+func (c *Client) readWSMessage(conn *websocket.Conn, msg *proto.Message) error {
+	_, data, err := conn.ReadMessage()
+	if err != nil {
+		return err
+	}
+
+	// If msg is a pointer to nil, we can't unmarshal
+	// The generated code will need to provide the correct type
+	if msg == nil || *msg == nil {
+		return apperror.NewError("message pointer cannot be nil")
+	}
+
+	c.mutex.RLock()
+	err = c.unmarshalOpts.Unmarshal(data, *msg)
+	c.mutex.RUnlock()
+	if err != nil {
+		return apperror.NewError("unmarshaling message failed").AddError(err)
+	}
+	return nil
+}
+
+// ClientOption defines a function type for configuring the Client.
+type ClientOption func(*Client)
+
+// WithClient sets a custom HTTP client.
+func WithClient(client *http.Client) ClientOption {
+	return func(c *Client) {
+		c.mutex.Lock()
+		defer c.mutex.Unlock()
+		c.httpClient = client
+	}
+}
+
+// WithUserAgent sets a custom User-Agent header for HTTP and WebSocket requests.
+func WithUserAgent(agent string) ClientOption {
+	return func(c *Client) {
+		c.mutex.Lock()
+		defer c.mutex.Unlock()
+		c.userAgent = agent
+	}
+}
+
+// WithTLSConfig sets a custom TLS configuration for WebSocket connections.
+// This is useful for connecting to servers with self-signed certificates or
+// specific TLS requirements.
+//
+// Example for skipping certificate verification (use with caution):
+//
+//	tlsConfig := &tls.Config{InsecureSkipVerify: true}
+//	client := jrpc.NewClient("https://localhost:8080", jrpc.WithTLSConfig(tlsConfig))
+func WithTLSConfig(config *tls.Config) ClientOption {
+	return func(c *Client) {
+		c.mutex.Lock()
+		defer c.mutex.Unlock()
+		c.tlsConfig = config
+	}
+}
+
+// WithMarshalOptions sets custom protojson marshal options for the client.
+// These options control how protocol buffer messages are marshaled to JSON.
+func WithMarshalOptions(opts protojson.MarshalOptions) ClientOption {
+	return func(c *Client) {
+		c.mutex.Lock()
+		defer c.mutex.Unlock()
+		c.marshalOpts = opts
+	}
+}
+
+// WithUnmarshalOptions sets custom protojson unmarshal options for the client.
+// These options control how JSON is unmarshaled into protocol buffer messages.
+func WithUnmarshalOptions(opts protojson.UnmarshalOptions) ClientOption {
+	return func(c *Client) {
+		c.mutex.Lock()
+		defer c.mutex.Unlock()
+		c.unmarshalOpts = opts
+	}
+}
+
 // ServerStream makes a server streaming RPC call with typed channels where the client sends one request
 // and receives a stream of responses over WebSocket.
 //
@@ -272,58 +357,6 @@ func ServerStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, r
 		apperror.Catch(closeConn, "closing websocket connection failed")
 		return <-errChan
 	}
-}
-
-// readServerMessages forwards the messages the server sends to out until the server closes the connection normally
-// (nil), reading fails or ctx is done.
-func readServerMessages[T proto.Message](ctx context.Context, c *Client, conn *websocket.Conn, out chan<- T, factory func() T) error {
-	for {
-		resp := factory()
-		var protoResp proto.Message = resp
-		err := c.readWSMessage(conn, &protoResp)
-		if err != nil {
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				return nil
-			}
-			return apperror.NewError("reading message failed").AddError(err)
-		}
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case out <- resp:
-		}
-	}
-}
-
-// writeStreamMessages sends the messages of in to the server until in is closed, a write fails or ctx is done.
-func writeStreamMessages[T proto.Message](ctx context.Context, c *Client, conn *websocket.Conn, in <-chan T) error {
-	for msg := range in {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		default:
-			err := c.writeWSMessage(conn, msg)
-			if err != nil {
-				return apperror.NewError("sending message failed").AddError(err)
-			}
-		}
-	}
-	return nil
-}
-
-// finishClientStream signals the end of the request stream and reads the final response.
-func (c *Client) finishClientStream(conn *websocket.Conn, resp proto.Message) error {
-	closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
-	err := conn.WriteMessage(websocket.CloseMessage, closeMsg)
-	if err != nil {
-		return apperror.NewError("sending close message failed").AddError(err)
-	}
-	// The response may arrive together with a close error, which the WebSocket protocol makes expected here.
-	err = c.readWSMessage(conn, &resp)
-	if err != nil && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-		return apperror.NewError("reading response failed").AddError(err)
-	}
-	return nil
 }
 
 // ClientStream makes a client streaming RPC call with typed channels where the client sends a stream
@@ -465,72 +498,39 @@ func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx
 	}
 }
 
-// dialWebSocket establishes a WebSocket connection to the service method endpoint.
-func (c *Client) dialWebSocket(u *url.URL) (*websocket.Conn, *http.Response, error) {
-	c.mutex.RLock()
-	defer c.mutex.RUnlock()
-
-	// Create a copy of the URL to avoid mutating the caller's data
-	dialURL := *u
-
-	switch dialURL.Scheme {
-	case schemeHTTP:
-		dialURL.Scheme = schemeWS
-	case schemeHTTPS:
-		dialURL.Scheme = schemeWSS
+// readServerMessages forwards the messages the server sends to out until the server closes the connection normally
+// (nil), reading fails or ctx is done.
+func readServerMessages[T proto.Message](ctx context.Context, c *Client, conn *websocket.Conn, out chan<- T, factory func() T) error {
+	for {
+		resp := factory()
+		var protoResp proto.Message = resp
+		err := c.readWSMessage(conn, &protoResp)
+		if err != nil {
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				return nil
+			}
+			return apperror.NewError("reading message failed").AddError(err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case out <- resp:
+		}
 	}
-
-	dialer := websocket.Dialer{
-		HandshakeTimeout: c.httpClient.Timeout,
-		TLSClientConfig:  c.tlsConfig,
-	}
-
-	headers := http.Header{}
-	if c.userAgent != "" {
-		headers.Set(headerUserAgent, c.userAgent)
-	}
-
-	conn, resp, err := dialer.Dial(dialURL.String(), headers)
-	if err != nil {
-		return nil, nil, apperror.NewError("connecting to websocket failed").AddError(err)
-	}
-
-	return conn, resp, nil
 }
 
-// writeWSMessage writes a proto message to the WebSocket connection.
-func (c *Client) writeWSMessage(conn *websocket.Conn, msg proto.Message) error {
-	c.mutex.RLock()
-	data, err := c.marshalOpts.Marshal(msg)
-	c.mutex.RUnlock()
-	if err != nil {
-		return apperror.NewError("marshaling message failed").AddError(err)
-	}
-	err = conn.WriteMessage(websocket.TextMessage, data)
-	if err != nil {
-		return apperror.NewError("writing websocket message failed").AddError(err)
-	}
-	return nil
-}
-
-// readWSMessage reads a proto message from the WebSocket connection.
-func (c *Client) readWSMessage(conn *websocket.Conn, msg *proto.Message) error {
-	_, data, err := conn.ReadMessage()
-	if err != nil {
-		return err
-	}
-
-	// If msg is a pointer to nil, we can't unmarshal
-	// The generated code will need to provide the correct type
-	if msg == nil || *msg == nil {
-		return apperror.NewError("message pointer cannot be nil")
-	}
-
-	c.mutex.RLock()
-	err = c.unmarshalOpts.Unmarshal(data, *msg)
-	c.mutex.RUnlock()
-	if err != nil {
-		return apperror.NewError("unmarshaling message failed").AddError(err)
+// writeStreamMessages sends the messages of in to the server until in is closed, a write fails or ctx is done.
+func writeStreamMessages[T proto.Message](ctx context.Context, c *Client, conn *websocket.Conn, in <-chan T) error {
+	for msg := range in {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			err := c.writeWSMessage(conn, msg)
+			if err != nil {
+				return apperror.NewError("sending message failed").AddError(err)
+			}
+		}
 	}
 	return nil
 }
