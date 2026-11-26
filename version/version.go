@@ -182,19 +182,23 @@ func init() {
 	}
 
 	for _, setting := range info.Settings {
-		switch setting.Key {
-		case vcsRevisionKey:
-			if setting.Value != "" {
-				GitCommit = setting.Value
-				GitShort = GitCommit
+		applyBuildSetting(setting)
+	}
+}
 
-				if len(GitShort) >= shortCommitLength {
-					GitShort = GitShort[:shortCommitLength]
-				}
-			}
-		case vcsTimeKey:
-			BuildDate = setting.Value
+func applyBuildSetting(setting debug.BuildSetting) {
+	switch setting.Key {
+	case vcsRevisionKey:
+		if setting.Value == "" {
+			return
 		}
+		GitCommit = setting.Value
+		GitShort = GitCommit
+		if len(GitShort) >= shortCommitLength {
+			GitShort = GitShort[:shortCommitLength]
+		}
+	case vcsTimeKey:
+		BuildDate = setting.Value
 	}
 }
 
@@ -522,7 +526,6 @@ func CompareVersions(tag1, tag2 string) (int, error) {
 	format1 := DetectFormat(tag1)
 	format2 := DetectFormat(tag2)
 
-	// Only compare versions of the same format
 	if format1 != format2 {
 		return 0, apperror.NewError("cannot compare versions of different formats")
 	}
@@ -662,7 +665,6 @@ func IsCalVerYYMMMICRO(tag string) bool {
 	}
 	year, month, micro := nums[0], nums[1], nums[2]
 
-	// Validate ranges - YY format with month and micro
 	return year >= 0 && year <= maxShortYear && month >= 1 && month <= maxMonth && micro >= 0
 }
 
@@ -682,7 +684,6 @@ func IsCalVerYYYYWW(tag string) bool {
 	}
 	year, week := nums[0], nums[1]
 
-	// Validate ranges - year and week of year
 	return year > 0 && week >= 1 && week <= maxWeek
 }
 
@@ -702,7 +703,6 @@ func IsCalVerYYYYMMDDMICRO(tag string) bool {
 	}
 	year, month, day, micro := nums[0], nums[1], nums[2], nums[microIndex]
 
-	// Validate date ranges
 	return year > 0 && month >= 1 && month <= maxMonth && day >= 1 && day <= maxDay && micro >= 0
 }
 
