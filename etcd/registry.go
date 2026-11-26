@@ -82,7 +82,7 @@ func (c *Client) Register(ctx context.Context, info Descriptor, ttl time.Duratio
 		return nil, apperror.NewError("encoding service info failed").AddError(err)
 	}
 
-	key := c.key("services", info.Name, info.ID)
+	key := c.key(servicesKeyGroup, info.Name, info.ID)
 	_, err = c.raw.Put(ctx, key, string(payload), clientv3.WithLease(leaseResp.ID))
 	if err != nil {
 		return nil, c.abortRegistration(ctx, leaseResp.ID, apperror.NewError("writing service registration failed").AddError(err))

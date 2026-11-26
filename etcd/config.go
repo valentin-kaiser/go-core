@@ -26,19 +26,19 @@ type source struct {
 // config package via config.Manager().WithSource(...) for etcd-only mode or
 // config.Manager().WithOverlay(...) for a hybrid setup.
 func (c *Client) ConfigSource(name string) config.Source {
-	name = strings.Trim(name, "/")
+	name = strings.Trim(name, keySeparator)
 	if name == "" {
-		name = "config"
+		name = defaultConfigName
 	}
 	return &source{
 		cli:       c,
 		name:      name,
-		keyPrefix: c.key("config", name) + "/",
+		keyPrefix: c.key(configKeyGroup, name) + keySeparator,
 	}
 }
 
 // Name implements config.Source.
-func (s *source) Name() string { return "etcd" }
+func (s *source) Name() string { return sourceName }
 
 // Load implements config.Source.
 func (s *source) Load(ctx context.Context) (map[string]any, error) {
@@ -90,7 +90,7 @@ func (s *source) Save(ctx context.Context, c config.Config) error {
 		if err != nil {
 			return apperror.NewErrorf("encoding value for key %q failed", k).AddError(err)
 		}
-		ops = append(ops, clientv3.OpPut(s.keyPrefix+strings.ToLower(k), strings.TrimRight(string(data), "\n")))
+		ops = append(ops, clientv3.OpPut(s.keyPrefix+strings.ToLower(k), strings.TrimRight(string(data), trailingNewline)))
 	}
 
 	if len(ops) == 0 {
@@ -167,7 +167,7 @@ func flatten(data map[string]any, prefix string, out map[string]any) {
 	for k, v := range data {
 		key := k
 		if prefix != "" {
-			key = prefix + "." + k
+			key = prefix + configKeySeparator + k
 		}
 		switch nested := v.(type) {
 		case map[string]any:

@@ -44,7 +44,7 @@ func (c *Client) Lock(ctx context.Context, key string, ttl time.Duration) (*Lock
 		return nil, apperror.NewError("creating etcd session failed").AddError(err)
 	}
 
-	fullKey := c.key("locks", key)
+	fullKey := c.key(locksKeyGroup, key)
 	mutex := concurrency.NewMutex(session, fullKey)
 	err = mutex.Lock(ctx)
 	if err != nil {
@@ -66,12 +66,12 @@ func (c *Client) TryLock(ctx context.Context, key string, ttl time.Duration) (*L
 	}
 	seconds := max(int(ttl/time.Second), 1)
 
-	fullKey := c.key("locks", key)
+	fullKey := c.key(locksKeyGroup, key)
 
 	// A session is a lease plus a keep-alive stream, which costs several milliseconds to set
 	// up. When somebody holds the lock there is no point in creating one just to be refused,
 	// so look at the lock first. The mutex keeps one key per holder or waiter under key + "/".
-	held, err := c.raw.Get(ctx, fullKey+"/", clientv3.WithPrefix(), clientv3.WithCountOnly())
+	held, err := c.raw.Get(ctx, fullKey+keySeparator, clientv3.WithPrefix(), clientv3.WithCountOnly())
 	if err != nil {
 		return nil, apperror.NewError("attempting etcd lock failed").AddError(err)
 	}
