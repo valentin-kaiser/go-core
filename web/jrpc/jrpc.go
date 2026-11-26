@@ -144,7 +144,7 @@ const (
 
 // Common error messages to avoid repeated allocations
 var (
-	logger = logging.GetPackageLogger("jrpc")
+	logger = logging.PackageLogger("jrpc")
 
 	errMethodNotFound           = apperror.NewError("method not found")
 	errMethodReflectionNotFound = apperror.NewError("method reflection data not found")
@@ -1149,7 +1149,7 @@ func WithWebSocketContext(ctx context.Context, w http.ResponseWriter, r *http.Re
 	return ctx
 }
 
-// GetResponseWriter extracts the HTTP ResponseWriter from the context.
+// ResponseWriterFromContext extracts the HTTP ResponseWriter from the context.
 // This allows service methods to access the original response writer for
 // setting custom headers, status codes, or other HTTP-specific operations.
 //
@@ -1159,12 +1159,12 @@ func WithWebSocketContext(ctx context.Context, w http.ResponseWriter, r *http.Re
 // Returns:
 //   - http.ResponseWriter: The response writer if found
 //   - bool: True if the ResponseWriter was found in the context
-func GetResponseWriter(ctx context.Context) (http.ResponseWriter, bool) {
+func ResponseWriterFromContext(ctx context.Context) (http.ResponseWriter, bool) {
 	w, ok := ctx.Value(ContextKeyResponseWriter).(http.ResponseWriter)
 	return w, ok
 }
 
-// GetRequest extracts the HTTP Request from the context.
+// RequestFromContext extracts the HTTP Request from the context.
 // This provides access to request metadata such as headers, URL parameters,
 // authentication information, and other request-specific data for logging,
 // authorization, and business logic purposes.
@@ -1175,12 +1175,12 @@ func GetResponseWriter(ctx context.Context) (http.ResponseWriter, bool) {
 // Returns:
 //   - *http.Request: The HTTP request if found
 //   - bool: True if the Request was found in the context
-func GetRequest(ctx context.Context) (*http.Request, bool) {
+func RequestFromContext(ctx context.Context) (*http.Request, bool) {
 	r, ok := ctx.Value(ContextKeyRequest).(*http.Request)
 	return r, ok
 }
 
-// GetWebSocketConn extracts the WebSocket connection from the context.
+// WebSocketConnFromContext extracts the WebSocket connection from the context.
 // This enables streaming service methods to access connection properties,
 // configure timeouts, handle connection-specific operations, and manage
 // the WebSocket lifecycle.
@@ -1191,7 +1191,7 @@ func GetRequest(ctx context.Context) (*http.Request, bool) {
 // Returns:
 //   - *websocket.Conn: The WebSocket connection if found
 //   - bool: True if the connection was found in the context
-func GetWebSocketConn(ctx context.Context) (*websocket.Conn, bool) {
+func WebSocketConnFromContext(ctx context.Context) (*websocket.Conn, bool) {
 	conn, ok := ctx.Value(ContextKeyWebSocketConn).(*websocket.Conn)
 	return conn, ok
 }

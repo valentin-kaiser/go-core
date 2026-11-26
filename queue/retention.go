@@ -1,6 +1,6 @@
 package queue
 
-// defaultFinishedRetention is how many finished jobs a queue keeps for GetJob and GetJobs
+// defaultFinishedRetention is how many finished jobs a queue keeps for Job and Jobs
 const defaultFinishedRetention = 10000
 
 // finishedEntry is one completion in the ring. The ID alone is not enough: a job that is retried
@@ -13,7 +13,7 @@ type finishedEntry struct {
 // finishedJobs remembers the order in which jobs finished and drops the oldest ones from the
 // queue's job index once more than limit are kept. A queue that is used for years would
 // otherwise hold every job it ever ran. The jobs themselves are not lost, only the index entry
-// used by GetJob; the counts of dropped jobs are kept so GetStats still adds up.
+// used by Job; the counts of dropped jobs are kept so Stats still adds up.
 //
 // It has no lock of its own: the owning queue calls it with its job lock held.
 type finishedJobs struct {

@@ -41,9 +41,9 @@ func (d *DynamicAdapter) SetLevel(level Level) Adapter {
 	return d
 }
 
-// GetLevel returns the current log level from the active adapter for this package.
-func (d *DynamicAdapter) GetLevel() Level {
-	return d.current().GetLevel()
+// Level returns the current log level from the active adapter for this package.
+func (d *DynamicAdapter) Level() Level {
+	return d.current().Level()
 }
 
 // Trace returns a trace level event from the current active adapter.
@@ -121,14 +121,14 @@ func SetGlobalAdapter(adapter Adapter) {
 	global.Store(&adapterBox{adapter: adapter})
 }
 
-// GetGlobalAdapter returns the current global adapter
-func GetGlobalAdapter[T Adapter]() (T, bool) {
+// GlobalAdapter returns the current global adapter
+func GlobalAdapter[T Adapter]() (T, bool) {
 	a, ok := global.Load().adapter.(T)
 	return a, ok
 }
 
-// GetGlobalAdapterInterface returns the current global adapter as an interface
-func GetGlobalAdapterInterface() Adapter {
+// CurrentAdapter returns the current global adapter as an interface
+func CurrentAdapter() Adapter {
 	return global.Load().adapter
 }
 
@@ -148,9 +148,9 @@ func Anonymous(a bool) {
 	anonymous.Store(a)
 }
 
-// GetPackageLogger returns a logger for a specific package
+// PackageLogger returns a logger for a specific package
 // Returns a dynamic adapter that will always use the current global/package-specific adapter
-func GetPackageLogger(pkg string) Adapter {
+func PackageLogger(pkg string) Adapter {
 	return NewDynamicAdapter(pkg)
 }
 
@@ -190,9 +190,9 @@ func SetPackageLevel(pkg string, level Level) {
 	SetPackageAdapter(pkg, newAdapter.WithPackage(pkg))
 }
 
-// GetPackageLevel returns the log level for a specific package
-func GetPackageLevel(pkg string) Level {
-	return GetPackageLogger(pkg).GetLevel()
+// PackageLevel returns the log level for a specific package
+func PackageLevel(pkg string) Level {
+	return PackageLogger(pkg).Level()
 }
 
 // ListPackages returns all packages that have specific adapters

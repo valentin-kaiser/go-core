@@ -201,9 +201,9 @@ func (e Error) AddDetails(details map[string]any) Error {
 	return e
 }
 
-// GetDetail retrieves a value from the error context by key
+// Detail retrieves a value from the error context by key
 // If the key does not exist, it returns nil
-func (e Error) GetDetail(key string) any {
+func (e Error) Detail(key string) any {
 	if e.Context == nil {
 		return nil
 	}
@@ -212,15 +212,6 @@ func (e Error) GetDetail(key string) any {
 		return nil
 	}
 	return value
-}
-
-// GetContext returns the context map of the error
-// This can be used to retrieve additional information that was added to the error
-func (e Error) GetContext() map[string]any {
-	if e.Context == nil {
-		return nil
-	}
-	return e.Context
 }
 
 // Is implements the error unwrapping interface for errors.Is()

@@ -29,7 +29,7 @@ func TestRouterUnregisterHandler(t *testing.T) {
 	router.UnregisterHandler([]string{"/test1", "/test3"})
 
 	// Verify correct routes remain
-	routes := router.GetRegisteredRoutes()
+	routes := router.RegisteredRoutes()
 	if len(routes) != 2 {
 		t.Fatalf("Expected 2 routes after unregistering, got %d", len(routes))
 	}
@@ -67,7 +67,7 @@ func TestRouterUnregisterAllHandler(t *testing.T) {
 	router.UnregisterAllHandler()
 
 	// Verify all routes are unregistered
-	routes := router.GetRegisteredRoutes()
+	routes := router.RegisteredRoutes()
 	if len(routes) != 0 {
 		t.Fatalf("Expected 0 routes after UnregisterAll, got %d", len(routes))
 	}
@@ -124,7 +124,7 @@ func TestRouterConcurrentAccess(t *testing.T) {
 	// Goroutine 3: Get registered routes
 	go func() {
 		for range 50 {
-			router.GetRegisteredRoutes()
+			router.RegisteredRoutes()
 		}
 		done <- true
 	}()
@@ -135,7 +135,7 @@ func TestRouterConcurrentAccess(t *testing.T) {
 	}
 
 	// Verify router is still functional
-	routes := router.GetRegisteredRoutes()
+	routes := router.RegisteredRoutes()
 	if len(routes) != 10 {
 		t.Errorf("Expected 10 routes after concurrent operations, got %d", len(routes))
 	}

@@ -65,7 +65,7 @@ func TestTieredCache_BasicOperations(t *testing.T) {
 	}
 
 	// Value should exist in both L1 and L2
-	l1Found, err := c.GetL1Cache().Exists(ctx, "user:1")
+	l1Found, err := c.L1().Exists(ctx, "user:1")
 	if err != nil {
 		t.Fatalf("Failed to check L1 exists: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestTieredCache_BasicOperations(t *testing.T) {
 		t.Error("Expected value to exist in L1 cache")
 	}
 
-	l2Found, err := c.GetL2Cache().Exists(ctx, "user:1")
+	l2Found, err := c.L2().Exists(ctx, "user:1")
 	if err != nil {
 		t.Fatalf("Failed to check L2 exists: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestTieredCache_BasicOperations(t *testing.T) {
 	}
 
 	// Value should be deleted from both L1 and L2
-	l1Found, err = c.GetL1Cache().Exists(ctx, "user:1")
+	l1Found, err = c.L1().Exists(ctx, "user:1")
 	if err != nil {
 		t.Fatalf("Failed to check L1 exists after delete: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestTieredCache_BasicOperations(t *testing.T) {
 		t.Error("Expected value to be deleted from L1 cache")
 	}
 
-	l2Found, err = c.GetL2Cache().Exists(ctx, "user:1")
+	l2Found, err = c.L2().Exists(ctx, "user:1")
 	if err != nil {
 		t.Fatalf("Failed to check L2 exists after delete: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestTieredCache_L1Eviction(t *testing.T) {
 
 	// All items should be in L2
 	for i := 1; i <= 7; i++ {
-		l2Found, err := c.GetL2Cache().Exists(ctx, fmt.Sprintf("user:%d", i))
+		l2Found, err := c.L2().Exists(ctx, fmt.Sprintf("user:%d", i))
 		if err != nil {
 			t.Fatalf("Failed to check L2 exists for user:%d: %v", i, err)
 		}
@@ -139,7 +139,7 @@ func TestTieredCache_L1Eviction(t *testing.T) {
 
 	// Only the last 5 items should be in L1 due to LRU eviction
 	for i := 1; i <= 2; i++ {
-		l1Found, err := c.GetL1Cache().Exists(ctx, fmt.Sprintf("user:%d", i))
+		l1Found, err := c.L1().Exists(ctx, fmt.Sprintf("user:%d", i))
 		if err != nil {
 			t.Fatalf("Failed to check L1 exists for user:%d: %v", i, err)
 		}
@@ -149,7 +149,7 @@ func TestTieredCache_L1Eviction(t *testing.T) {
 	}
 
 	for i := 3; i <= 7; i++ {
-		l1Found, err := c.GetL1Cache().Exists(ctx, fmt.Sprintf("user:%d", i))
+		l1Found, err := c.L1().Exists(ctx, fmt.Sprintf("user:%d", i))
 		if err != nil {
 			t.Fatalf("Failed to check L1 exists for user:%d: %v", i, err)
 		}
@@ -165,13 +165,13 @@ func TestTieredCache_L2Backfill(t *testing.T) {
 
 	// Set value in L2 directly (simulating L1 eviction)
 	user := TestUser{ID: 1, Name: "John Doe", Email: "john@example.com"}
-	err := c.GetL2Cache().Set(ctx, "user:1", user, time.Hour)
+	err := c.L2().Set(ctx, "user:1", user, time.Hour)
 	if err != nil {
 		t.Fatalf("Failed to set value in L2: %v", err)
 	}
 
 	// Value should not be in L1
-	l1Found, err := c.GetL1Cache().Exists(ctx, "user:1")
+	l1Found, err := c.L1().Exists(ctx, "user:1")
 	if err != nil {
 		t.Fatalf("Failed to check L1 exists: %v", err)
 	}
@@ -195,7 +195,7 @@ func TestTieredCache_L2Backfill(t *testing.T) {
 	}
 
 	// Value should now be in both L1 and L2 due to backfill
-	l1Found, err = c.GetL1Cache().Exists(ctx, "user:1")
+	l1Found, err = c.L1().Exists(ctx, "user:1")
 	if err != nil {
 		t.Fatalf("Failed to check L1 exists after backfill: %v", err)
 	}
@@ -203,7 +203,7 @@ func TestTieredCache_L2Backfill(t *testing.T) {
 		t.Error("Expected value to be backfilled to L1 cache")
 	}
 
-	l2Found, err := c.GetL2Cache().Exists(ctx, "user:1")
+	l2Found, err := c.L2().Exists(ctx, "user:1")
 	if err != nil {
 		t.Fatalf("Failed to check L2 exists after backfill: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestTieredCache_TTL(t *testing.T) {
 	}
 
 	// Check TTL
-	ttl, err := c.GetTTL(ctx, "test")
+	ttl, err := c.TTL(ctx, "test")
 	if err != nil {
 		t.Fatalf("Failed to get TTL: %v", err)
 	}
@@ -243,12 +243,12 @@ func TestTieredCache_TTLPropagation(t *testing.T) {
 	}
 
 	// Check TTL in both caches
-	l1TTL, err := c.GetL1Cache().GetTTL(ctx, "test")
+	l1TTL, err := c.L1().TTL(ctx, "test")
 	if err != nil {
 		t.Fatalf("Failed to get L1 TTL: %v", err)
 	}
 
-	l2TTL, err := c.GetL2Cache().GetTTL(ctx, "test")
+	l2TTL, err := c.L2().TTL(ctx, "test")
 	if err != nil {
 		t.Fatalf("Failed to get L2 TTL: %v", err)
 	}
@@ -286,9 +286,9 @@ func TestTieredCache_MultiOperations(t *testing.T) {
 		t.Fatalf("Failed to set multiple items: %v", err)
 	}
 
-	// Test GetMulti
+	// Test Fetch
 	keys := []string{"user:1", "user:2", "user:3", "user:4"} // user:4 doesn't exist
-	results, err := c.GetMulti(ctx, keys)
+	results, err := c.Fetch(ctx, keys)
 	if err != nil {
 		t.Fatalf("Failed to get multiple items: %v", err)
 	}
@@ -306,7 +306,7 @@ func TestTieredCache_MultiOperations(t *testing.T) {
 
 	// Verify deletions in both caches
 	for _, key := range deleteKeys {
-		l1Found, err := c.GetL1Cache().Exists(ctx, key)
+		l1Found, err := c.L1().Exists(ctx, key)
 		if err != nil {
 			t.Fatalf("Failed to check L1 exists for %s: %v", key, err)
 		}
@@ -314,7 +314,7 @@ func TestTieredCache_MultiOperations(t *testing.T) {
 			t.Errorf("Expected %s to be deleted from L1", key)
 		}
 
-		l2Found, err := c.GetL2Cache().Exists(ctx, key)
+		l2Found, err := c.L2().Exists(ctx, key)
 		if err != nil {
 			t.Fatalf("Failed to check L2 exists for %s: %v", key, err)
 		}
@@ -324,7 +324,7 @@ func TestTieredCache_MultiOperations(t *testing.T) {
 	}
 
 	// user:3 should still exist in both caches
-	l1Found, err := c.GetL1Cache().Exists(ctx, "user:3")
+	l1Found, err := c.L1().Exists(ctx, "user:3")
 	if err != nil {
 		t.Fatalf("Failed to check L1 exists for user:3: %v", err)
 	}
@@ -332,7 +332,7 @@ func TestTieredCache_MultiOperations(t *testing.T) {
 		t.Error("Expected user:3 to still exist in L1")
 	}
 
-	l2Found, err := c.GetL2Cache().Exists(ctx, "user:3")
+	l2Found, err := c.L2().Exists(ctx, "user:3")
 	if err != nil {
 		t.Fatalf("Failed to check L2 exists for user:3: %v", err)
 	}
@@ -364,7 +364,7 @@ func TestTieredCache_Clear(t *testing.T) {
 
 	// Verify all keys are deleted from both caches
 	for _, key := range testKeys {
-		l1Found, err := c.GetL1Cache().Exists(ctx, key)
+		l1Found, err := c.L1().Exists(ctx, key)
 		if err != nil {
 			t.Fatalf("Failed to check L1 exists for %s: %v", key, err)
 		}
@@ -372,7 +372,7 @@ func TestTieredCache_Clear(t *testing.T) {
 			t.Errorf("Expected %s to be cleared from L1", key)
 		}
 
-		l2Found, err := c.GetL2Cache().Exists(ctx, key)
+		l2Found, err := c.L2().Exists(ctx, key)
 		if err != nil {
 			t.Fatalf("Failed to check L2 exists for %s: %v", key, err)
 		}
@@ -467,7 +467,7 @@ func TestTieredCache_Stats(t *testing.T) {
 	}
 
 	// Remove from L1 to test L2 hit
-	err = c.GetL1Cache().Delete(ctx, "key2")
+	err = c.L1().Delete(ctx, "key2")
 	if err != nil {
 		t.Fatalf("Failed to delete key2 from L1: %v", err)
 	}
@@ -491,7 +491,7 @@ func TestTieredCache_Stats(t *testing.T) {
 	}
 
 	// Check combined stats
-	stats := c.GetStats()
+	stats := c.Stats()
 	// 3 initial sets to both L1 and L2 (6 sets) + 1 backfill set to L1 (1 set) = 7 sets
 	if stats.Sets != 7 {
 		t.Errorf("Expected 7 sets, got %d", stats.Sets)

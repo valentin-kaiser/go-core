@@ -142,8 +142,8 @@ func (rq *RedisQueue) Schedule(ctx context.Context, job *Job) error {
 	return nil
 }
 
-// GetJob retrieves a job by ID
-func (rq *RedisQueue) GetJob(ctx context.Context, id string) (*Job, error) {
+// Job retrieves a job by ID
+func (rq *RedisQueue) Job(ctx context.Context, id string) (*Job, error) {
 	if rq.closed {
 		return nil, apperror.NewError("queue is closed")
 	}
@@ -221,8 +221,8 @@ func (rq *RedisQueue) DeleteJob(ctx context.Context, id string) error {
 	return nil
 }
 
-// GetJobs retrieves jobs by status
-func (rq *RedisQueue) GetJobs(ctx context.Context, status Status, limit int) ([]*Job, error) {
+// Jobs retrieves jobs by status
+func (rq *RedisQueue) Jobs(ctx context.Context, status Status, limit int) ([]*Job, error) {
 	if rq.closed {
 		return nil, apperror.NewError("queue is closed")
 	}
@@ -246,7 +246,7 @@ func (rq *RedisQueue) GetJobs(ctx context.Context, status Status, limit int) ([]
 	}
 
 	for _, jobID := range jobIDs {
-		job, err := rq.GetJob(ctx, jobID)
+		job, err := rq.Job(ctx, jobID)
 		if err != nil {
 			logger.Error().Err(err).Field("job_id", jobID).Msg("reading scheduled job failed")
 			continue
@@ -259,8 +259,8 @@ func (rq *RedisQueue) GetJobs(ctx context.Context, status Status, limit int) ([]
 	return jobs, nil
 }
 
-// GetStats returns queue statistics
-func (rq *RedisQueue) GetStats(ctx context.Context) (*Stats, error) {
+// Stats returns queue statistics
+func (rq *RedisQueue) Stats(ctx context.Context) (*Stats, error) {
 	if rq.closed {
 		return nil, apperror.NewError("queue is closed")
 	}
@@ -348,7 +348,7 @@ func (rq *RedisQueue) MoveScheduledToPending(ctx context.Context) error {
 	}
 
 	for _, jobID := range jobIDs {
-		job, err := rq.GetJob(ctx, jobID)
+		job, err := rq.Job(ctx, jobID)
 		if err != nil {
 			continue
 		}

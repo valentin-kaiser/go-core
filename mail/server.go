@@ -266,7 +266,7 @@ func (s *session) AuthPlain(username, password string) error {
 	}
 
 	s.server.security.RecordAuthFailure(s.remoteAddr)
-	if delay := s.server.security.GetAuthFailureDelay(); delay > 0 {
+	if delay := s.server.security.AuthFailureDelay(); delay > 0 {
 		time.Sleep(delay)
 	}
 

@@ -18,7 +18,7 @@ const (
 	TaskTypeInterval
 )
 
-var logger = logging.GetPackageLogger("queue")
+var logger = logging.PackageLogger("queue")
 
 // TaskFunc represents a task function that can be executed
 type TaskFunc func(ctx context.Context) error
@@ -504,8 +504,8 @@ func (s *TaskScheduler) Stop() {
 	logger.Debug().Msg("task scheduler stopped")
 }
 
-// GetTask returns a task by name
-func (s *TaskScheduler) GetTask(name string) (*Task, error) {
+// Task returns a task by name
+func (s *TaskScheduler) Task(name string) (*Task, error) {
 	s.tasksMutex.RLock()
 	task, exists := s.tasks[name]
 	s.tasksMutex.RUnlock()
@@ -542,8 +542,8 @@ func (s *TaskScheduler) GetTask(name string) (*Task, error) {
 	}, nil
 }
 
-// GetTasks returns all registered tasks
-func (s *TaskScheduler) GetTasks() map[string]*Task {
+// Tasks returns all registered tasks
+func (s *TaskScheduler) Tasks() map[string]*Task {
 	s.tasksMutex.RLock()
 	defer s.tasksMutex.RUnlock()
 

@@ -97,7 +97,7 @@
 //
 //			go func() {
 //				if err := server.Start(); err != nil {
-//					logging.GetPackageLogger("main").Error().Err(err).Msg("Server failed")
+//					logging.PackageLogger("main").Error().Err(err).Msg("Server failed")
 //				}
 //			}()
 //
@@ -134,7 +134,7 @@ import (
 
 var (
 	interactive = false
-	logger      = logging.GetPackageLogger("service")
+	logger      = logging.PackageLogger("service")
 )
 
 // Config is an alias for service.Config providing system service configuration options.

@@ -71,7 +71,7 @@ func NewMemoryQueue() *MemoryQueue {
 }
 
 // WithFinishedRetention sets how many completed, failed and dead-lettered jobs the queue keeps
-// for GetJob and GetJobs (default 10000). Older ones are dropped from the index; GetStats
+// for Job and Jobs (default 10000). Older ones are dropped from the index; Stats
 // still counts them. Zero or less keeps every job, which grows without bound.
 func (mq *MemoryQueue) WithFinishedRetention(n int) *MemoryQueue {
 	mq.mutex.Lock()
@@ -139,8 +139,8 @@ func (mq *MemoryQueue) Schedule(_ context.Context, job *Job) error {
 	return nil
 }
 
-// GetJob retrieves a job by ID
-func (mq *MemoryQueue) GetJob(_ context.Context, id string) (*Job, error) {
+// Job retrieves a job by ID
+func (mq *MemoryQueue) Job(_ context.Context, id string) (*Job, error) {
 	mq.mutex.RLock()
 	defer mq.mutex.RUnlock()
 
@@ -196,8 +196,8 @@ func (mq *MemoryQueue) DeleteJob(_ context.Context, id string) error {
 	return nil
 }
 
-// GetJobs retrieves jobs by status
-func (mq *MemoryQueue) GetJobs(_ context.Context, status Status, limit int) ([]*Job, error) {
+// Jobs retrieves jobs by status
+func (mq *MemoryQueue) Jobs(_ context.Context, status Status, limit int) ([]*Job, error) {
 	mq.mutex.RLock()
 	defer mq.mutex.RUnlock()
 
@@ -221,8 +221,8 @@ func (mq *MemoryQueue) GetJobs(_ context.Context, status Status, limit int) ([]*
 	return jobs, nil
 }
 
-// GetStats returns queue statistics
-func (mq *MemoryQueue) GetStats(_ context.Context) (*Stats, error) {
+// Stats returns queue statistics
+func (mq *MemoryQueue) Stats(_ context.Context) (*Stats, error) {
 	mq.mutex.RLock()
 	defer mq.mutex.RUnlock()
 

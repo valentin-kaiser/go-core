@@ -214,8 +214,8 @@ func (rc *RedisCache) Clear(ctx context.Context) error {
 	return nil
 }
 
-// GetMulti retrieves multiple values from the cache
-func (rc *RedisCache) GetMulti(ctx context.Context, keys []string) (map[string]any, error) {
+// Fetch retrieves multiple values from the cache
+func (rc *RedisCache) Fetch(ctx context.Context, keys []string) (map[string]any, error) {
 	if len(keys) == 0 {
 		return make(map[string]any), nil
 	}
@@ -300,8 +300,8 @@ func (rc *RedisCache) DeleteMulti(ctx context.Context, keys []string) error {
 	return nil
 }
 
-// GetTTL returns the remaining TTL for a key
-func (rc *RedisCache) GetTTL(ctx context.Context, key string) (time.Duration, error) {
+// TTL returns the remaining TTL for a key
+func (rc *RedisCache) TTL(ctx context.Context, key string) (time.Duration, error) {
 	formattedKey := rc.formatKey(key)
 
 	ttl, err := rc.client.TTL(ctx, formattedKey).Result()
@@ -346,13 +346,13 @@ func (rc *RedisCache) Close() error {
 	return rc.client.Close()
 }
 
-// GetClient returns the underlying Redis client for advanced operations
-func (rc *RedisCache) GetClient() *redis.Client {
+// Client returns the underlying Redis client for advanced operations
+func (rc *RedisCache) Client() *redis.Client {
 	return rc.client
 }
 
-// GetInfo returns Redis server information
-func (rc *RedisCache) GetInfo(ctx context.Context) (map[string]string, error) {
+// Info returns Redis server information
+func (rc *RedisCache) Info(ctx context.Context) (map[string]string, error) {
 	info, err := rc.client.Info(ctx).Result()
 	if err != nil {
 		return nil, NewCacheError(opInfo, "", err)

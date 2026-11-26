@@ -76,7 +76,7 @@ const (
 )
 
 var (
-	logger             = logging.GetPackageLogger("xrpc")
+	logger             = logging.PackageLogger("xrpc")
 	errMissingStreamID = apperror.NewError("missing stream id")
 )
 
@@ -425,26 +425,26 @@ func WithWebSocketContext(ctx context.Context, w http.ResponseWriter, r *http.Re
 	return context.WithValue(WithHTTPContext(ctx, w, r), keyConn, conn)
 }
 
-// GetRequest returns the HTTP request that started the call.
-func GetRequest(ctx context.Context) (*http.Request, bool) {
+// RequestFromContext returns the HTTP request that started the call.
+func RequestFromContext(ctx context.Context) (*http.Request, bool) {
 	r, ok := ctx.Value(keyRequest).(*http.Request)
 	return r, ok
 }
 
-// GetResponseWriter returns the HTTP response writer of the call. It is unavailable on WebSocket and gRPC streams after the upgrade.
-func GetResponseWriter(ctx context.Context) (http.ResponseWriter, bool) {
+// ResponseWriterFromContext returns the HTTP response writer of the call. It is unavailable on WebSocket and gRPC streams after the upgrade.
+func ResponseWriterFromContext(ctx context.Context) (http.ResponseWriter, bool) {
 	w, ok := ctx.Value(keyWriter).(http.ResponseWriter)
 	return w, ok
 }
 
-// GetWebSocketConn returns the WebSocket connection of the call.
-func GetWebSocketConn(ctx context.Context) (*websocket.Conn, bool) {
+// WebSocketConnFromContext returns the WebSocket connection of the call.
+func WebSocketConnFromContext(ctx context.Context) (*websocket.Conn, bool) {
 	c, ok := ctx.Value(keyConn).(*websocket.Conn)
 	return c, ok
 }
 
-// GetProtocol returns the wire protocol of the call.
-func GetProtocol(ctx context.Context) (Protocol, bool) {
+// ProtocolFromContext returns the wire protocol of the call.
+func ProtocolFromContext(ctx context.Context) (Protocol, bool) {
 	p, ok := ctx.Value(keyProtocol).(Protocol)
 	return p, ok
 }

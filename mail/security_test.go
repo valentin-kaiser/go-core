@@ -233,7 +233,7 @@ func TestSecurityManager_GetAuthFailureDelay(t *testing.T) {
 	}
 
 	sm := mail.NewPolicy(config)
-	delay := sm.GetAuthFailureDelay()
+	delay := sm.AuthFailureDelay()
 
 	if delay <= 0 {
 		t.Error("Auth failure delay should be positive")

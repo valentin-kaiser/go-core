@@ -322,8 +322,8 @@ func (sm *Policy) CloseConnection(remoteAddr string) {
 	}
 }
 
-// GetAuthFailureDelay returns the delay to apply after auth failure
-func (sm *Policy) GetAuthFailureDelay() time.Duration {
+// AuthFailureDelay returns the delay to apply after auth failure
+func (sm *Policy) AuthFailureDelay() time.Duration {
 	return sm.config.AuthFailureDelay
 }
 

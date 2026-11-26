@@ -20,7 +20,7 @@ func (h *slogHandler) Enabled(_ context.Context, level slog.Level) bool {
 		return false
 	}
 
-	return slogToLevel(level) >= h.adapter.GetLevel()
+	return slogToLevel(level) >= h.adapter.Level()
 }
 
 func (h *slogHandler) Handle(_ context.Context, record slog.Record) error {
@@ -88,7 +88,7 @@ func (h *slogHandler) eventFor(level slog.Level) Event {
 
 // SLogger returns a slog logger backed by the current global logging adapter.
 func SLogger() *slog.Logger {
-	return NewSlogLogger(GetGlobalAdapterInterface())
+	return NewSlogLogger(CurrentAdapter())
 }
 
 // NewSlogLogger creates a slog logger backed by the provided logging adapter.

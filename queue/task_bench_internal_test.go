@@ -34,7 +34,7 @@ func BenchmarkSchedulerCheckIdle1000(b *testing.B) {
 
 func BenchmarkSchedulerRunTask(b *testing.B) {
 	s := benchScheduler(b, 1)
-	task, err := s.GetTask("task-0")
+	task, err := s.Task("task-0")
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -52,9 +52,9 @@ func BenchmarkSchedulerGetTasks1000(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		tasks := s.GetTasks()
+		tasks := s.Tasks()
 		if len(tasks) != benchTaskCount {
-			b.Fatalf("GetTasks returned %d tasks, want %d", len(tasks), benchTaskCount)
+			b.Fatalf("Tasks returned %d tasks, want %d", len(tasks), benchTaskCount)
 		}
 	}
 }

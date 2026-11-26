@@ -66,9 +66,9 @@ type RabbitMQConfig struct {
 	// connection closes. The broker deletes an AutoDelete queue when its last consumer
 	// goes away; Reconnect declares the queues again. 0 (the default) keeps the polling behavior.
 	Prefetch int
-	// RetainFinished is how many completed, failed and dead-lettered jobs are kept for GetJob and
-	// GetJobs. 0 selects the default of 10000, below 0 keeps all of them (which grows without
-	// bound in a long running process). Older ones are dropped from the index; GetStats still
+	// RetainFinished is how many completed, failed and dead-lettered jobs are kept for Job and
+	// Jobs. 0 selects the default of 10000, below 0 keeps all of them (which grows without
+	// bound in a long running process). Older ones are dropped from the index; Stats still
 	// counts them.
 	RetainFinished int
 }
@@ -301,8 +301,8 @@ func (rq *RabbitMQ) UpdateJob(_ context.Context, job *Job) error {
 	return rq.settleDelivery(job)
 }
 
-// GetJob retrieves a job by ID
-func (rq *RabbitMQ) GetJob(_ context.Context, id string) (*Job, error) {
+// Job retrieves a job by ID
+func (rq *RabbitMQ) Job(_ context.Context, id string) (*Job, error) {
 	rq.jobsMutex.RLock()
 	defer rq.jobsMutex.RUnlock()
 
@@ -318,8 +318,8 @@ func (rq *RabbitMQ) GetJob(_ context.Context, id string) (*Job, error) {
 	return job, nil
 }
 
-// GetJobs retrieves jobs by status
-func (rq *RabbitMQ) GetJobs(_ context.Context, status Status, limit int) ([]*Job, error) {
+// Jobs retrieves jobs by status
+func (rq *RabbitMQ) Jobs(_ context.Context, status Status, limit int) ([]*Job, error) {
 	rq.jobsMutex.RLock()
 	defer rq.jobsMutex.RUnlock()
 
@@ -343,8 +343,8 @@ func (rq *RabbitMQ) GetJobs(_ context.Context, status Status, limit int) ([]*Job
 	return jobs, nil
 }
 
-// GetStats returns queue statistics
-func (rq *RabbitMQ) GetStats(_ context.Context) (*Stats, error) {
+// Stats returns queue statistics
+func (rq *RabbitMQ) Stats(_ context.Context) (*Stats, error) {
 	rq.jobsMutex.RLock()
 	defer rq.jobsMutex.RUnlock()
 

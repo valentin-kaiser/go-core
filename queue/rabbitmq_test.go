@@ -199,7 +199,7 @@ func TestRabbitMQJobOperations(t *testing.T) {
 		t.Fatalf("Failed to enqueue job: %v", err)
 	}
 
-	retrievedJob, err := q.GetJob(ctx, job.ID)
+	retrievedJob, err := q.Job(ctx, job.ID)
 	if err != nil {
 		t.Fatalf("Failed to get job: %v", err)
 	}
@@ -208,7 +208,7 @@ func TestRabbitMQJobOperations(t *testing.T) {
 		t.Errorf("Expected job ID %s, got %s", job.ID, retrievedJob.ID)
 	}
 
-	pendingJobs, err := q.GetJobs(ctx, queue.StatusPending, rabbitMQListLimit)
+	pendingJobs, err := q.Jobs(ctx, queue.StatusPending, rabbitMQListLimit)
 	if err != nil {
 		t.Fatalf("Failed to get pending jobs: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestRabbitMQJobOperations(t *testing.T) {
 		t.Error("Job not found in pending jobs")
 	}
 
-	stats, err := q.GetStats(ctx)
+	stats, err := q.Stats(ctx)
 	if err != nil {
 		t.Fatalf("Failed to get stats: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestRabbitMQJobOperations(t *testing.T) {
 		t.Fatalf("Failed to delete job: %v", err)
 	}
 
-	_, err = q.GetJob(ctx, job.ID)
+	_, err = q.Job(ctx, job.ID)
 	if err == nil {
 		t.Error("Expected error when getting deleted job")
 	}
@@ -258,7 +258,7 @@ func TestRabbitMQPurge(t *testing.T) {
 		t.Fatalf("Failed to purge queue: %v", err)
 	}
 
-	stats, err := q.GetStats(ctx)
+	stats, err := q.Stats(ctx)
 	if err != nil {
 		t.Fatalf("Failed to get stats after purge: %v", err)
 	}
@@ -325,21 +325,21 @@ func TestRabbitMQWithClosedConnection(t *testing.T) {
 		{
 			name: "getting job",
 			operation: func(ctx context.Context) error {
-				_, err := q.GetJob(ctx, job.ID)
+				_, err := q.Job(ctx, job.ID)
 				return err
 			},
 		},
 		{
 			name: "getting jobs",
 			operation: func(ctx context.Context) error {
-				_, err := q.GetJobs(ctx, queue.StatusPending, rabbitMQListLimit)
+				_, err := q.Jobs(ctx, queue.StatusPending, rabbitMQListLimit)
 				return err
 			},
 		},
 		{
 			name: "getting stats",
 			operation: func(ctx context.Context) error {
-				_, err := q.GetStats(ctx)
+				_, err := q.Stats(ctx)
 				return err
 			},
 		},
@@ -779,15 +779,15 @@ func TestRabbitMQFinishedRetention(t *testing.T) {
 		}
 	}
 
-	_, err := q.GetJob(ctx, "r-0")
+	_, err := q.Job(ctx, "r-0")
 	if err == nil {
 		t.Error("the oldest finished job is still indexed")
 	}
-	_, err = q.GetJob(ctx, "r-9")
+	_, err = q.Job(ctx, "r-9")
 	if err != nil {
 		t.Errorf("the newest finished job was dropped: %v", err)
 	}
-	stats, err := q.GetStats(ctx)
+	stats, err := q.Stats(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

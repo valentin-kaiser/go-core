@@ -45,15 +45,15 @@ func TestRSACipher_GenerateKeyPair(t *testing.T) {
 				return
 			}
 
-			if cipher.GetKeySize() != tt.bits {
-				t.Errorf("key size = %d, want %d", cipher.GetKeySize(), tt.bits)
+			if cipher.KeySize() != tt.bits {
+				t.Errorf("key size = %d, want %d", cipher.KeySize(), tt.bits)
 			}
 
-			if cipher.GetPrivateKey() == nil {
+			if cipher.PrivateKey() == nil {
 				t.Error("private key is nil")
 			}
 
-			if cipher.GetPublicKey() == nil {
+			if cipher.PublicKey() == nil {
 				t.Error("public key is nil")
 			}
 		})

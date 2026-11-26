@@ -48,7 +48,7 @@ func BenchmarkDetectFormat(b *testing.B) {
 func BenchmarkGetVersionComponents(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, err := version.GetVersionComponents("v1.22.3")
+		_, err := version.VersionComponents("v1.22.3")
 		if err != nil {
 			b.Fatal(err)
 		}

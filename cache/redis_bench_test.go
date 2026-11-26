@@ -117,7 +117,7 @@ func BenchmarkRedisCacheGetMulti(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := rc.GetMulti(ctx, keys)
+		_, err := rc.Fetch(ctx, keys)
 		if err != nil {
 			b.Fatal(err)
 		}

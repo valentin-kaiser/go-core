@@ -116,7 +116,7 @@ const (
 var (
 	mutex    sync.Mutex
 	instance *Server
-	logger   = logging.GetPackageLogger("web")
+	logger   = logging.PackageLogger("web")
 )
 
 // Protocol represents the protocol type for a server port
@@ -584,13 +584,13 @@ func (s *Server) UnregisterAllHandler() *Server {
 	return s
 }
 
-// GetRegisteredRoutes returns a slice of all currently registered route patterns
-func (s *Server) GetRegisteredRoutes() []string {
+// RegisteredRoutes returns a slice of all currently registered route patterns
+func (s *Server) RegisteredRoutes() []string {
 	if s.Error != nil {
 		return nil
 	}
 
-	return s.router.GetRegisteredRoutes()
+	return s.router.RegisteredRoutes()
 }
 
 // WithHost sets the address of the web server

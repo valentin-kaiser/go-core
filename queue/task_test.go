@@ -42,7 +42,7 @@ func TestTaskScheduler_RegisterIntervalTask(t *testing.T) {
 		t.Fatalf("failed to register interval task: %v", err)
 	}
 
-	task, err := scheduler.GetTask(taskName)
+	task, err := scheduler.Task(taskName)
 	if err != nil {
 		t.Fatalf("failed to get task: %v", err)
 	}
@@ -85,7 +85,7 @@ func TestTaskScheduler_RegisterCronTask(t *testing.T) {
 		t.Fatalf("failed to register cron task: %v", err)
 	}
 
-	task, err := scheduler.GetTask("test-cron")
+	task, err := scheduler.Task("test-cron")
 	if err != nil {
 		t.Fatalf("failed to get task: %v", err)
 	}
@@ -245,7 +245,7 @@ func TestTaskScheduler_TaskRetry(t *testing.T) {
 
 	// Wait for task to be executed and retried
 	await.Until(t, taskWaitTimeout, func() bool {
-		task, err := scheduler.GetTask(taskName)
+		task, err := scheduler.Task(taskName)
 		return err == nil && task.RunCount >= 1
 	}, "the task to succeed after its retries")
 	scheduler.Stop()
@@ -263,7 +263,7 @@ func TestTaskScheduler_TaskRetry(t *testing.T) {
 	}
 
 	// Check task stats
-	task, err := scheduler.GetTask(taskName)
+	task, err := scheduler.Task(taskName)
 	if err != nil {
 		t.Fatalf("failed to get task: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestTaskScheduler_TaskFailure(t *testing.T) {
 
 	// Wait for task to fail completely
 	await.Until(t, taskWaitTimeout, func() bool {
-		task, err := scheduler.GetTask(taskName)
+		task, err := scheduler.Task(taskName)
 		return err == nil && task.ErrorCount >= 1
 	}, "the task to fail after its retries")
 	scheduler.Stop()
@@ -326,7 +326,7 @@ func TestTaskScheduler_TaskFailure(t *testing.T) {
 	}
 
 	// Check task stats
-	task, err := scheduler.GetTask(taskName)
+	task, err := scheduler.Task(taskName)
 	if err != nil {
 		t.Fatalf("failed to get task: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestTaskScheduler_EnableDisableTask(t *testing.T) {
 		t.Fatalf("failed to disable task: %v", err)
 	}
 
-	task, err := scheduler.GetTask(taskName)
+	task, err := scheduler.Task(taskName)
 	if err != nil {
 		t.Fatalf("failed to get task: %v", err)
 	}
@@ -382,7 +382,7 @@ func TestTaskScheduler_EnableDisableTask(t *testing.T) {
 		t.Fatalf("failed to enable task: %v", err)
 	}
 
-	task, err = scheduler.GetTask(taskName)
+	task, err = scheduler.Task(taskName)
 	if err != nil {
 		t.Fatalf("failed to get task: %v", err)
 	}
@@ -427,7 +427,7 @@ func TestTaskScheduler_RemoveTask(t *testing.T) {
 	}
 
 	// Check that task is gone
-	_, err = scheduler.GetTask(taskName)
+	_, err = scheduler.Task(taskName)
 	if err == nil {
 		t.Error("expected error when getting removed task")
 	}
@@ -462,7 +462,7 @@ func TestTaskScheduler_GetTasks(t *testing.T) {
 		t.Fatalf("failed to register task3: %v", err)
 	}
 
-	tasks := scheduler.GetTasks()
+	tasks := scheduler.Tasks()
 
 	if len(tasks) != 3 {
 		t.Errorf("expected 3 tasks, got %d", len(tasks))
@@ -479,7 +479,7 @@ func TestTaskScheduler_GetTasks(t *testing.T) {
 	originalTask := tasks["task1"]
 	originalTask.Enabled = false
 
-	task, err := scheduler.GetTask("task1")
+	task, err := scheduler.Task("task1")
 	if err != nil {
 		t.Fatalf("failed to get task1: %v", err)
 	}
@@ -569,7 +569,7 @@ func TestTaskScheduler_ConcurrentExecution(t *testing.T) {
 	}
 
 	// Verify task properties
-	task, err := scheduler.GetTask("concurrent")
+	task, err := scheduler.Task("concurrent")
 	if err != nil {
 		t.Fatalf("failed to get concurrent task: %v", err)
 	}
@@ -578,7 +578,7 @@ func TestTaskScheduler_ConcurrentExecution(t *testing.T) {
 		t.Error("expected AllowConcurrent to be true")
 	}
 
-	task, err = scheduler.GetTask("non-concurrent")
+	task, err = scheduler.Task("non-concurrent")
 	if err != nil {
 		t.Fatalf("failed to get non-concurrent task: %v", err)
 	}
@@ -655,7 +655,7 @@ func TestTaskScheduler_ConcurrentCronExecution(t *testing.T) {
 	}
 
 	// Verify task properties
-	task, err := scheduler.GetTask("concurrent-cron")
+	task, err := scheduler.Task("concurrent-cron")
 	if err != nil {
 		t.Fatalf("failed to get concurrent cron task: %v", err)
 	}
@@ -730,22 +730,22 @@ func TestTaskScheduler_RunImmediatelyNextRun(t *testing.T) {
 	registerImmediateTasks(t, scheduler, &cronExecutionCount, &intervalExecutionCount)
 
 	// Verify next run times before starting
-	cronImmediate, err := scheduler.GetTask("cron-immediate")
+	cronImmediate, err := scheduler.Task("cron-immediate")
 	if err != nil {
 		t.Fatalf("failed to get cron immediate task: %v", err)
 	}
 
-	cronScheduled, err := scheduler.GetTask("cron-scheduled")
+	cronScheduled, err := scheduler.Task("cron-scheduled")
 	if err != nil {
 		t.Fatalf("failed to get cron scheduled task: %v", err)
 	}
 
-	intervalScheduled, err := scheduler.GetTask("interval-scheduled")
+	intervalScheduled, err := scheduler.Task("interval-scheduled")
 	if err != nil {
 		t.Fatalf("failed to get interval scheduled task: %v", err)
 	}
 
-	intervalImmediate, err := scheduler.GetTask("interval-immediate")
+	intervalImmediate, err := scheduler.Task("interval-immediate")
 	if err != nil {
 		t.Fatalf("failed to get interval immediate task: %v", err)
 	}

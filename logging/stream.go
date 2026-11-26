@@ -74,8 +74,8 @@ func (sw *StreamWriter) HasListeners() bool {
 	return len(sw.listeners) > 0
 }
 
-// GetListenerCount returns the number of active listeners
-func (sw *StreamWriter) GetListenerCount() int {
+// ListenerCount returns the number of active listeners
+func (sw *StreamWriter) ListenerCount() int {
 	sw.mu.RLock()
 	defer sw.mu.RUnlock()
 	return len(sw.listeners)

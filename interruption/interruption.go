@@ -71,7 +71,7 @@ var (
 	Write = false
 	// Directory specifies the directory where panic log files are stored.
 	Directory = filepath.Join(flag.Path, panicDirName)
-	logger    = logging.GetPackageLogger("interruption")
+	logger    = logging.PackageLogger("interruption")
 )
 
 // Catch recovers from panics in the application and logs detailed error information.

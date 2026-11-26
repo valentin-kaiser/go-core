@@ -243,7 +243,7 @@ func TestMailManager(t *testing.T) {
 		t.Error("Expected manager to not be running initially")
 	}
 
-	stats := manager.GetStats()
+	stats := manager.Stats()
 	if stats == nil {
 		t.Error("Expected stats to be available")
 		return
@@ -435,7 +435,7 @@ func TestManagerSendAsync(t *testing.T) {
 		t.Errorf("Expected no error sending async email, got: %v", err)
 	}
 
-	stats := manager.GetStats()
+	stats := manager.Stats()
 	if stats.QueuedCount == 0 {
 		t.Error("Expected queued count to be incremented")
 	}

@@ -392,9 +392,9 @@ func SetDefault(b *Bundle) {
 	globalBundle.Store(b)
 }
 
-// GetDefault returns the global default bundle.
+// GlobalBundle returns the global default bundle.
 // This function is safe for concurrent use.
-func GetDefault() *Bundle {
+func GlobalBundle() *Bundle {
 	return globalBundle.Load()
 }
 

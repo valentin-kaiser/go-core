@@ -165,8 +165,8 @@ func (jc *JobContext) ReportProgress(progress float64) {
 	jc.Job.UpdatedAt = time.Now()
 }
 
-// GetPayload gets a value from the job payload
-func (jc *JobContext) GetPayload(key string) (any, bool) {
+// Payload gets a value from the job payload
+func (jc *JobContext) Payload(key string) (any, bool) {
 	if jc.Job.Payload == nil {
 		return nil, false
 	}
@@ -181,9 +181,9 @@ func (jc *JobContext) GetPayload(key string) (any, bool) {
 	return value, exists
 }
 
-// GetPayloadString gets a string value from the job payload
-func (jc *JobContext) GetPayloadString(key string) (string, bool) {
-	value, exists := jc.GetPayload(key)
+// PayloadString gets a string value from the job payload
+func (jc *JobContext) PayloadString(key string) (string, bool) {
+	value, exists := jc.Payload(key)
 	if !exists {
 		return "", false
 	}
@@ -191,9 +191,9 @@ func (jc *JobContext) GetPayloadString(key string) (string, bool) {
 	return str, ok
 }
 
-// GetPayloadInt gets an int value from the job payload
-func (jc *JobContext) GetPayloadInt(key string) (int, bool) {
-	value, exists := jc.GetPayload(key)
+// PayloadInt gets an int value from the job payload
+func (jc *JobContext) PayloadInt(key string) (int, bool) {
+	value, exists := jc.Payload(key)
 	if !exists {
 		return 0, false
 	}
@@ -208,9 +208,9 @@ func (jc *JobContext) GetPayloadInt(key string) (int, bool) {
 	}
 }
 
-// GetPayloadBool gets a bool value from the job payload
-func (jc *JobContext) GetPayloadBool(key string) (bool, bool) {
-	value, exists := jc.GetPayload(key)
+// PayloadBool gets a bool value from the job payload
+func (jc *JobContext) PayloadBool(key string) (bool, bool) {
+	value, exists := jc.Payload(key)
 	if !exists {
 		return false, false
 	}
@@ -218,8 +218,8 @@ func (jc *JobContext) GetPayloadBool(key string) (bool, bool) {
 	return b, ok
 }
 
-// GetMetadata gets a metadata value
-func (jc *JobContext) GetMetadata(key string) (string, bool) {
+// Metadata gets a metadata value
+func (jc *JobContext) Metadata(key string) (string, bool) {
 	if jc.Job.Metadata == nil {
 		return "", false
 	}
@@ -283,8 +283,8 @@ func (bm *Batcher) CreateBatch(ctx context.Context, name string, jobs []*Job) (*
 	return batch, nil
 }
 
-// GetBatch retrieves a batch by ID
-func (bm *Batcher) GetBatch(id string) (*Batch, error) {
+// Batch retrieves a batch by ID
+func (bm *Batcher) Batch(id string) (*Batch, error) {
 	bm.mutex.RLock()
 	defer bm.mutex.RUnlock()
 
@@ -312,7 +312,7 @@ func (bm *Batcher) UpdateBatchStatus(ctx context.Context, batchID string) error 
 	batch.Failed = 0
 
 	for _, jobID := range batch.JobIDs {
-		job, err := bm.manager.GetJob(ctx, jobID)
+		job, err := bm.manager.Job(ctx, jobID)
 		if err != nil {
 			continue
 		}
@@ -343,8 +343,8 @@ func (bm *Batcher) UpdateBatchStatus(ctx context.Context, batchID string) error 
 	return nil
 }
 
-// GetBatches returns all batches
-func (bm *Batcher) GetBatches() []*Batch {
+// Batches returns all batches
+func (bm *Batcher) Batches() []*Batch {
 	bm.mutex.RLock()
 	defer bm.mutex.RUnlock()
 

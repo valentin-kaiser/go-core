@@ -181,8 +181,8 @@ func (router *Router) UnregisterAllHandler() {
 	router.publish()
 }
 
-// GetRegisteredRoutes returns a slice of all currently registered route patterns
-func (router *Router) GetRegisteredRoutes() []string {
+// RegisteredRoutes returns a slice of all currently registered route patterns
+func (router *Router) RegisteredRoutes() []string {
 	router.mutex.RLock()
 	defer router.mutex.RUnlock()
 

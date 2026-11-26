@@ -210,8 +210,8 @@ func (z *ZerologAdapter) SetLevel(level Level) Adapter {
 	return z
 }
 
-// GetLevel returns the current log level
-func (z *ZerologAdapter) GetLevel() Level {
+// Level returns the current log level
+func (z *ZerologAdapter) Level() Level {
 	return z.state.Load().level
 }
 

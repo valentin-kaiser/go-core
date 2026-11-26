@@ -175,7 +175,7 @@ var (
 	calverYYYYWW        = regexp.MustCompile(`^v?([0-9]{4})\.([0-9]{1,2})$`)                         // YYYY.WW
 	calverYYYYMMDDMICRO = regexp.MustCompile(`^v?([0-9]{4})\.([0-9]{1,2})\.([0-9]{1,2})\.([0-9]+)$`) // YYYY.MM.DD.MICRO
 
-	logger = logging.GetPackageLogger("version")
+	logger = logging.PackageLogger("version")
 )
 
 // lastTag remembers the result for the most recent tag. GitTag is set at link time and
@@ -271,12 +271,12 @@ func (v *Release) CompareVersions(c *Release) (int, error) {
 	return CompareVersions(v.GitTag, c.GitTag)
 }
 
-// GetVersionComponents returns the parsed version components
-func (v *Release) GetVersionComponents() (map[string]any, error) {
+// VersionComponents returns the parsed version components
+func (v *Release) VersionComponents() (map[string]any, error) {
 	if v.ParsedVersion != nil {
-		return GetVersionComponents(v.GitTag)
+		return VersionComponents(v.GitTag)
 	}
-	return GetVersionComponents(v.GitTag)
+	return VersionComponents(v.GitTag)
 }
 
 // IsCalVer returns true if the release uses Calendar Versioning
@@ -753,7 +753,7 @@ func Major() int {
 	}
 
 	// For CalVer formats, try to return year as major
-	parser := GetParser(DetectFormat(GitTag))
+	parser := ParserFor(DetectFormat(GitTag))
 	if parser != nil {
 		pv, err := parser.Parse(GitTag)
 		if err == nil {
@@ -773,7 +773,7 @@ func Minor() int {
 	}
 
 	// For CalVer formats, try to return month as minor
-	parser := GetParser(DetectFormat(GitTag))
+	parser := ParserFor(DetectFormat(GitTag))
 	if parser != nil {
 		pv, err := parser.Parse(GitTag)
 		if err == nil {
@@ -796,7 +796,7 @@ func Patch() int {
 	}
 
 	// For CalVer formats, try to return day as patch
-	parser := GetParser(DetectFormat(GitTag))
+	parser := ParserFor(DetectFormat(GitTag))
 	if parser != nil {
 		pv, err := parser.Parse(GitTag)
 		if err == nil {
@@ -870,7 +870,7 @@ func ParseVersion(tag string) (*ParsedVersion, error) {
 	if format == FormatSemVer {
 		return (&SemVerParser{}).parseValid(tag), nil
 	}
-	parser := GetParser(format)
+	parser := ParserFor(format)
 	if parser == nil {
 		return nil, apperror.NewError("unsupported version format")
 	}
@@ -892,7 +892,7 @@ func CompareVersions(tag1, tag2 string) (int, error) {
 		return 0, apperror.NewError("cannot compare versions of different formats")
 	}
 
-	parser := GetParser(format1)
+	parser := ParserFor(format1)
 	if parser == nil {
 		return 0, apperror.NewError("unsupported version format")
 	}
@@ -900,8 +900,8 @@ func CompareVersions(tag1, tag2 string) (int, error) {
 	return parser.Compare(tag1, tag2)
 }
 
-// GetVersionComponents returns the version components as a map for any supported format
-func GetVersionComponents(tag string) (map[string]any, error) {
+// VersionComponents returns the version components as a map for any supported format
+func VersionComponents(tag string) (map[string]any, error) {
 	pv, err := ParseVersion(tag)
 	if err != nil {
 		return nil, apperror.NewErrorf("parsing version %q failed", tag).AddError(err)
@@ -963,8 +963,8 @@ func DetectFormat(tag string) Format {
 	return FormatUnknown
 }
 
-// GetParser returns the appropriate parser for the given format
-func GetParser(format Format) Parser {
+// ParserFor returns the appropriate parser for the given format
+func ParserFor(format Format) Parser {
 	switch format {
 	case FormatSemVer:
 		return &SemVerParser{}
@@ -1102,7 +1102,7 @@ func parsedTag(tag string) *tagInfo {
 	}
 
 	info := &tagInfo{tag: tag, format: DetectFormat(tag)}
-	if parser := GetParser(info.format); parser != nil {
+	if parser := ParserFor(info.format); parser != nil {
 		pv, err := parser.Parse(tag)
 		if err == nil {
 			info.parsed = pv

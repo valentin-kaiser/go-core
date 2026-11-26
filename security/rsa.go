@@ -404,18 +404,18 @@ func (r *RSACipher) Decrypt(ciphertext []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
-// GetPublicKey returns the public key.
-func (r *RSACipher) GetPublicKey() *rsa.PublicKey {
+// PublicKey returns the public key.
+func (r *RSACipher) PublicKey() *rsa.PublicKey {
 	return r.publicKey
 }
 
-// GetPrivateKey returns the private key.
-func (r *RSACipher) GetPrivateKey() *rsa.PrivateKey {
+// PrivateKey returns the private key.
+func (r *RSACipher) PrivateKey() *rsa.PrivateKey {
 	return r.privateKey
 }
 
-// GetKeySize returns the key size in bits.
-func (r *RSACipher) GetKeySize() int {
+// KeySize returns the key size in bits.
+func (r *RSACipher) KeySize() int {
 	if r.publicKey != nil {
 		return r.publicKey.N.BitLen()
 	}

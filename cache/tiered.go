@@ -180,11 +180,11 @@ func (tc *TieredCache) Clear(ctx context.Context) error {
 	return nil
 }
 
-// GetMulti retrieves multiple values from the cache
-func (tc *TieredCache) GetMulti(ctx context.Context, keys []string) (map[string]any, error) {
+// Fetch retrieves multiple values from the cache
+func (tc *TieredCache) Fetch(ctx context.Context, keys []string) (map[string]any, error) {
 	result := make(map[string]any)
 
-	l1Results, err := tc.l1Cache.GetMulti(ctx, keys)
+	l1Results, err := tc.l1Cache.Fetch(ctx, keys)
 	if err != nil {
 		tc.recordError(err)
 		// Continue to L2 even if L1 fails
@@ -201,7 +201,7 @@ func (tc *TieredCache) GetMulti(ctx context.Context, keys []string) (map[string]
 	}
 
 	if len(missingKeys) > 0 {
-		l2Results, err := tc.l2Cache.GetMulti(ctx, missingKeys)
+		l2Results, err := tc.l2Cache.Fetch(ctx, missingKeys)
 		if err != nil {
 			tc.recordError(err)
 			return result, apperror.NewError("getting keys from L2 cache failed").AddError(err)
@@ -261,10 +261,10 @@ func (tc *TieredCache) DeleteMulti(ctx context.Context, keys []string) error {
 	return nil
 }
 
-// GetTTL returns the remaining TTL for a key from L2 cache
-func (tc *TieredCache) GetTTL(ctx context.Context, key string) (time.Duration, error) {
+// TTL returns the remaining TTL for a key from L2 cache
+func (tc *TieredCache) TTL(ctx context.Context, key string) (time.Duration, error) {
 	// Get TTL from L2 cache (source of truth)
-	return tc.l2Cache.GetTTL(ctx, key)
+	return tc.l2Cache.TTL(ctx, key)
 }
 
 // SetTTL updates the TTL for an existing key in both caches
@@ -285,10 +285,10 @@ func (tc *TieredCache) SetTTL(ctx context.Context, key string, ttl time.Duration
 	return nil
 }
 
-// GetStats returns combined statistics from both cache levels
-func (tc *TieredCache) GetStats() Stats {
-	l1Stats := tc.l1Cache.GetStats()
-	l2Stats := tc.l2Cache.GetStats()
+// Stats returns combined statistics from both cache levels
+func (tc *TieredCache) Stats() Stats {
+	l1Stats := tc.l1Cache.Stats()
+	l2Stats := tc.l2Cache.Stats()
 
 	combined := Stats{
 		Hits:      l1Stats.Hits + l2Stats.Hits,
@@ -332,13 +332,13 @@ func (tc *TieredCache) Close() error {
 	return nil
 }
 
-// GetL1Cache returns the L1 (fast) cache instance
-func (tc *TieredCache) GetL1Cache() Store {
+// L1 returns the L1 (fast) cache instance
+func (tc *TieredCache) L1() Store {
 	return tc.l1Cache
 }
 
-// GetL2Cache returns the L2 (persistent) cache instance
-func (tc *TieredCache) GetL2Cache() Store {
+// L2 returns the L2 (persistent) cache instance
+func (tc *TieredCache) L2() Store {
 	return tc.l2Cache
 }
 
@@ -353,7 +353,7 @@ func (tc *TieredCache) WarmupL1(ctx context.Context, keys []string) error {
 		return nil
 	}
 
-	values, err := tc.l2Cache.GetMulti(ctx, keys)
+	values, err := tc.l2Cache.Fetch(ctx, keys)
 	if err != nil {
 		return apperror.NewError("getting keys from L2 cache failed").AddError(err)
 	}
@@ -372,10 +372,10 @@ func (tc *TieredCache) WarmupL1(ctx context.Context, keys []string) error {
 	return nil
 }
 
-// GetTieredStats returns detailed statistics for each cache level
-func (tc *TieredCache) GetTieredStats() map[string]Stats {
+// TieredStats returns detailed statistics for each cache level
+func (tc *TieredCache) TieredStats() map[string]Stats {
 	return map[string]Stats{
-		statsKeyL1: tc.l1Cache.GetStats(),
-		statsKeyL2: tc.l2Cache.GetStats(),
+		statsKeyL1: tc.l1Cache.Stats(),
+		statsKeyL2: tc.l2Cache.Stats(),
 	}
 }

@@ -358,8 +358,8 @@ func (mc *MemoryCache) Clear(_ context.Context) error {
 	return nil
 }
 
-// GetMulti retrieves multiple values from the cache
-func (mc *MemoryCache) GetMulti(ctx context.Context, keys []string) (map[string]any, error) {
+// Fetch retrieves multiple values from the cache
+func (mc *MemoryCache) Fetch(ctx context.Context, keys []string) (map[string]any, error) {
 	result := make(map[string]any, len(keys))
 
 	for _, key := range keys {
@@ -398,8 +398,8 @@ func (mc *MemoryCache) DeleteMulti(ctx context.Context, keys []string) error {
 	return nil
 }
 
-// GetTTL returns the remaining TTL for a key
-func (mc *MemoryCache) GetTTL(_ context.Context, key string) (time.Duration, error) {
+// TTL returns the remaining TTL for a key
+func (mc *MemoryCache) TTL(_ context.Context, key string) (time.Duration, error) {
 	formattedKey := mc.formatKey(key)
 	sh := mc.shardFor(formattedKey)
 
@@ -464,9 +464,9 @@ func (mc *MemoryCache) Close() error {
 	return nil
 }
 
-// GetKeys returns all keys in the cache (useful for debugging)
-func (mc *MemoryCache) GetKeys() []string {
-	keys := make([]string, 0, mc.GetSize())
+// Keys returns all keys in the cache (useful for debugging)
+func (mc *MemoryCache) Keys() []string {
+	keys := make([]string, 0, mc.Size())
 	for _, sh := range mc.shards {
 		sh.mutex.RLock()
 		for key := range sh.items {
@@ -477,8 +477,8 @@ func (mc *MemoryCache) GetKeys() []string {
 	return keys
 }
 
-// GetSize returns the current number of items in the cache
-func (mc *MemoryCache) GetSize() int64 {
+// Size returns the current number of items in the cache
+func (mc *MemoryCache) Size() int64 {
 	var size int64
 	for _, sh := range mc.shards {
 		sh.mutex.RLock()
@@ -488,8 +488,8 @@ func (mc *MemoryCache) GetSize() int64 {
 	return size
 }
 
-// GetMemoryUsage returns the current memory usage in bytes
-func (mc *MemoryCache) GetMemoryUsage() int64 {
+// MemoryUsage returns the current memory usage in bytes
+func (mc *MemoryCache) MemoryUsage() int64 {
 	mc.mutex.RLock()
 	defer mc.mutex.RUnlock()
 	return mc.stats.Memory

@@ -16,7 +16,7 @@ import (
 
 func setupDisabled(b *testing.B, debug bool) {
 	b.Helper()
-	prev := logging.GetGlobalAdapterInterface()
+	prev := logging.CurrentAdapter()
 	logging.SetGlobalAdapter(logging.NewZerologAdapterWithLogger(zerolog.New(io.Discard)).SetLevel(logging.InfoLevel))
 	logging.Debug(debug)
 	logging.Anonymous(true)
@@ -67,10 +67,10 @@ func BenchmarkDisabledTraceMsgParallel(b *testing.B) {
 }
 
 // The package logger is what package-level middleware uses
-// (GetPackageLogger): a DynamicAdapter that resolves the adapter on every call.
+// (PackageLogger): a DynamicAdapter that resolves the adapter on every call.
 func BenchmarkDisabledPackageLoggerTrace(b *testing.B) {
 	setupDisabled(b, false)
-	l := logging.GetPackageLogger("database.atlas")
+	l := logging.PackageLogger("database.atlas")
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		l.Trace().Msg("query")
@@ -79,7 +79,7 @@ func BenchmarkDisabledPackageLoggerTrace(b *testing.B) {
 
 func BenchmarkDisabledPackageLoggerTraceParallel(b *testing.B) {
 	setupDisabled(b, false)
-	l := logging.GetPackageLogger("database.atlas")
+	l := logging.PackageLogger("database.atlas")
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
@@ -93,7 +93,7 @@ func BenchmarkDisabledGuarded(b *testing.B) {
 	setupDisabled(b, false)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		if log.GetLevel() <= logging.TraceLevel {
+		if log.Level() <= logging.TraceLevel {
 			log.Trace().Msgf("scan gateway=%s entries=%d", sinkMAC.String(), i)
 		}
 	}

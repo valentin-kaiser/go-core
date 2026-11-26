@@ -48,10 +48,10 @@ const (
 	secretFileMode = 0o600
 )
 
-// GetRandomBytes Generates random Bytes using crypto/rand which is significantly
+// RandomBytes Generates random Bytes using crypto/rand which is significantly
 // slower than math/rand but cryptographically secure. This Should be used whenever
 // cryptographic keys should be generated.
-func GetRandomBytes(size uint) ([]byte, error) {
+func RandomBytes(size uint) ([]byte, error) {
 	bytes := make([]byte, size)
 	_, err := rand.Read(bytes)
 	if err != nil {
@@ -89,9 +89,9 @@ func StringToKey32(inp string) string {
 	return hex.EncodeToString(hash[:])[:keyHexLength]
 }
 
-// GetRandomBytesBase64 Returns the Base64 Encoded Equivalent of calling GetRandomBytes.
-func GetRandomBytesBase64(size uint) (string, error) {
-	bytes, err := GetRandomBytes(size)
+// RandomBytesBase64 Returns the Base64 Encoded Equivalent of calling RandomBytes.
+func RandomBytesBase64(size uint) (string, error) {
+	bytes, err := RandomBytes(size)
 	if err != nil {
 		return "", apperror.NewError("generating random bytes failed").AddError(err)
 	}

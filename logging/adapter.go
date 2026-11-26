@@ -11,7 +11,7 @@
 //
 //	import "github.com/valentin-kaiser/go-core/v2/logging"
 //
-//	logger := logging.GetGlobalAdapter()
+//	logger := logging.GlobalAdapter()
 //	logger.Info().Str("key", "value").Msg("Application started")
 package logging
 
@@ -64,7 +64,7 @@ func (l Level) String() string {
 type Adapter interface {
 	// Level control
 	SetLevel(level Level) Adapter
-	GetLevel() Level
+	Level() Level
 
 	Trace() Event
 	Debug() Event
@@ -117,5 +117,5 @@ func F(key string, value any) Field {
 // IsEnabled reports whether the adapter would write an event of the given level.
 // Use it to skip building expensive log fields for events that would be dropped.
 func IsEnabled(a Adapter, level Level) bool {
-	return a.Enabled() && level >= a.GetLevel()
+	return a.Enabled() && level >= a.Level()
 }

@@ -302,24 +302,24 @@ func TestErrorWithContext(t *testing.T) {
 		AddDetail("timestamp", "2023-01-01T00:00:00Z")
 
 	// Test that all details are preserved
-	context := err.GetContext()
+	context := err.Context
 	if len(context) != 3 {
 		t.Errorf("Expected 3 details, got %d", len(context))
 	}
 
 	// Test individual detail retrieval
-	userID := err.GetDetail("user_id")
+	userID := err.Detail("user_id")
 	if userID != "12345" {
 		t.Errorf("Expected user_id to be '12345', got %v", userID)
 	}
 
-	operation := err.GetDetail("operation")
+	operation := err.Detail("operation")
 	if operation != "delete" {
 		t.Errorf("Expected operation to be 'delete', got %v", operation)
 	}
 
 	// Test non-existent detail
-	nonExistent := err.GetDetail("non_existent")
+	nonExistent := err.Detail("non_existent")
 	if nonExistent != nil {
 		t.Errorf("Expected non-existent detail to be nil, got %v", nonExistent)
 	}

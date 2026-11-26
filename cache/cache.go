@@ -8,7 +8,7 @@
 //   - Automatic serialization/deserialization
 //   - Cache statistics and monitoring
 //   - Namespace support for multi-tenant applications
-//   - Bulk operations (GetMulti, SetMulti, DeleteMulti)
+//   - Bulk operations (Fetch, SetMulti, DeleteMulti)
 //   - Cache warming and preloading
 //   - Event callbacks (OnSet, OnGet, OnDelete, OnEvict)
 //   - Compression support for large values
@@ -131,8 +131,8 @@ type Store interface {
 	// Clear removes all entries from the cache
 	Clear(ctx context.Context) error
 
-	// GetMulti retrieves multiple values from the cache
-	GetMulti(ctx context.Context, keys []string) (map[string]any, error)
+	// Fetch retrieves multiple values from the cache
+	Fetch(ctx context.Context, keys []string) (map[string]any, error)
 
 	// SetMulti stores multiple values in the cache
 	SetMulti(ctx context.Context, items map[string]any, ttl time.Duration) error
@@ -140,14 +140,14 @@ type Store interface {
 	// DeleteMulti removes multiple values from the cache
 	DeleteMulti(ctx context.Context, keys []string) error
 
-	// GetTTL returns the remaining TTL for a key
-	GetTTL(ctx context.Context, key string) (time.Duration, error)
+	// TTL returns the remaining TTL for a key
+	TTL(ctx context.Context, key string) (time.Duration, error)
 
 	// SetTTL updates the TTL for an existing key
 	SetTTL(ctx context.Context, key string, ttl time.Duration) error
 
-	// GetStats returns cache statistics
-	GetStats() Stats
+	// Stats returns cache statistics
+	Stats() Stats
 
 	// Close closes the cache and releases resources
 	Close() error
@@ -283,7 +283,7 @@ type InMemorySerializer interface {
 // Values are not copied deeply: a struct is copied by value, but maps, slices and pointers inside
 // it are shared with the caller and with every reader. Treat cached values as read-only, or
 // use the JSON serializer, whose reads each get their own copy. The size of an item is not
-// tracked, so GetMemoryUsage reports 0 for a cache that uses this serializer.
+// tracked, so MemoryUsage reports 0 for a cache that uses this serializer.
 type NativeSerializer struct{ JSONSerializer }
 
 // Keep stores the value; a pointer is stored as the value it points to
@@ -385,7 +385,7 @@ type BaseCache struct {
 	stats  Stats
 	mutex  sync.RWMutex
 	// hits and misses are counted on every read, so they are atomic instead of
-	// going through the stats mutex. GetStats merges them into the snapshot.
+	// going through the stats mutex. Stats merges them into the snapshot.
 	hits   atomic.Int64
 	misses atomic.Int64
 }
@@ -402,13 +402,13 @@ func NewBaseCache(config Config) *BaseCache {
 	}
 }
 
-// GetConfig returns the cache configuration
-func (bc *BaseCache) GetConfig() Config {
+// Config returns the cache configuration
+func (bc *BaseCache) Config() Config {
 	return bc.config
 }
 
-// GetStats returns a copy of the current cache statistics
-func (bc *BaseCache) GetStats() Stats {
+// Stats returns a copy of the current cache statistics
+func (bc *BaseCache) Stats() Stats {
 	bc.mutex.RLock()
 	stats := bc.stats
 	bc.mutex.RUnlock()

@@ -34,11 +34,11 @@ func TestLoggerSingleton(t *testing.T) {
 	})
 
 	t.Run("level management", func(t *testing.T) {
-		originalLevel := log.GetLevel()
+		originalLevel := log.Level()
 
 		log.SetLevel(logging.ErrorLevel)
-		if log.GetLevel() != logging.ErrorLevel {
-			t.Errorf("Expected level %v, got %v", logging.ErrorLevel, log.GetLevel())
+		if log.Level() != logging.ErrorLevel {
+			t.Errorf("Expected level %v, got %v", logging.ErrorLevel, log.Level())
 		}
 
 		// Restore original level

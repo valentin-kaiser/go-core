@@ -40,8 +40,8 @@ func (n *NoOpAdapter) SetLevel(_ Level) Adapter {
 	return n
 }
 
-// GetLevel returns the current log level
-func (n *NoOpAdapter) GetLevel() Level {
+// Level returns the current log level
+func (n *NoOpAdapter) Level() Level {
 	return DisabledLevel
 }
 

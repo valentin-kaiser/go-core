@@ -43,7 +43,7 @@ func TestShardedCacheBasicOperations(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if got := mc.GetSize(); got != itemCount {
+	if got := mc.Size(); got != itemCount {
 		t.Fatalf("size %d, want 200", got)
 	}
 	for i := range itemCount {
@@ -53,7 +53,7 @@ func TestShardedCacheBasicOperations(t *testing.T) {
 			t.Fatalf("k%d: ok=%v v=%d err=%v", i, ok, v, err)
 		}
 	}
-	if keys := mc.GetKeys(); len(keys) != itemCount {
+	if keys := mc.Keys(); len(keys) != itemCount {
 		t.Fatalf("%d keys, want 200", len(keys))
 	}
 
@@ -72,8 +72,8 @@ func TestShardedCacheBasicOperations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mc.GetSize() != 0 || mc.GetStats().Size != 0 {
-		t.Fatalf("not empty after Clear: size=%d stats=%d", mc.GetSize(), mc.GetStats().Size)
+	if mc.Size() != 0 || mc.Stats().Size != 0 {
+		t.Fatalf("not empty after Clear: size=%d stats=%d", mc.Size(), mc.Stats().Size)
 	}
 }
 
@@ -99,11 +99,11 @@ func TestShardedCacheNeverExceedsMaxSize(t *testing.T) {
 				if err != nil {
 					t.Error(err)
 				}
-				if got := mc.GetSize(); got > tc.max {
+				if got := mc.Size(); got > tc.max {
 					t.Fatalf("shards=%d max=%d: holds %d items", tc.shards, tc.max, got)
 				}
 			}
-			if got := mc.GetStats().Size; got > tc.max {
+			if got := mc.Stats().Size; got > tc.max {
 				t.Fatalf("shards=%d max=%d: stats size %d", tc.shards, tc.max, got)
 			}
 		})
@@ -120,13 +120,13 @@ func TestShardedCacheRespectsMaxSize(t *testing.T) {
 			t.Error(err)
 		}
 	}
-	if got := mc.GetSize(); got > limitMaxSize {
+	if got := mc.Size(); got > limitMaxSize {
 		t.Fatalf("holds %d items, limit is 100", got)
 	}
-	if got := mc.GetSize(); got < limitMinSize {
+	if got := mc.Size(); got < limitMinSize {
 		t.Fatalf("holds only %d items of 100; the shards evict too much", got)
 	}
-	if stats := mc.GetStats(); stats.Size != mc.GetSize() || stats.Evictions == 0 {
+	if stats := mc.Stats(); stats.Size != mc.Size() || stats.Evictions == 0 {
 		t.Fatalf("stats do not match: %+v", stats)
 	}
 }
@@ -164,7 +164,7 @@ func TestShardedCacheConcurrent(t *testing.T) {
 		}(g)
 	}
 	wg.Wait()
-	if got := mc.GetSize(); got > shardedConcurrentMaxSize {
+	if got := mc.Size(); got > shardedConcurrentMaxSize {
 		t.Fatalf("holds %d items, limit is 500", got)
 	}
 }
@@ -211,7 +211,7 @@ func TestNativeSerializerStructRoundTrip(t *testing.T) {
 	}
 }
 
-// Into an interface, as GetMulti does.
+// Into an interface, as Fetch does.
 func TestNativeSerializerGetMulti(t *testing.T) {
 	mc := newNativeCache(t)
 	ctx := context.Background()
@@ -221,12 +221,12 @@ func TestNativeSerializerGetMulti(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	multi, err := mc.GetMulti(ctx, []string{"v", "missing"})
+	multi, err := mc.Fetch(ctx, []string{"v", "missing"})
 	if err != nil || len(multi) != 1 {
-		t.Fatalf("GetMulti: %v %v", multi, err)
+		t.Fatalf("Fetch: %v %v", multi, err)
 	}
 	if got, ok := multi["v"].(nativeValue); !ok || got.ID != 1 {
-		t.Fatalf("GetMulti value: %#v", multi["v"])
+		t.Fatalf("Fetch value: %#v", multi["v"])
 	}
 }
 

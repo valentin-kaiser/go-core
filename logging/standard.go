@@ -152,8 +152,8 @@ func (s *StandardAdapter) SetLevel(level Level) Adapter {
 	return s
 }
 
-// GetLevel returns the current log level
-func (s *StandardAdapter) GetLevel() Level {
+// Level returns the current log level
+func (s *StandardAdapter) Level() Level {
 	return Level(s.level.Load())
 }
 

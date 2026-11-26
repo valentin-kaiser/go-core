@@ -105,7 +105,7 @@
 //	db := database.New[sqlc.Queries](database.DriverSQLite, "main")
 //
 //	// Register logging middleware to log all SQL statements
-//	logger := logging.GetPackageLogger("database")
+//	logger := logging.PackageLogger("database")
 //	loggingMiddleware := database.NewLoggingMiddleware(logger)
 //	db.RegisterMiddleware(loggingMiddleware)
 //
@@ -128,7 +128,7 @@
 //	db := database.New[sqlc.Queries](database.DriverSQLite, "main")
 //
 //	// LoggingMiddleware must be registered for Debug() to work
-//	logger := logging.GetPackageLogger("database")
+//	logger := logging.PackageLogger("database")
 //	loggingMiddleware := database.NewLoggingMiddleware(logger)
 //	loggingMiddleware.SetEnabled(false) // Disabled by default
 //	db.RegisterMiddleware(loggingMiddleware)
@@ -249,7 +249,7 @@ func New[Q any](driver Driver, name string) *Connection[Q] {
 	return &Connection[Q]{
 		driver:           driver,
 		done:             make(chan bool),
-		logger:           logging.GetPackageLogger(loggerNamePrefix + name),
+		logger:           logging.PackageLogger(loggerNamePrefix + name),
 		onConnectHandler: make([]func(db *sql.DB) error, 0),
 		middlewares:      make([]Middleware, 0),
 	}

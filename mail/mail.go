@@ -142,7 +142,7 @@ const (
 	attachmentKeyContentID   = "content_id"
 )
 
-var logger = logging.GetPackageLogger("mail")
+var logger = logging.PackageLogger("mail")
 
 // Stats represents mail statistics
 type Stats struct {
@@ -392,8 +392,8 @@ func (m *Mailer) AddNotificationHandler(handler NotificationHandler) error {
 	return nil
 }
 
-// GetStats returns the current mail statistics
-func (m *Mailer) GetStats() *Stats {
+// Stats returns the current mail statistics
+func (m *Mailer) Stats() *Stats {
 	m.statsMutex.RLock()
 	defer m.statsMutex.RUnlock()
 

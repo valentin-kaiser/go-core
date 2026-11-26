@@ -199,7 +199,7 @@ func TestMemoryQueue(t *testing.T) {
 	}
 
 	// Test get job
-	retrievedJob, err := q.GetJob(ctx, job.ID)
+	retrievedJob, err := q.Job(ctx, job.ID)
 	if err != nil {
 		t.Fatalf("Failed to get job: %v", err)
 	}
@@ -216,7 +216,7 @@ func TestMemoryQueue(t *testing.T) {
 	}
 
 	// Test get jobs by status
-	jobs, err := q.GetJobs(ctx, queue.StatusCompleted, 10)
+	jobs, err := q.Jobs(ctx, queue.StatusCompleted, 10)
 	if err != nil {
 		t.Fatalf("Failed to get jobs by status: %v", err)
 	}
@@ -226,7 +226,7 @@ func TestMemoryQueue(t *testing.T) {
 	}
 
 	// Test stats
-	stats, err := q.GetStats(ctx)
+	stats, err := q.Stats(ctx)
 	if err != nil {
 		t.Fatalf("Failed to get stats: %v", err)
 	}
@@ -278,7 +278,7 @@ func TestMemoryQueueScheduled(t *testing.T) {
 	}
 
 	// Test get scheduled jobs
-	jobs, err := q.GetJobs(ctx, queue.StatusScheduled, 10)
+	jobs, err := q.Jobs(ctx, queue.StatusScheduled, 10)
 	if err != nil {
 		t.Fatalf("Failed to get scheduled jobs: %v", err)
 	}
@@ -383,7 +383,7 @@ func TestManager(t *testing.T) {
 	}
 
 	// Check job status
-	processedJob, err := manager.GetJob(ctx, job.ID)
+	processedJob, err := manager.Job(ctx, job.ID)
 	if err != nil {
 		t.Fatalf("Failed to get job: %v", err)
 	}
@@ -454,7 +454,7 @@ func TestManagerRetry(t *testing.T) {
 	}
 
 	// Check job status
-	processedJob, err := manager.GetJob(ctx, job.ID)
+	processedJob, err := manager.Job(ctx, job.ID)
 	if err != nil {
 		t.Fatalf("Failed to get job: %v", err)
 	}
@@ -598,7 +598,7 @@ func TestBatchManager(t *testing.T) {
 	}
 
 	// Get updated batch
-	updatedBatch, err := batchManager.GetBatch(batch.ID)
+	updatedBatch, err := batchManager.Batch(batch.ID)
 	if err != nil {
 		t.Fatalf("Failed to get batch: %v", err)
 	}
@@ -679,23 +679,23 @@ func TestJobContext(t *testing.T) {
 	jobCtx := queue.NewJobContext(ctx, job)
 
 	// Test payload getters
-	strValue, ok := jobCtx.GetPayloadString("string_value")
+	strValue, ok := jobCtx.PayloadString("string_value")
 	if !ok || strValue != "test" {
 		t.Errorf("Expected string value 'test', got '%s'", strValue)
 	}
 
-	intValue, ok := jobCtx.GetPayloadInt("int_value")
+	intValue, ok := jobCtx.PayloadInt("int_value")
 	if !ok || intValue != 42 {
 		t.Errorf("Expected int value 42, got %d", intValue)
 	}
 
-	boolValue, ok := jobCtx.GetPayloadBool("bool_value")
+	boolValue, ok := jobCtx.PayloadBool("bool_value")
 	if !ok || !boolValue {
 		t.Errorf("Expected bool value true, got %v", boolValue)
 	}
 
 	// Test metadata getter
-	source, ok := jobCtx.GetMetadata("source")
+	source, ok := jobCtx.Metadata("source")
 	if !ok || source != "test" {
 		t.Errorf("Expected metadata source 'test', got '%s'", source)
 	}
@@ -812,7 +812,7 @@ func TestManagerBasics(t *testing.T) {
 		t.Error("Expected manager to be created")
 	}
 
-	stats := manager.GetStats()
+	stats := manager.Stats()
 	if stats == nil {
 		t.Error("Expected stats to be available")
 	}

@@ -333,9 +333,9 @@ func TestSetDefault(t *testing.T) {
 		t.Errorf("T after SetDefault = %q, want %q", got, "y")
 	}
 
-	// GetDefault returns the same bundle
-	if i18n.GetDefault() != b {
-		t.Error("GetDefault did not return the bundle set by SetDefault")
+	// Default returns the same bundle
+	if i18n.GlobalBundle() != b {
+		t.Error("Default did not return the bundle set by SetDefault")
 	}
 }
 

@@ -100,7 +100,7 @@ func TestRedisCache_TTL(t *testing.T) {
 	}
 
 	// Get TTL
-	ttl, err := c.GetTTL(ctx, "test")
+	ttl, err := c.TTL(ctx, "test")
 	if err != nil {
 		t.Fatalf("Failed to get TTL: %v", err)
 	}
@@ -137,9 +137,9 @@ func TestRedisCache_MultiOperations(t *testing.T) {
 		t.Fatalf("Failed to set multiple items: %v", err)
 	}
 
-	// Test GetMulti
+	// Test Fetch
 	keys := []string{"user:1", "user:2", "user:3", "user:4"} // user:4 doesn't exist
-	results, err := c.GetMulti(ctx, keys)
+	results, err := c.Fetch(ctx, keys)
 	if err != nil {
 		t.Fatalf("Failed to get multiple items: %v", err)
 	}
@@ -317,7 +317,7 @@ func TestRedisCache_Keys(t *testing.T) {
 		}
 	}
 
-	// Verify keys exist individually since GetKeys is not available
+	// Verify keys exist individually since Keys is not available
 	for _, testKey := range testKeys {
 		exists, err := c.Exists(ctx, testKey)
 		if err != nil {
@@ -468,7 +468,7 @@ func TestRedisCache_TTLOperations(t *testing.T) {
 	}
 
 	// Get TTL
-	ttl, err := c.GetTTL(ctx, "test")
+	ttl, err := c.TTL(ctx, "test")
 	if err != nil {
 		t.Fatalf("Failed to get TTL: %v", err)
 	}
@@ -484,7 +484,7 @@ func TestRedisCache_TTLOperations(t *testing.T) {
 	}
 
 	// Verify updated TTL
-	newTTL, err := c.GetTTL(ctx, "test")
+	newTTL, err := c.TTL(ctx, "test")
 	if err != nil {
 		t.Fatalf("Failed to get updated TTL: %v", err)
 	}
@@ -494,7 +494,7 @@ func TestRedisCache_TTLOperations(t *testing.T) {
 	}
 
 	// Test TTL for non-existent key
-	_, err = c.GetTTL(ctx, "nonexistent")
+	_, err = c.TTL(ctx, "nonexistent")
 	if err == nil {
 		t.Error("Expected error for non-existent key TTL")
 	}
@@ -505,7 +505,7 @@ func TestRedisCache_Stats(t *testing.T) {
 	ctx := t.Context()
 
 	// Initial stats
-	stats := c.GetStats()
+	stats := c.Stats()
 	if stats.Hits != 0 || stats.Misses != 0 || stats.Sets != 0 {
 		t.Errorf("Expected initial stats to be zero: %+v", stats)
 	}
@@ -538,7 +538,7 @@ func TestRedisCache_Stats(t *testing.T) {
 	}
 
 	// Check stats
-	stats = c.GetStats()
+	stats = c.Stats()
 	if stats.Sets != 3 {
 		t.Errorf("Expected 3 sets, got %d", stats.Sets)
 	}

@@ -296,8 +296,8 @@ func (p *PGPCipher) WithPrivateKeyFromFile(filePath string) *PGPCipher {
 	return p
 }
 
-// GetPublicKey returns the public key set for the PGPCipher instance or an error if no public key is set.
-func (p *PGPCipher) GetPublicKey() (string, error) {
+// PublicKey returns the public key set for the PGPCipher instance or an error if no public key is set.
+func (p *PGPCipher) PublicKey() (string, error) {
 	if len(p.publicKey) == 0 {
 		return "", apperror.NewError("no public key set")
 	}
@@ -305,8 +305,8 @@ func (p *PGPCipher) GetPublicKey() (string, error) {
 	return p.publicKey, nil
 }
 
-// GetPrivateKey returns the private key set for the PGPCipher instance.
-func (p *PGPCipher) GetPrivateKey() (string, error) {
+// PrivateKey returns the private key set for the PGPCipher instance.
+func (p *PGPCipher) PrivateKey() (string, error) {
 	if len(p.privateKey) == 0 {
 		return "", apperror.NewError("no private key set")
 	}

@@ -135,9 +135,9 @@ type Broker interface {
 	Dequeue(ctx context.Context, timeout time.Duration) (*Job, error)
 	Schedule(ctx context.Context, job *Job) error
 	UpdateJob(ctx context.Context, job *Job) error
-	GetJob(ctx context.Context, id string) (*Job, error)
-	GetJobs(ctx context.Context, status Status, limit int) ([]*Job, error)
-	GetStats(ctx context.Context) (*Stats, error)
+	Job(ctx context.Context, id string) (*Job, error)
+	Jobs(ctx context.Context, status Status, limit int) ([]*Job, error)
+	Stats(ctx context.Context) (*Stats, error)
 	DeleteJob(ctx context.Context, id string) error
 	Close() error
 }
@@ -408,23 +408,23 @@ func (m *Scheduler) Schedule(ctx context.Context, job *Job) error {
 	return m.queue.Schedule(ctx, job)
 }
 
-// GetJob retrieves a job by ID
-func (m *Scheduler) GetJob(ctx context.Context, id string) (*Job, error) {
-	return m.queue.GetJob(ctx, id)
+// Job retrieves a job by ID
+func (m *Scheduler) Job(ctx context.Context, id string) (*Job, error) {
+	return m.queue.Job(ctx, id)
 }
 
-// GetJobs retrieves jobs by status
-func (m *Scheduler) GetJobs(ctx context.Context, status Status, limit int) ([]*Job, error) {
-	return m.queue.GetJobs(ctx, status, limit)
+// Jobs retrieves jobs by status
+func (m *Scheduler) Jobs(ctx context.Context, status Status, limit int) ([]*Job, error) {
+	return m.queue.Jobs(ctx, status, limit)
 }
 
-// GetStats returns current queue statistics
-func (m *Scheduler) GetStats() *Stats {
+// Stats returns current queue statistics
+func (m *Scheduler) Stats() *Stats {
 	m.statsMutex.RLock()
 	defer m.statsMutex.RUnlock()
 
 	ctx := context.Background()
-	queueStats, err := m.queue.GetStats(ctx)
+	queueStats, err := m.queue.Stats(ctx)
 	if err == nil {
 		queueStats.WorkersActive = atomic.LoadInt64(&m.stats.WorkersActive)
 		queueStats.WorkersBusy = atomic.LoadInt64(&m.stats.WorkersBusy)
@@ -624,7 +624,7 @@ func (m *Scheduler) enqueueDueScheduledJobs(ctx context.Context) {
 	// scheduledBatchSize is the maximum number of scheduled jobs fetched per tick.
 	const scheduledBatchSize = 100
 
-	jobs, err := m.queue.GetJobs(ctx, StatusScheduled, scheduledBatchSize)
+	jobs, err := m.queue.Jobs(ctx, StatusScheduled, scheduledBatchSize)
 	if err != nil {
 		logger.Error().Err(err).Msg("getting scheduled jobs failed")
 		return

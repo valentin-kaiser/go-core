@@ -22,9 +22,9 @@ func SetLevel(level logging.Level) {
 	global().SetLevel(level)
 }
 
-// GetLevel returns the current log level
-func GetLevel() logging.Level {
-	return global().GetLevel()
+// Level returns the current log level
+func Level() logging.Level {
+	return global().Level()
 }
 
 // Trace returns a trace level event
@@ -78,7 +78,7 @@ func SLogger() *slog.Logger {
 }
 
 func global() logging.Adapter {
-	adapter := logging.GetGlobalAdapterInterface()
+	adapter := logging.CurrentAdapter()
 	if adapter == nil {
 		return noop
 	}

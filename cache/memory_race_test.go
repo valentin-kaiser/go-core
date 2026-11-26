@@ -137,7 +137,7 @@ func TestMemoryCacheConcurrentMixed(t *testing.T) {
 		}(g)
 	}
 	wg.Wait()
-	if got := mc.GetSize(); got > concurrentMaxSize+concurrentSizeSlack {
+	if got := mc.Size(); got > concurrentMaxSize+concurrentSizeSlack {
 		t.Errorf("cache holds %d items, limit is 50", got)
 	}
 }
@@ -163,7 +163,7 @@ func TestMemoryCacheStatsCountHitsAndMisses(t *testing.T) {
 		t.Error(err)
 	}
 
-	s := mc.GetStats()
+	s := mc.Stats()
 	if s.Hits != 3 || s.Misses != 1 {
 		t.Fatalf("hits=%d misses=%d, want 3 and 1", s.Hits, s.Misses)
 	}

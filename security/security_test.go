@@ -33,25 +33,25 @@ func TestGetRandomBytes(t *testing.T) {
 	testCases := []uint{1, 16, 32, 64, 128}
 
 	for _, size := range testCases {
-		bytes, err := security.GetRandomBytes(size)
+		bytes, err := security.RandomBytes(size)
 		if err != nil {
-			t.Errorf("GetRandomBytes(%d) returned error: %v", size, err)
+			t.Errorf("RandomBytes(%d) returned error: %v", size, err)
 			continue
 		}
 
 		if len(bytes) != int(size) {
-			t.Errorf("GetRandomBytes(%d) returned %d bytes, expected %d", size, len(bytes), size)
+			t.Errorf("RandomBytes(%d) returned %d bytes, expected %d", size, len(bytes), size)
 		}
 	}
 }
 
 func TestGetRandomBytesZero(t *testing.T) {
-	bytes, err := security.GetRandomBytes(0)
+	bytes, err := security.RandomBytes(0)
 	if err != nil {
-		t.Errorf("GetRandomBytes(0) returned error: %v", err)
+		t.Errorf("RandomBytes(0) returned error: %v", err)
 	}
 	if len(bytes) != 0 {
-		t.Errorf("GetRandomBytes(0) returned %d bytes, expected 0", len(bytes))
+		t.Errorf("RandomBytes(0) returned %d bytes, expected 0", len(bytes))
 	}
 }
 
@@ -170,15 +170,15 @@ func TestGetRandomBytesBase64(t *testing.T) {
 	testCases := []uint{1, 16, 32, 64}
 
 	for _, size := range testCases {
-		encoded, err := security.GetRandomBytesBase64(size)
+		encoded, err := security.RandomBytesBase64(size)
 		if err != nil {
-			t.Errorf("GetRandomBytesBase64(%d) returned error: %v", size, err)
+			t.Errorf("RandomBytesBase64(%d) returned error: %v", size, err)
 			continue
 		}
 
 		// Base64 encoding should produce a string
 		if len(encoded) == 0 && size > 0 {
-			t.Errorf("GetRandomBytesBase64(%d) returned empty string", size)
+			t.Errorf("RandomBytesBase64(%d) returned empty string", size)
 		}
 
 		// Test that it's valid base64
@@ -186,7 +186,7 @@ func TestGetRandomBytesBase64(t *testing.T) {
 			for _, c := range encoded {
 				if (c < 'A' || c > 'Z') && (c < 'a' || c > 'z') &&
 					(c < '0' || c > '9') && c != '+' && c != '/' && c != '=' {
-					t.Errorf("GetRandomBytesBase64(%d) contains invalid base64 character: %c", size, c)
+					t.Errorf("RandomBytesBase64(%d) contains invalid base64 character: %c", size, c)
 					break
 				}
 			}
@@ -798,7 +798,7 @@ func BenchmarkMd5(b *testing.B) {
 
 func BenchmarkGetRandomBytes(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		_, err := security.GetRandomBytes(keyLength)
+		_, err := security.RandomBytes(keyLength)
 		if err != nil {
 			b.Fatalf("Failed to get random bytes: %v", err)
 		}

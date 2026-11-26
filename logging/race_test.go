@@ -62,13 +62,13 @@ func TestConcurrentSetLevel(_ *testing.T) {
 		defer wg.Done()
 		for range concurrentIterations {
 			a.Info().Msg("x")
-			a.WithPackage(packageName).GetLevel()
+			a.WithPackage(packageName).Level()
 		}
 	}()
 	go func() {
 		defer wg.Done()
 		for range concurrentIterations {
-			s.GetLevel()
+			s.Level()
 			s.Enabled()
 		}
 	}()
@@ -78,11 +78,11 @@ func TestConcurrentSetLevel(_ *testing.T) {
 // A level change on the parent has to reach the cached package adapter.
 func TestWithPackageFollowsParentLevel(t *testing.T) {
 	a := logging.NewZerologAdapterWithLogger(zerolog.New(io.Discard)).SetLevel(logging.InfoLevel)
-	if got := a.WithPackage(packageName).GetLevel(); got != logging.InfoLevel {
+	if got := a.WithPackage(packageName).Level(); got != logging.InfoLevel {
 		t.Fatalf("level = %v, want info", got)
 	}
 	a.SetLevel(logging.ErrorLevel)
-	if got := a.WithPackage(packageName).GetLevel(); got != logging.ErrorLevel {
+	if got := a.WithPackage(packageName).Level(); got != logging.ErrorLevel {
 		t.Fatalf("package level = %v after parent change, want error", got)
 	}
 	if a.WithPackage(packageName) != a.WithPackage(packageName) {
@@ -92,24 +92,24 @@ func TestWithPackageFollowsParentLevel(t *testing.T) {
 
 // Global adapter and package overrides set at runtime must be picked up by existing package loggers.
 func TestPackageLoggerFollowsRegistry(t *testing.T) {
-	prev := logging.GetGlobalAdapterInterface()
+	prev := logging.CurrentAdapter()
 	t.Cleanup(func() { logging.SetGlobalAdapter(prev); logging.EnablePackage(racePackageName) })
 
-	pl := logging.GetPackageLogger(racePackageName)
+	pl := logging.PackageLogger(racePackageName)
 	logging.SetGlobalAdapter(logging.NewZerologAdapterWithLogger(zerolog.New(io.Discard)).SetLevel(logging.InfoLevel))
-	if got := pl.GetLevel(); got != logging.InfoLevel {
+	if got := pl.Level(); got != logging.InfoLevel {
 		t.Fatalf("level = %v, want info", got)
 	}
 	logging.SetGlobalAdapter(logging.NewZerologAdapterWithLogger(zerolog.New(io.Discard)).SetLevel(logging.ErrorLevel))
-	if got := pl.GetLevel(); got != logging.ErrorLevel {
+	if got := pl.Level(); got != logging.ErrorLevel {
 		t.Fatalf("level = %v after global swap, want error", got)
 	}
 	logging.SetPackageLevel(racePackageName, logging.WarnLevel)
-	if got := pl.GetLevel(); got != logging.WarnLevel {
+	if got := pl.Level(); got != logging.WarnLevel {
 		t.Fatalf("level = %v after package override, want warn", got)
 	}
 	logging.EnablePackage(racePackageName)
-	if got := pl.GetLevel(); got != logging.ErrorLevel {
+	if got := pl.Level(); got != logging.ErrorLevel {
 		t.Fatalf("level = %v after removing override, want error", got)
 	}
 }
@@ -123,7 +123,7 @@ func TestCallerFieldPointsAtCaller(t *testing.T) {
 	t.Cleanup(func() { logging.Debug(false) })
 
 	// The depth is calibrated for the log facade
-	prev := logging.GetGlobalAdapterInterface()
+	prev := logging.CurrentAdapter()
 	t.Cleanup(func() { logging.SetGlobalAdapter(prev) })
 	logging.SetGlobalAdapter(zl)
 	logpkg.Info().Msg("zerolog")
