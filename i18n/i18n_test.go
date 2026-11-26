@@ -1,6 +1,8 @@
 package i18n_test
 
 import (
+	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -241,17 +243,28 @@ func TestWithFS(t *testing.T) {
 	}
 }
 
-func TestWithFSSkipsMalformedJSON(t *testing.T) {
+func TestLoadReportsMalformedJSON(t *testing.T) {
 	fsys := fstest.MapFS{
 		"locales/en.json":      &fstest.MapFile{Data: []byte(`{"status": {"valid": "Valid"}}`)},
 		"locales/invalid.json": &fstest.MapFile{Data: []byte(`{malformed json}`)},
 		"locales/de.json":      &fstest.MapFile{Data: []byte(`{"status": {"valid": "Gültig"}}`)},
 	}
 
-	// Should not error; should silently skip invalid.json
-	b, err := i18n.New(i18n.WithFS(fsys, "locales"))
+	b, err := i18n.New()
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
+	}
+
+	err = b.Load(fsys, "locales")
+	if err == nil {
+		t.Fatal("expected error for invalid.json, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid.json") {
+		t.Errorf("error does not name invalid.json: %v", err)
+	}
+	_, ok := errors.AsType[*json.SyntaxError](err)
+	if !ok {
+		t.Errorf("expected json.SyntaxError in chain, got %v", err)
 	}
 
 	if got := b.T(i18n.English, "status.valid"); got != "Valid" {
@@ -484,15 +497,19 @@ func TestRegisterJSON_DuplicateFlattenedKey(t *testing.T) {
 	}
 }
 
-func TestWithFS_DuplicateFlattenedKeySkipsFile(t *testing.T) {
-	// A file with colliding keys should be skipped, like malformed JSON.
+func TestLoad_DuplicateFlattenedKeyReportsFile(t *testing.T) {
+	// A file with colliding keys is not loaded and reported, like malformed JSON.
 	fsys := fstest.MapFS{
 		"locales/en.json": &fstest.MapFile{Data: []byte(`{"a":{"b":"nested"},"a.b":"flat"}`)},
 		"locales/de.json": &fstest.MapFile{Data: []byte(`{"greeting":{"hello":"Hallo"}}`)},
 	}
-	b, err := i18n.New(i18n.WithFS(fsys, "locales"))
+	b, err := i18n.New()
 	if err != nil {
 		t.Fatalf("New failed: %v", err)
+	}
+	err = b.Load(fsys, "locales")
+	if err == nil || !strings.Contains(err.Error(), "duplicate flattened key") {
+		t.Fatalf("expected duplicate flattened key error, got %v", err)
 	}
 	// en.json should have been skipped
 	if b.HasLanguage(i18n.English) {
