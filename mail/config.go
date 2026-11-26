@@ -16,6 +16,24 @@ const maxPort = 65535
 // defaultServerMaxConcurrentHandlers limits concurrent notification handlers.
 const defaultServerMaxConcurrentHandlers = 50
 
+const (
+	// AuthMethodPlain represents PLAIN authentication
+	AuthMethodPlain AuthMethod = "PLAIN"
+	// AuthMethodCRAMMD5 represents CRAM-MD5 authentication
+	AuthMethodCRAMMD5 AuthMethod = "CRAMMD5"
+	// AuthMethodLogin represents LOGIN authentication
+	AuthMethodLogin AuthMethod = "LOGIN"
+)
+
+const (
+	// EncryptionNone represents no encryption
+	EncryptionNone EncryptionMethod = "NONE"
+	// EncryptionSTARTTLS represents STARTTLS encryption
+	EncryptionSTARTTLS EncryptionMethod = "STARTTLS"
+	// EncryptionTLS represents TLS encryption
+	EncryptionTLS EncryptionMethod = "TLS"
+)
+
 // Config holds the configuration for the mail package
 type Config struct {
 	// SMTP Client Configuration
@@ -26,6 +44,32 @@ type Config struct {
 	Queue QueueConfig `yaml:"queue" json:"queue"`
 	// Templates Configuration
 	Templates TemplateConfig `yaml:"templates" json:"templates"`
+}
+
+// Validate checks the configuration for errors
+func (c *Config) Validate() error {
+	err := c.Client.Validate()
+	if err != nil {
+		return apperror.NewError("validating client configuration failed").AddError(err)
+	}
+	err = c.Server.Validate()
+	if err != nil {
+		return apperror.NewError("validating server configuration failed").AddError(err)
+	}
+	err = c.Queue.Validate()
+	if err != nil {
+		return apperror.NewError("validating queue configuration failed").AddError(err)
+	}
+	err = c.Templates.Validate()
+	if err != nil {
+		return apperror.NewError("validating template configuration failed").AddError(err)
+	}
+	return nil
+}
+
+// Changed checks if the mail configuration has changed compared to another configuration.
+func (c *Config) Changed(n *Config) bool {
+	return config.Changed(c, n)
 }
 
 // ClientConfig holds the SMTP client configuration for sending emails
@@ -57,6 +101,42 @@ type ClientConfig struct {
 	MaxRetries int `yaml:"max_retries" json:"max_retries"`
 	// RetryDelay between retries
 	RetryDelay time.Duration `yaml:"retry_delay" json:"retry_delay"`
+}
+
+// TLSConfig returns a TLS configuration for the SMTP client
+func (c *ClientConfig) TLSConfig() *tls.Config {
+	return &tls.Config{
+		ServerName:         c.Host,
+		InsecureSkipVerify: c.SkipCertificateVerification, //nolint:gosec // opt-in via configuration
+		MinVersion:         tls.VersionTLS12,
+	}
+}
+
+// Validate checks the client configuration for errors
+func (c *ClientConfig) Validate() error {
+	if !c.Enabled {
+		return nil
+	}
+	if c.Host == "" {
+		return apperror.NewError("smtp host is required")
+	}
+	if c.Port <= 0 || c.Port > maxPort {
+		return apperror.NewError("smtp port must be between 1 and 65535")
+	}
+	if c.Auth {
+		if c.Username == "" {
+			return apperror.NewError("smtp username is required")
+		}
+		if c.Password == "" {
+			return apperror.NewError("smtp password is required")
+		}
+	}
+	return nil
+}
+
+// Changed checks if the client configuration has changed compared to another configuration.
+func (c *ClientConfig) Changed(n *ClientConfig) bool {
+	return config.Changed(c, n)
 }
 
 // ServerConfig holds the SMTP server configuration
@@ -95,6 +175,35 @@ type ServerConfig struct {
 	MaxConcurrentHandlers int `yaml:"max_concurrent_handlers" json:"max_concurrent_handlers"`
 	// Security holds the security configuration for the SMTP server
 	Security SecurityConfig `yaml:"security" json:"security"`
+}
+
+// TLSConfig returns a TLS configuration for the SMTP server
+func (c *ServerConfig) TLSConfig() *tls.Config {
+	return &tls.Config{
+		MinVersion: tls.VersionTLS12,
+	}
+}
+
+// Validate checks the server configuration for errors
+func (c *ServerConfig) Validate() error {
+	if c.Host == "" {
+		return apperror.NewError("smtp server host is required")
+	}
+	if c.Port <= 0 || c.Port > maxPort {
+		return apperror.NewError("smtp server port must be between 1 and 65535")
+	}
+	if c.Domain == "" {
+		return apperror.NewError("smtp server domain is required")
+	}
+	if c.TLS && (c.CertFile == "" || c.KeyFile == "") {
+		return apperror.NewError("tls is enabled but certificate or key file is missing")
+	}
+	return nil
+}
+
+// Changed checks if the server configuration has changed compared to another configuration.
+func (c *ServerConfig) Changed(n *ServerConfig) bool {
+	return config.Changed(c, n)
 }
 
 // SecurityConfig holds security-related configuration for the smtp server
@@ -139,6 +248,27 @@ type QueueConfig struct {
 	JobTimeout time.Duration `yaml:"job_timeout" json:"job_timeout"`
 }
 
+// Validate checks the queue configuration for errors
+func (c *QueueConfig) Validate() error {
+	if c.Enabled {
+		if c.QueueName == "" {
+			return apperror.NewError("queue name is required")
+		}
+		if c.MaxAttempts <= 0 {
+			return apperror.NewError("max attempts must be greater than 0")
+		}
+		if c.JobTimeout <= 0 {
+			return apperror.NewError("job timeout must be greater than 0")
+		}
+	}
+	return nil
+}
+
+// Changed checks if the queue configuration has changed compared to another configuration.
+func (c *QueueConfig) Changed(n *QueueConfig) bool {
+	return config.Changed(c, n)
+}
+
 // TemplateConfig holds the template configuration
 type TemplateConfig struct {
 	// Enabled indicates if template processing is enabled
@@ -156,6 +286,27 @@ type TemplateConfig struct {
 	// GlobalFuncs defines additional global template functions
 	GlobalFuncs template.FuncMap `yaml:"-" json:"-"`
 }
+
+// Validate checks the template configuration for errors
+func (c *TemplateConfig) Validate() error {
+	if c.Enabled {
+		if c.DefaultTemplate == "" {
+			return apperror.NewError("default template is required")
+		}
+	}
+	return nil
+}
+
+// Changed checks if the template configuration has changed compared to another configuration.
+func (c *TemplateConfig) Changed(n *TemplateConfig) bool {
+	return config.Changed(c, n)
+}
+
+// AuthMethod represents SMTP authentication methods
+type AuthMethod string
+
+// EncryptionMethod represents SMTP encryption methods
+type EncryptionMethod string
 
 // DefaultConfig returns a default configuration
 func DefaultConfig() *Config {
@@ -235,131 +386,4 @@ func DefaultConfig() *Config {
 			AutoReload:      true,
 		},
 	}
-}
-
-// TLSConfig returns a TLS configuration for the SMTP client
-func (c *ClientConfig) TLSConfig() *tls.Config {
-	return &tls.Config{
-		ServerName:         c.Host,
-		InsecureSkipVerify: c.SkipCertificateVerification, //nolint:gosec // opt-in via configuration
-		MinVersion:         tls.VersionTLS12,
-	}
-}
-
-// Validate checks the client configuration for errors
-func (c *ClientConfig) Validate() error {
-	if !c.Enabled {
-		return nil
-	}
-	if c.Host == "" {
-		return apperror.NewError("smtp host is required")
-	}
-	if c.Port <= 0 || c.Port > maxPort {
-		return apperror.NewError("smtp port must be between 1 and 65535")
-	}
-	if c.Auth {
-		if c.Username == "" {
-			return apperror.NewError("smtp username is required")
-		}
-		if c.Password == "" {
-			return apperror.NewError("smtp password is required")
-		}
-	}
-	return nil
-}
-
-// TLSConfig returns a TLS configuration for the SMTP server
-func (c *ServerConfig) TLSConfig() *tls.Config {
-	return &tls.Config{
-		MinVersion: tls.VersionTLS12,
-	}
-}
-
-// Validate checks the server configuration for errors
-func (c *ServerConfig) Validate() error {
-	if c.Host == "" {
-		return apperror.NewError("smtp server host is required")
-	}
-	if c.Port <= 0 || c.Port > maxPort {
-		return apperror.NewError("smtp server port must be between 1 and 65535")
-	}
-	if c.Domain == "" {
-		return apperror.NewError("smtp server domain is required")
-	}
-	if c.TLS && (c.CertFile == "" || c.KeyFile == "") {
-		return apperror.NewError("tls is enabled but certificate or key file is missing")
-	}
-	return nil
-}
-
-// Validate checks the queue configuration for errors
-func (c *QueueConfig) Validate() error {
-	if c.Enabled {
-		if c.QueueName == "" {
-			return apperror.NewError("queue name is required")
-		}
-		if c.MaxAttempts <= 0 {
-			return apperror.NewError("max attempts must be greater than 0")
-		}
-		if c.JobTimeout <= 0 {
-			return apperror.NewError("job timeout must be greater than 0")
-		}
-	}
-	return nil
-}
-
-// Validate checks the template configuration for errors
-func (c *TemplateConfig) Validate() error {
-	if c.Enabled {
-		if c.DefaultTemplate == "" {
-			return apperror.NewError("default template is required")
-		}
-	}
-	return nil
-}
-
-// Validate checks the configuration for errors
-func (c *Config) Validate() error {
-	err := c.Client.Validate()
-	if err != nil {
-		return apperror.NewError("validating client configuration failed").AddError(err)
-	}
-	err = c.Server.Validate()
-	if err != nil {
-		return apperror.NewError("validating server configuration failed").AddError(err)
-	}
-	err = c.Queue.Validate()
-	if err != nil {
-		return apperror.NewError("validating queue configuration failed").AddError(err)
-	}
-	err = c.Templates.Validate()
-	if err != nil {
-		return apperror.NewError("validating template configuration failed").AddError(err)
-	}
-	return nil
-}
-
-// Changed checks if the mail configuration has changed compared to another configuration.
-func (c *Config) Changed(n *Config) bool {
-	return config.Changed(c, n)
-}
-
-// Changed checks if the client configuration has changed compared to another configuration.
-func (c *ClientConfig) Changed(n *ClientConfig) bool {
-	return config.Changed(c, n)
-}
-
-// Changed checks if the server configuration has changed compared to another configuration.
-func (c *ServerConfig) Changed(n *ServerConfig) bool {
-	return config.Changed(c, n)
-}
-
-// Changed checks if the queue configuration has changed compared to another configuration.
-func (c *QueueConfig) Changed(n *QueueConfig) bool {
-	return config.Changed(c, n)
-}
-
-// Changed checks if the template configuration has changed compared to another configuration.
-func (c *TemplateConfig) Changed(n *TemplateConfig) bool {
-	return config.Changed(c, n)
 }

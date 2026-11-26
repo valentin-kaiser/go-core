@@ -35,6 +35,24 @@ const (
 // - The final label (TLD) must be alphabetic and at least one character.
 var FQDNPattern = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{1,}$`)
 
+// SecurityError represents a security-related error
+type SecurityError struct {
+	Type    string
+	Message string
+}
+
+func (e *SecurityError) Error() string {
+	return e.Message
+}
+
+// authTracker tracks authentication failures per IP
+type authTracker struct {
+	failures    int
+	windowStart time.Time
+	blocked     bool
+	blockedTime time.Time
+}
+
 // SecurityManager handles security validations and tracking for both SMTP client and server
 type SecurityManager struct {
 	config        SecurityConfig
@@ -48,14 +66,6 @@ type SecurityManager struct {
 	allowedNetworks []*net.IPNet
 	blockedNetworks []*net.IPNet
 	mutex           sync.RWMutex
-}
-
-// authTracker tracks authentication failures per IP
-type authTracker struct {
-	failures    int
-	windowStart time.Time
-	blocked     bool
-	blockedTime time.Time
 }
 
 // NewSecurityManager creates a new security manager
@@ -78,30 +88,6 @@ func NewSecurityManager(config SecurityConfig) *SecurityManager {
 	go sm.cleanup()
 
 	return sm
-}
-
-// parseNetworks converts CIDR notations and single IP addresses to networks and skips invalid entries.
-func parseNetworks(entries []string) []*net.IPNet {
-	networks := make([]*net.IPNet, 0, len(entries))
-	for _, entry := range entries {
-		_, network, err := net.ParseCIDR(entry)
-		if err == nil {
-			networks = append(networks, network)
-			continue
-		}
-		ip := net.ParseIP(entry)
-		if ip == nil {
-			logger.Warn().Err(err).Field("entry", entry).Msg("ignoring invalid ip entry")
-			continue
-		}
-		// Single IP address - convert to a /32 or /128 network
-		if ip4 := ip.To4(); ip4 != nil {
-			networks = append(networks, &net.IPNet{IP: ip4, Mask: net.CIDRMask(ipv4Bits, ipv4Bits)})
-			continue
-		}
-		networks = append(networks, &net.IPNet{IP: ip, Mask: net.CIDRMask(ipv6Bits, ipv6Bits)})
-	}
-	return networks
 }
 
 // ValidateConnection checks if a connection from the given IP is allowed
@@ -400,12 +386,26 @@ func (sm *SecurityManager) cleanup() {
 	}
 }
 
-// SecurityError represents a security-related error
-type SecurityError struct {
-	Type    string
-	Message string
-}
-
-func (e *SecurityError) Error() string {
-	return e.Message
+// parseNetworks converts CIDR notations and single IP addresses to networks and skips invalid entries.
+func parseNetworks(entries []string) []*net.IPNet {
+	networks := make([]*net.IPNet, 0, len(entries))
+	for _, entry := range entries {
+		_, network, err := net.ParseCIDR(entry)
+		if err == nil {
+			networks = append(networks, network)
+			continue
+		}
+		ip := net.ParseIP(entry)
+		if ip == nil {
+			logger.Warn().Err(err).Field("entry", entry).Msg("ignoring invalid ip entry")
+			continue
+		}
+		// Single IP address - convert to a /32 or /128 network
+		if ip4 := ip.To4(); ip4 != nil {
+			networks = append(networks, &net.IPNet{IP: ip4, Mask: net.CIDRMask(ipv4Bits, ipv4Bits)})
+			continue
+		}
+		networks = append(networks, &net.IPNet{IP: ip, Mask: net.CIDRMask(ipv6Bits, ipv6Bits)})
+	}
+	return networks
 }

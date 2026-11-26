@@ -72,14 +72,6 @@ const (
 	addrBrackets   = "<>"
 )
 
-// SMTP errors
-var (
-	ErrServerClosed    = errors.New("smtp: server closed")
-	ErrAuthFailed      = errors.New("smtp: authentication failed")
-	ErrAuthRequired    = errors.New("smtp: authentication required")
-	ErrAuthUnsupported = errors.New("smtp: authentication method not supported")
-)
-
 // SMTP response codes
 const (
 	StatusReady          = 220
@@ -99,6 +91,27 @@ const (
 	StatusAuthFailed      = 535
 	StatusAuthRequired    = 530
 )
+
+// SMTP errors
+var (
+	ErrServerClosed    = errors.New("smtp: server closed")
+	ErrAuthFailed      = errors.New("smtp: authentication failed")
+	ErrAuthRequired    = errors.New("smtp: authentication required")
+	ErrAuthUnsupported = errors.New("smtp: authentication method not supported")
+)
+
+// closedConnectionErrors are the errors that mean the peer closed or reset the connection or cannot be reached
+var closedConnectionErrors = []error{
+	io.EOF,
+	io.ErrUnexpectedEOF,
+	syscall.ECONNRESET,
+	syscall.EPIPE,
+	syscall.ECONNABORTED,
+	syscall.ECONNREFUSED,
+	syscall.ENETUNREACH,
+	syscall.EHOSTUNREACH,
+	syscall.ETIMEDOUT,
+}
 
 // Options represents MAIL command options
 type Options struct {
@@ -163,33 +176,19 @@ func (c *Conn) TLS() bool {
 	return c.tls
 }
 
-// smtpServer manages SMTP server operations and handles incoming messages
-type smtpServer struct {
-	config           ServerConfig
-	manager          *Manager
-	handlers         []NotificationHandler
-	running          atomic.Int32
-	mutex            sync.RWMutex
-	handlerSemaphore chan struct{}      // Semaphore to limit concurrent handlers
-	handlerQueue     chan handlerTask   // Queue for pending handler tasks
-	ctx              context.Context    // Context for server lifecycle
-	cancel           context.CancelFunc // Cancel function for server lifecycle
-	wg               sync.WaitGroup     // WaitGroup for graceful shutdown
-	security         *SecurityManager   // Security manager for validations
+// NotificationHandler is a function that handles incoming SMTP messages
+type NotificationHandler func(ctx context.Context, from string, to []string, data io.Reader) error
 
-	listener   net.Listener
-	shutdown   chan struct{}
-	closed     bool
-	protocolWg sync.WaitGroup // Separate WaitGroup for protocol connections
-}
-
-// handlerTask represents a pending notification handler task
-type handlerTask struct {
-	handler NotificationHandler
-	ctx     context.Context
-	from    string
-	to      []string
-	data    io.Reader
+// Server is the interface for SMTP servers
+type Server interface {
+	// Start starts the SMTP server
+	Start(ctx context.Context) error
+	// Stop stops the SMTP server
+	Stop(ctx context.Context) error
+	// AddHandler adds a notification handler
+	AddHandler(handler NotificationHandler)
+	// IsRunning returns true if the server is running
+	IsRunning() bool
 }
 
 // NewSMTPServer creates a new SMTP server
@@ -215,6 +214,211 @@ func NewSMTPServer(config ServerConfig, manager *Manager) Server {
 	return server
 }
 
+// handlerTask represents a pending notification handler task
+type handlerTask struct {
+	handler NotificationHandler
+	ctx     context.Context
+	from    string
+	to      []string
+	data    io.Reader
+}
+
+// session implements the Session interface
+type session struct {
+	server        *smtpServer
+	conn          *Conn
+	remoteAddr    string
+	authenticated bool
+	from          string
+	to            []string
+	heloValidated bool
+}
+
+// AuthPlain handles PLAIN authentication
+func (s *session) AuthPlain(username, password string) error {
+	err := s.validateHeloIfNeeded()
+	if err != nil {
+		return apperror.NewError("validating helo before authentication failed").AddError(err)
+	}
+
+	err = s.server.security.CheckRateLimit(s.remoteAddr)
+	if err != nil {
+		logger.Warn().
+			Field("remote_addr", s.remoteAddr).
+			Field("username", username).
+			Msg("authentication rate limit exceeded")
+		return ErrAuthFailed
+	}
+
+	if !s.server.config.Auth {
+		return ErrAuthUnsupported
+	}
+
+	logger.Trace().
+		Field("username", username).
+		Msg("SMTP PLAIN authentication attempt")
+
+	if username == s.server.config.Username && password == s.server.config.Password {
+		s.authenticated = true
+		s.server.security.RecordAuthSuccess(s.remoteAddr)
+		logger.Trace().Field("username", username).Msg("SMTP authentication successful")
+		return nil
+	}
+
+	s.server.security.RecordAuthFailure(s.remoteAddr)
+	if delay := s.server.security.GetAuthFailureDelay(); delay > 0 {
+		time.Sleep(delay)
+	}
+
+	logger.Warn().Field("username", username).Msg("SMTP authentication failed")
+	return ErrAuthFailed
+}
+
+// Mail handles the MAIL FROM command
+func (s *session) Mail(from string, _ *Options) error {
+	err := s.validateHeloIfNeeded()
+	if err != nil {
+		return apperror.NewError("validating helo before MAIL command failed").AddError(err)
+	}
+
+	err = s.server.security.CheckRateLimit(s.remoteAddr)
+	if err != nil {
+		logger.Warn().
+			Field("remote_addr", s.remoteAddr).
+			Field("from", from).
+			Msg("MAIL command rate limit exceeded")
+		return apperror.NewError("checking rate limit of MAIL command failed").AddError(err)
+	}
+
+	if s.server.config.Auth && !s.authenticated {
+		logger.Warn().Field("from", from).Msg("unauthenticated MAIL command rejected")
+		return ErrAuthRequired
+	}
+
+	logger.Trace().Field("from", from).Msg("MAIL FROM")
+	s.from = from
+	return nil
+}
+
+// Rcpt handles the RCPT TO command
+func (s *session) Rcpt(to string, _ *RcptOptions) error {
+	err := s.validateHeloIfNeeded()
+	if err != nil {
+		return apperror.NewError("validating helo before RCPT command failed").AddError(err)
+	}
+
+	err = s.server.security.CheckRateLimit(s.remoteAddr)
+	if err != nil {
+		logger.Warn().
+			Field("remote_addr", s.remoteAddr).
+			Field("to", to).
+			Msg("RCPT command rate limit exceeded")
+		return apperror.NewError("checking rate limit of RCPT command failed").AddError(err)
+	}
+
+	if s.server.config.Auth && !s.authenticated {
+		logger.Warn().Field("to", to).Msg("unauthenticated RCPT command rejected")
+		return ErrAuthRequired
+	}
+
+	s.to = append(s.to, to)
+	return nil
+}
+
+// Data handles the email data
+func (s *session) Data(r io.Reader) error {
+	err := s.checkData()
+	if err != nil {
+		return apperror.NewError("checking data command failed").AddError(err)
+	}
+
+	data, err := io.ReadAll(r)
+	if err != nil {
+		return apperror.NewError("reading email data failed").AddError(err)
+	}
+
+	return s.receive(data)
+}
+
+// Reset resets the session
+func (s *session) Reset() {
+	logger.Trace().Msg("SMTP session reset")
+	s.from = ""
+	s.to = nil
+}
+
+// Logout handles session logout
+func (s *session) Logout() error {
+	s.server.security.CloseConnection(s.remoteAddr)
+	logger.Trace().Msg("SMTP session logout")
+	return nil
+}
+
+// validateHeloIfNeeded validates HELO hostname on first SMTP command
+func (s *session) validateHeloIfNeeded() error {
+	if s.heloValidated || !s.server.config.Security.HeloValidation {
+		return nil
+	}
+
+	// The internal SMTP implementation stores this in the connection's Hostname() method
+	hostname := s.conn.Hostname()
+
+	err := s.server.security.ValidateHelo(hostname, s.remoteAddr)
+	if err != nil {
+		return apperror.NewErrorf("validating helo hostname %q failed", hostname).AddError(err)
+	}
+
+	s.heloValidated = true
+	return nil
+}
+
+// checkData makes the checks that come before a message is accepted: HELO and authentication
+func (s *session) checkData() error {
+	err := s.validateHeloIfNeeded()
+	if err != nil {
+		return apperror.NewError("validating helo before data failed").AddError(err)
+	}
+
+	if s.server.config.Auth && !s.authenticated {
+		logger.Warn().Msg("unauthenticated DATA command rejected")
+		return ErrAuthRequired
+	}
+	return nil
+}
+
+// receive hands a complete message to the manager and the handlers. The caller has already called
+// checkData.
+func (s *session) receive(data []byte) error {
+	if s.server.manager != nil {
+		s.server.manager.NotifyMessageReceived()
+	}
+
+	ctx := context.Background()
+	s.server.notifyHandlers(ctx, s.from, s.to, data)
+
+	return nil
+}
+
+// smtpServer manages SMTP server operations and handles incoming messages
+type smtpServer struct {
+	config           ServerConfig
+	manager          *Manager
+	handlers         []NotificationHandler
+	running          atomic.Int32
+	mutex            sync.RWMutex
+	handlerSemaphore chan struct{}      // Semaphore to limit concurrent handlers
+	handlerQueue     chan handlerTask   // Queue for pending handler tasks
+	ctx              context.Context    // Context for server lifecycle
+	cancel           context.CancelFunc // Cancel function for server lifecycle
+	wg               sync.WaitGroup     // WaitGroup for graceful shutdown
+	security         *SecurityManager   // Security manager for validations
+
+	listener   net.Listener
+	shutdown   chan struct{}
+	closed     bool
+	protocolWg sync.WaitGroup // Separate WaitGroup for protocol connections
+}
+
 // Start starts the SMTP server
 func (s *smtpServer) Start(_ context.Context) error {
 	if !s.running.CompareAndSwap(0, 1) {
@@ -226,60 +430,6 @@ func (s *smtpServer) Start(_ context.Context) error {
 	go s.probeStartup(serverReady)
 
 	return <-serverReady
-}
-
-// serve runs the SMTP server until it is closed and reports a failure through serverReady
-func (s *smtpServer) serve(serverReady chan<- error) {
-	var err error
-	if s.config.TLS {
-		err = s.ListenAndServeTLS()
-	} else {
-		err = s.ListenAndServe()
-	}
-
-	if err != nil && !errors.Is(err, ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
-		logger.Error().Err(err).Msg("SMTP server error")
-		reportStartup(serverReady, err)
-	}
-
-	s.running.Store(0)
-}
-
-// probeStartup reports through serverReady whether the server accepts connections
-func (s *smtpServer) probeStartup(serverReady chan<- error) {
-	for range startupProbeAttempts {
-		time.Sleep(startupProbeInterval)
-		if s.isAcceptingConnections() {
-			reportStartup(serverReady, nil)
-			return
-		}
-		if !s.IsRunning() {
-			reportStartup(serverReady, apperror.NewError("server stopped before becoming ready"))
-			return
-		}
-	}
-
-	reportStartup(serverReady, apperror.NewError("timeout waiting for server to become ready"))
-}
-
-// isAcceptingConnections tries to connect to the server
-func (s *smtpServer) isAcceptingConnections() bool {
-	addr := net.JoinHostPort(s.config.Host, strconv.Itoa(s.config.Port))
-	conn, err := net.DialTimeout(networkTCP, addr, startupDialTimeout)
-	if err != nil {
-		return false
-	}
-
-	apperror.Catch(conn.Close, "closing connection failed")
-	return true
-}
-
-// reportStartup delivers the first startup result and drops every later one instead of blocking
-func reportStartup(serverReady chan<- error, err error) {
-	select {
-	case serverReady <- err:
-	default:
-	}
 }
 
 // Stop stops the SMTP server
@@ -330,6 +480,124 @@ func (s *smtpServer) AddHandler(handler NotificationHandler) {
 // IsRunning returns true if the server is running
 func (s *smtpServer) IsRunning() bool {
 	return s.running.Load() == 1
+}
+
+// ListenAndServe starts the server on the configured address
+func (s *smtpServer) ListenAndServe() error {
+	addr := net.JoinHostPort(s.config.Host, strconv.Itoa(s.config.Port))
+	listener, err := net.Listen(networkTCP, addr)
+	if err != nil {
+		return apperror.NewErrorf("listening on %s failed", addr).AddError(err)
+	}
+	return s.Serve(listener)
+}
+
+// ListenAndServeTLS starts the server with TLS on the configured address
+func (s *smtpServer) ListenAndServeTLS() error {
+	addr := net.JoinHostPort(s.config.Host, strconv.Itoa(s.config.Port))
+	tlsConfig, err := s.loadTLSConfig()
+	if err != nil {
+		return apperror.NewError("loading TLS configuration failed").AddError(err)
+	}
+	listener, err := tls.Listen(networkTCP, addr, tlsConfig)
+	if err != nil {
+		return apperror.NewErrorf("listening with TLS on %s failed", addr).AddError(err)
+	}
+	return s.Serve(listener)
+}
+
+// Serve accepts incoming connections on the listener
+func (s *smtpServer) Serve(listener net.Listener) error {
+	s.mutex.Lock()
+	s.listener = listener
+	s.mutex.Unlock()
+
+	defer func() {
+		s.mutex.Lock()
+		s.listener = nil
+		s.mutex.Unlock()
+	}()
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			select {
+			case <-s.shutdown:
+				return ErrServerClosed
+			default:
+				return apperror.NewError("accepting connection failed").AddError(err)
+			}
+		}
+		s.protocolWg.Go(func() {
+			s.handleConnection(conn)
+		})
+	}
+}
+
+// NewSession creates a new SMTP session (implements Backend interface)
+func (s *smtpServer) NewSession(conn *Conn) (Session, error) {
+	remoteAddr := conn.RemoteAddr().String()
+
+	logger.Trace().
+		Field("remote_addr", remoteAddr).
+		Msg("new SMTP session")
+
+	err := s.security.ValidateConnection(remoteAddr)
+	if err != nil {
+		return nil, apperror.NewErrorf("validating connection from %s failed", remoteAddr).AddError(err)
+	}
+
+	return &session{
+		server:     s,
+		conn:       conn,
+		remoteAddr: remoteAddr,
+	}, nil
+}
+
+// serve runs the SMTP server until it is closed and reports a failure through serverReady
+func (s *smtpServer) serve(serverReady chan<- error) {
+	var err error
+	if s.config.TLS {
+		err = s.ListenAndServeTLS()
+	} else {
+		err = s.ListenAndServe()
+	}
+
+	if err != nil && !errors.Is(err, ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
+		logger.Error().Err(err).Msg("SMTP server error")
+		reportStartup(serverReady, err)
+	}
+
+	s.running.Store(0)
+}
+
+// probeStartup reports through serverReady whether the server accepts connections
+func (s *smtpServer) probeStartup(serverReady chan<- error) {
+	for range startupProbeAttempts {
+		time.Sleep(startupProbeInterval)
+		if s.isAcceptingConnections() {
+			reportStartup(serverReady, nil)
+			return
+		}
+		if !s.IsRunning() {
+			reportStartup(serverReady, apperror.NewError("server stopped before becoming ready"))
+			return
+		}
+	}
+
+	reportStartup(serverReady, apperror.NewError("timeout waiting for server to become ready"))
+}
+
+// isAcceptingConnections tries to connect to the server
+func (s *smtpServer) isAcceptingConnections() bool {
+	addr := net.JoinHostPort(s.config.Host, strconv.Itoa(s.config.Port))
+	conn, err := net.DialTimeout(networkTCP, addr, startupDialTimeout)
+	if err != nil {
+		return false
+	}
+
+	apperror.Catch(conn.Close, "closing connection failed")
+	return true
 }
 
 // loadTLSConfig loads or generates TLS configuration
@@ -514,234 +782,6 @@ func (s *smtpServer) runHandlerWorker(workerID int) {
 	}
 }
 
-// session implements the Session interface
-type session struct {
-	server        *smtpServer
-	conn          *Conn
-	remoteAddr    string
-	authenticated bool
-	from          string
-	to            []string
-	heloValidated bool
-}
-
-// validateHeloIfNeeded validates HELO hostname on first SMTP command
-func (s *session) validateHeloIfNeeded() error {
-	if s.heloValidated || !s.server.config.Security.HeloValidation {
-		return nil
-	}
-
-	// The internal SMTP implementation stores this in the connection's Hostname() method
-	hostname := s.conn.Hostname()
-
-	err := s.server.security.ValidateHelo(hostname, s.remoteAddr)
-	if err != nil {
-		return apperror.NewErrorf("validating helo hostname %q failed", hostname).AddError(err)
-	}
-
-	s.heloValidated = true
-	return nil
-}
-
-// AuthPlain handles PLAIN authentication
-func (s *session) AuthPlain(username, password string) error {
-	err := s.validateHeloIfNeeded()
-	if err != nil {
-		return apperror.NewError("validating helo before authentication failed").AddError(err)
-	}
-
-	err = s.server.security.CheckRateLimit(s.remoteAddr)
-	if err != nil {
-		logger.Warn().
-			Field("remote_addr", s.remoteAddr).
-			Field("username", username).
-			Msg("authentication rate limit exceeded")
-		return ErrAuthFailed
-	}
-
-	if !s.server.config.Auth {
-		return ErrAuthUnsupported
-	}
-
-	logger.Trace().
-		Field("username", username).
-		Msg("SMTP PLAIN authentication attempt")
-
-	if username == s.server.config.Username && password == s.server.config.Password {
-		s.authenticated = true
-		s.server.security.RecordAuthSuccess(s.remoteAddr)
-		logger.Trace().Field("username", username).Msg("SMTP authentication successful")
-		return nil
-	}
-
-	s.server.security.RecordAuthFailure(s.remoteAddr)
-	if delay := s.server.security.GetAuthFailureDelay(); delay > 0 {
-		time.Sleep(delay)
-	}
-
-	logger.Warn().Field("username", username).Msg("SMTP authentication failed")
-	return ErrAuthFailed
-}
-
-// Mail handles the MAIL FROM command
-func (s *session) Mail(from string, _ *Options) error {
-	err := s.validateHeloIfNeeded()
-	if err != nil {
-		return apperror.NewError("validating helo before MAIL command failed").AddError(err)
-	}
-
-	err = s.server.security.CheckRateLimit(s.remoteAddr)
-	if err != nil {
-		logger.Warn().
-			Field("remote_addr", s.remoteAddr).
-			Field("from", from).
-			Msg("MAIL command rate limit exceeded")
-		return apperror.NewError("checking rate limit of MAIL command failed").AddError(err)
-	}
-
-	if s.server.config.Auth && !s.authenticated {
-		logger.Warn().Field("from", from).Msg("unauthenticated MAIL command rejected")
-		return ErrAuthRequired
-	}
-
-	logger.Trace().Field("from", from).Msg("MAIL FROM")
-	s.from = from
-	return nil
-}
-
-// Rcpt handles the RCPT TO command
-func (s *session) Rcpt(to string, _ *RcptOptions) error {
-	err := s.validateHeloIfNeeded()
-	if err != nil {
-		return apperror.NewError("validating helo before RCPT command failed").AddError(err)
-	}
-
-	err = s.server.security.CheckRateLimit(s.remoteAddr)
-	if err != nil {
-		logger.Warn().
-			Field("remote_addr", s.remoteAddr).
-			Field("to", to).
-			Msg("RCPT command rate limit exceeded")
-		return apperror.NewError("checking rate limit of RCPT command failed").AddError(err)
-	}
-
-	if s.server.config.Auth && !s.authenticated {
-		logger.Warn().Field("to", to).Msg("unauthenticated RCPT command rejected")
-		return ErrAuthRequired
-	}
-
-	s.to = append(s.to, to)
-	return nil
-}
-
-// Data handles the email data
-func (s *session) Data(r io.Reader) error {
-	err := s.checkData()
-	if err != nil {
-		return apperror.NewError("checking data command failed").AddError(err)
-	}
-
-	data, err := io.ReadAll(r)
-	if err != nil {
-		return apperror.NewError("reading email data failed").AddError(err)
-	}
-
-	return s.receive(data)
-}
-
-// checkData makes the checks that come before a message is accepted: HELO and authentication
-func (s *session) checkData() error {
-	err := s.validateHeloIfNeeded()
-	if err != nil {
-		return apperror.NewError("validating helo before data failed").AddError(err)
-	}
-
-	if s.server.config.Auth && !s.authenticated {
-		logger.Warn().Msg("unauthenticated DATA command rejected")
-		return ErrAuthRequired
-	}
-	return nil
-}
-
-// receive hands a complete message to the manager and the handlers. The caller has already called
-// checkData.
-func (s *session) receive(data []byte) error {
-	if s.server.manager != nil {
-		s.server.manager.NotifyMessageReceived()
-	}
-
-	ctx := context.Background()
-	s.server.notifyHandlers(ctx, s.from, s.to, data)
-
-	return nil
-}
-
-// Reset resets the session
-func (s *session) Reset() {
-	logger.Trace().Msg("SMTP session reset")
-	s.from = ""
-	s.to = nil
-}
-
-// Logout handles session logout
-func (s *session) Logout() error {
-	s.server.security.CloseConnection(s.remoteAddr)
-	logger.Trace().Msg("SMTP session logout")
-	return nil
-}
-
-// ListenAndServe starts the server on the configured address
-func (s *smtpServer) ListenAndServe() error {
-	addr := net.JoinHostPort(s.config.Host, strconv.Itoa(s.config.Port))
-	listener, err := net.Listen(networkTCP, addr)
-	if err != nil {
-		return apperror.NewErrorf("listening on %s failed", addr).AddError(err)
-	}
-	return s.Serve(listener)
-}
-
-// ListenAndServeTLS starts the server with TLS on the configured address
-func (s *smtpServer) ListenAndServeTLS() error {
-	addr := net.JoinHostPort(s.config.Host, strconv.Itoa(s.config.Port))
-	tlsConfig, err := s.loadTLSConfig()
-	if err != nil {
-		return apperror.NewError("loading TLS configuration failed").AddError(err)
-	}
-	listener, err := tls.Listen(networkTCP, addr, tlsConfig)
-	if err != nil {
-		return apperror.NewErrorf("listening with TLS on %s failed", addr).AddError(err)
-	}
-	return s.Serve(listener)
-}
-
-// Serve accepts incoming connections on the listener
-func (s *smtpServer) Serve(listener net.Listener) error {
-	s.mutex.Lock()
-	s.listener = listener
-	s.mutex.Unlock()
-
-	defer func() {
-		s.mutex.Lock()
-		s.listener = nil
-		s.mutex.Unlock()
-	}()
-
-	for {
-		conn, err := listener.Accept()
-		if err != nil {
-			select {
-			case <-s.shutdown:
-				return ErrServerClosed
-			default:
-				return apperror.NewError("accepting connection failed").AddError(err)
-			}
-		}
-		s.protocolWg.Go(func() {
-			s.handleConnection(conn)
-		})
-	}
-}
-
 // handleConnection handles a single SMTP connection
 func (s *smtpServer) handleConnection(netConn net.Conn) {
 	defer func() {
@@ -794,26 +834,6 @@ func (s *smtpServer) handleConnection(netConn net.Conn) {
 	s.writeResponse(conn, StatusReady, greeting)
 
 	s.handleCommands(conn, session)
-}
-
-// NewSession creates a new SMTP session (implements Backend interface)
-func (s *smtpServer) NewSession(conn *Conn) (Session, error) {
-	remoteAddr := conn.RemoteAddr().String()
-
-	logger.Trace().
-		Field("remote_addr", remoteAddr).
-		Msg("new SMTP session")
-
-	err := s.security.ValidateConnection(remoteAddr)
-	if err != nil {
-		return nil, apperror.NewErrorf("validating connection from %s failed", remoteAddr).AddError(err)
-	}
-
-	return &session{
-		server:     s,
-		conn:       conn,
-		remoteAddr: remoteAddr,
-	}, nil
 }
 
 // handleCommands processes SMTP commands from the client
@@ -957,40 +977,6 @@ func (s *smtpServer) writeRaw(conn *Conn, data string) {
 	}
 
 	logger.Trace().Field("response", strings.TrimSpace(data)).Msg("sent SMTP response")
-}
-
-// closedConnectionErrors are the errors that mean the peer closed or reset the connection or cannot be reached
-var closedConnectionErrors = []error{
-	io.EOF,
-	io.ErrUnexpectedEOF,
-	syscall.ECONNRESET,
-	syscall.EPIPE,
-	syscall.ECONNABORTED,
-	syscall.ECONNREFUSED,
-	syscall.ENETUNREACH,
-	syscall.EHOSTUNREACH,
-	syscall.ETIMEDOUT,
-}
-
-// isConnectionClosed checks if an error indicates a normal connection close/reset
-func isConnectionClosed(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	for _, target := range closedConnectionErrors {
-		if errors.Is(err, target) {
-			return true
-		}
-	}
-
-	// Windows reports socket failures as winsock errors that do not map to the errors above
-	sysErr, ok := errors.AsType[*os.SyscallError](err)
-	if ok {
-		return sysErr.Syscall == "wsarecv" || sysErr.Syscall == "wsasend"
-	}
-
-	return false
 }
 
 // handleHelo handles HELO/EHLO commands
@@ -1234,4 +1220,33 @@ func (s *smtpServer) handleData(conn *Conn, current Session) {
 	}
 
 	s.writeResponse(conn, StatusOK, "Message accepted")
+}
+
+// reportStartup delivers the first startup result and drops every later one instead of blocking
+func reportStartup(serverReady chan<- error, err error) {
+	select {
+	case serverReady <- err:
+	default:
+	}
+}
+
+// isConnectionClosed checks if an error indicates a normal connection close/reset
+func isConnectionClosed(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	for _, target := range closedConnectionErrors {
+		if errors.Is(err, target) {
+			return true
+		}
+	}
+
+	// Windows reports socket failures as winsock errors that do not map to the errors above
+	sysErr, ok := errors.AsType[*os.SyscallError](err)
+	if ok {
+		return sysErr.Syscall == "wsarecv" || sysErr.Syscall == "wsasend"
+	}
+
+	return false
 }
