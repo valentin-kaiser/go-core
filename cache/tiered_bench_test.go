@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/cache"
 )
 
@@ -15,10 +14,8 @@ func newBenchTiered(b *testing.B, keys int) *cache.TieredCache {
 	b.Helper()
 	l1 := cache.NewMemoryCache()
 	l2 := cache.NewMemoryCache()
-	b.Cleanup(func() {
-		apperror.Catch(l1.Close, "closing L1 cache failed")
-		apperror.Catch(l2.Close, "closing L2 cache failed")
-	})
+	closeOnCleanup(b, "L1 cache", l1)
+	closeOnCleanup(b, "L2 cache", l2)
 	tc := cache.NewTieredCache(l1, l2)
 	ctx := context.Background()
 	for i := range keys {
@@ -31,13 +28,13 @@ func newBenchTiered(b *testing.B, keys int) *cache.TieredCache {
 }
 
 func BenchmarkTieredCacheGetL1Hit(b *testing.B) {
-	tc := newBenchTiered(b, 1024)
+	tc := newBenchTiered(b, benchKeyCount)
 	ctx := context.Background()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var v benchValue
-		_, err := tc.Get(ctx, "key-"+strconv.Itoa(i&1023), &v)
+		_, err := tc.Get(ctx, "key-"+strconv.Itoa(i&(benchKeyCount-1)), &v)
 		if err != nil {
 			b.Error(err)
 		}
@@ -45,7 +42,7 @@ func BenchmarkTieredCacheGetL1Hit(b *testing.B) {
 }
 
 func BenchmarkTieredCacheGetParallel(b *testing.B) {
-	tc := newBenchTiered(b, 1024)
+	tc := newBenchTiered(b, benchKeyCount)
 	ctx := context.Background()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -53,7 +50,7 @@ func BenchmarkTieredCacheGetParallel(b *testing.B) {
 		i := 0
 		for pb.Next() {
 			var v benchValue
-			_, err := tc.Get(ctx, "key-"+strconv.Itoa(i&1023), &v)
+			_, err := tc.Get(ctx, "key-"+strconv.Itoa(i&(benchKeyCount-1)), &v)
 			if err != nil {
 				b.Error(err)
 			}
@@ -69,7 +66,7 @@ func BenchmarkTieredCacheSet(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		err := tc.Set(ctx, "key-"+strconv.Itoa(i&1023), val, time.Hour)
+		err := tc.Set(ctx, "key-"+strconv.Itoa(i&(benchKeyCount-1)), val, time.Hour)
 		if err != nil {
 			b.Error(err)
 		}

@@ -1,66 +1,46 @@
+//go:build integration
+
 package cache_test
 
 import (
 	"fmt"
 	"math/rand"
-	"os"
 	"testing"
 	"time"
 
-	"github.com/redis/go-redis/v9"
-	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/cache"
+	"github.com/valentin-kaiser/go-core/internal/await"
 )
 
 func setupTieredTest(t *testing.T) *cache.TieredCache {
 	t.Helper()
-	// Setup L1 cache (memory)
+
 	l1Config := cache.DefaultConfig()
-	l1Config.MaxSize = 5 // Small L1 cache to test eviction
+	l1Config.MaxSize = tieredL1MaxSize
 	l1Cache := cache.NewMemoryCacheWithConfig(l1Config)
 
-	// Setup L2 cache (Redis)
-	redisURL := os.Getenv("REDIS_URL")
-	if redisURL == "" {
-		redisURL = "redis://localhost:6379"
-	}
-
-	opt, err := redis.ParseURL(redisURL)
-	if err != nil {
-		t.Skipf("Invalid Redis URL: %v", err)
-	}
-
-	client := redis.NewClient(opt)
-
-	// Test connection
-	ctx := t.Context()
-	_, err = client.Ping(ctx).Result()
-	if err != nil {
-		t.Skipf("Redis not available: %v", err)
-	}
+	client := connectRedis(t)
 
 	l2Config := cache.DefaultConfig()
 	l2Config.Namespace = fmt.Sprintf("tiered-test:%s:%d:%d", t.Name(), time.Now().UnixNano(), rand.Int63()) //nolint:gosec // unique test namespace, not security relevant
 	l2Cache := cache.NewRedisCacheWithConfig(client, l2Config)
 
-	// Clean up any existing test data
-	err = l2Cache.Clear(ctx)
-	if err != nil {
-		t.Logf("Warning: failed to clear test data: %v", err)
-	}
-
-	// Create tiered cache
 	tieredConfig := cache.DefaultConfig()
 	tieredConfig.Namespace = fmt.Sprintf("tiered:%s:%d:%d", t.Name(), time.Now().UnixNano(), rand.Int63()) //nolint:gosec // unique test namespace, not security relevant
 
 	c := cache.NewTieredCacheWithConfig(l1Cache, l2Cache, tieredConfig)
+	closeOnCleanup(t, "tiered cache", c)
+
+	err := l2Cache.Clear(t.Context())
+	if err != nil {
+		t.Fatalf("clearing test data failed: %v", err)
+	}
+
 	return c
 }
 
 func TestTieredCache_BasicOperations(t *testing.T) {
 	c := setupTieredTest(t)
-	defer apperror.Catch(c.Close, "closing cache failed")
-
 	ctx := t.Context()
 
 	// Test Set and Get
@@ -135,8 +115,6 @@ func TestTieredCache_BasicOperations(t *testing.T) {
 
 func TestTieredCache_L1Eviction(t *testing.T) {
 	c := setupTieredTest(t)
-	defer apperror.Catch(c.Close, "closing cache failed")
-
 	ctx := t.Context()
 
 	// Fill L1 cache beyond its capacity (L1 has maxSize of 5)
@@ -183,8 +161,6 @@ func TestTieredCache_L1Eviction(t *testing.T) {
 
 func TestTieredCache_L2Backfill(t *testing.T) {
 	c := setupTieredTest(t)
-	defer apperror.Catch(c.Close, "closing cache failed")
-
 	ctx := t.Context()
 
 	// Set value in L2 directly (simulating L1 eviction)
@@ -238,8 +214,6 @@ func TestTieredCache_L2Backfill(t *testing.T) {
 
 func TestTieredCache_TTL(t *testing.T) {
 	c := setupTieredTest(t)
-	defer apperror.Catch(c.Close, "closing cache failed")
-
 	ctx := t.Context()
 
 	// Test TTL operations
@@ -260,12 +234,10 @@ func TestTieredCache_TTL(t *testing.T) {
 
 func TestTieredCache_TTLPropagation(t *testing.T) {
 	c := setupTieredTest(t)
-	defer apperror.Catch(c.Close, "closing cache failed")
-
 	ctx := t.Context()
 
 	// Set value with short TTL
-	err := c.Set(ctx, "test", "value", time.Second*2)
+	err := c.Set(ctx, "test", "value", redisShortTTL)
 	if err != nil {
 		t.Fatalf("Failed to set value: %v", err)
 	}
@@ -282,28 +254,24 @@ func TestTieredCache_TTLPropagation(t *testing.T) {
 	}
 
 	// TTLs should be similar (within a reasonable margin)
-	if abs(l1TTL-l2TTL) > time.Millisecond*100 {
+	if abs(l1TTL-l2TTL) > ttlTolerance {
 		t.Errorf("TTL difference too large: L1=%v, L2=%v", l1TTL, l2TTL)
 	}
 
-	// Wait for expiration
-	time.Sleep(time.Second * 3)
-
 	// Value should be expired in both caches
-	var value string
-	found, err := c.Get(ctx, "test", &value)
-	if err != nil {
-		t.Fatalf("Failed to get expired value: %v", err)
-	}
-	if found {
-		t.Error("Expected value to be expired")
-	}
+	await.Until(t, redisExpiryWait, func() bool {
+		var value string
+		found, err := c.Get(ctx, "test", &value)
+		if err != nil {
+			t.Errorf("Failed to get expired value: %v", err)
+			return true
+		}
+		return !found
+	}, "the key to expire")
 }
 
 func TestTieredCache_MultiOperations(t *testing.T) {
 	c := setupTieredTest(t)
-	defer apperror.Catch(c.Close, "closing cache failed")
-
 	ctx := t.Context()
 
 	// Test SetMulti
@@ -375,8 +343,6 @@ func TestTieredCache_MultiOperations(t *testing.T) {
 
 func TestTieredCache_Clear(t *testing.T) {
 	c := setupTieredTest(t)
-	defer apperror.Catch(c.Close, "closing cache failed")
-
 	ctx := t.Context()
 
 	// Set multiple values
@@ -417,14 +383,12 @@ func TestTieredCache_Clear(t *testing.T) {
 }
 
 func TestTieredCache_Events(t *testing.T) {
-	eventsChan := make(chan cache.Event, 20)
+	eventsChan := make(chan cache.Event, tieredEventBufferSize)
 
 	c := setupTieredTest(t)
 	c = c.WithEventHandler(func(event cache.Event) {
 		eventsChan <- event
 	})
-	defer apperror.Catch(c.Close, "closing cache failed")
-
 	ctx := t.Context()
 
 	// Set value (should generate events from both L1 and L2)
@@ -482,8 +446,6 @@ eventLoop:
 
 func TestTieredCache_Stats(t *testing.T) {
 	c := setupTieredTest(t)
-	defer apperror.Catch(c.Close, "closing cache failed")
-
 	ctx := t.Context()
 
 	// Set some values
