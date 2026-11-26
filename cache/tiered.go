@@ -8,6 +8,15 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
+// maxL1TTL limits the TTL of items in the L1 cache to prevent memory bloat.
+const maxL1TTL = time.Hour
+
+// Keys of the per-level statistics returned by GetLevelStats.
+const (
+	statsKeyL1 = "L1"
+	statsKeyL2 = "L2"
+)
+
 // TieredCache implements a multi-tier cache system (e.g., L1: Memory, L2: Redis)
 type TieredCache struct {
 	*BaseCache
@@ -75,9 +84,7 @@ func (tc *TieredCache) Get(ctx context.Context, key string, dest any) (bool, err
 	if found {
 		// Backfill L1 cache with the value from L2
 		// Use a shorter TTL for L1 to avoid memory bloat
-		l1TTL := min(tc.config.DefaultTTL,
-			// Limit L1 TTL to 1 hour max
-			time.Hour)
+		l1TTL := min(tc.config.DefaultTTL, maxL1TTL)
 
 		err = tc.l1Cache.Set(ctx, key, dest, l1TTL)
 		if err != nil {
@@ -108,9 +115,7 @@ func (tc *TieredCache) Set(ctx context.Context, key string, value any, ttl time.
 	}
 
 	// Set in L1 cache with potentially shorter TTL
-	l1TTL := min(effectiveTTL,
-		// Limit L1 TTL to prevent memory bloat
-		time.Hour)
+	l1TTL := min(effectiveTTL, maxL1TTL)
 
 	err = tc.l1Cache.Set(ctx, key, value, l1TTL)
 	if err != nil {
@@ -225,7 +230,7 @@ func (tc *TieredCache) GetMulti(ctx context.Context, keys []string) (map[string]
 
 		if len(backfillItems) > 0 {
 			// Use shorter TTL for L1 backfill
-			l1TTL := min(tc.config.DefaultTTL, time.Hour)
+			l1TTL := min(tc.config.DefaultTTL, maxL1TTL)
 
 			err = tc.l1Cache.SetMulti(ctx, backfillItems, l1TTL)
 			if err != nil {
@@ -249,7 +254,7 @@ func (tc *TieredCache) SetMulti(ctx context.Context, items map[string]any, ttl t
 	}
 
 	// Set in L1 cache with potentially shorter TTL
-	l1TTL := min(effectiveTTL, time.Hour)
+	l1TTL := min(effectiveTTL, maxL1TTL)
 
 	err = tc.l1Cache.SetMulti(ctx, items, l1TTL)
 	if err != nil {
@@ -292,7 +297,7 @@ func (tc *TieredCache) SetTTL(ctx context.Context, key string, ttl time.Duration
 	l2Err = tc.l2Cache.SetTTL(ctx, key, ttl)
 
 	// Update TTL in L1 cache (use shorter TTL if necessary)
-	l1TTL := min(ttl, time.Hour)
+	l1TTL := min(ttl, maxL1TTL)
 	l1Err = tc.l1Cache.SetTTL(ctx, key, l1TTL)
 
 	// Return error if both failed
@@ -386,7 +391,7 @@ func (tc *TieredCache) WarmupL1(ctx context.Context, keys []string) error {
 	}
 
 	// Set values in L1 with shorter TTL
-	l1TTL := min(tc.config.DefaultTTL, time.Hour)
+	l1TTL := min(tc.config.DefaultTTL, maxL1TTL)
 
 	err = tc.l1Cache.SetMulti(ctx, values, l1TTL)
 	if err != nil {
@@ -399,7 +404,7 @@ func (tc *TieredCache) WarmupL1(ctx context.Context, keys []string) error {
 // GetTieredStats returns detailed statistics for each cache level
 func (tc *TieredCache) GetTieredStats() map[string]Stats {
 	return map[string]Stats{
-		"L1": tc.l1Cache.GetStats(),
-		"L2": tc.l2Cache.GetStats(),
+		statsKeyL1: tc.l1Cache.GetStats(),
+		statsKeyL2: tc.l2Cache.GetStats(),
 	}
 }

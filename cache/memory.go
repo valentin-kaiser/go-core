@@ -10,6 +10,12 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
+// FNV-1a 32 bit hash parameters used to pick a shard.
+const (
+	fnvOffsetBasis32 = 2166136261
+	fnvPrime32       = 16777619
+)
+
 // MemoryCache implements an in-memory cache with LRU eviction support
 type MemoryCache struct {
 	*BaseCache
@@ -102,10 +108,10 @@ func (mc *MemoryCache) shardFor(formattedKey string) *memShard {
 		return mc.shards[0]
 	}
 	// FNV-1a
-	h := uint32(2166136261)
+	h := uint32(fnvOffsetBasis32)
 	for i := 0; i < len(formattedKey); i++ {
 		h ^= uint32(formattedKey[i])
-		h *= 16777619
+		h *= fnvPrime32
 	}
 	return mc.shards[h%uint32(len(mc.shards))]
 }
@@ -177,7 +183,7 @@ func (mc *MemoryCache) Get(_ context.Context, key string, dest any) (bool, error
 		sh.mutex.RUnlock()
 		mc.recordMiss()
 		mc.emitEvent(EventGet, key, nil, nil)
-		return false, NewCacheError("get", key, apperror.NewError("invalid cache item type"))
+		return false, NewCacheError(opGet, key, apperror.NewError("invalid cache item type"))
 	}
 	item := memItem.item
 	now := time.Now()
@@ -204,14 +210,14 @@ func (mc *MemoryCache) Get(_ context.Context, key string, dest any) (bool, error
 		data, isBytes := stored.([]byte)
 		if !isBytes {
 			mc.recordMiss()
-			return false, NewCacheError("get", key, apperror.NewError("invalid item value type"))
+			return false, NewCacheError(opGet, key, apperror.NewError("invalid item value type"))
 		}
 		err = mc.config.Serializer.Deserialize(data, dest)
 	}
 	if err != nil {
 		mc.recordError(err)
 		mc.emitEvent(EventGet, key, nil, err)
-		return false, NewCacheError("get", key, err)
+		return false, NewCacheError(opGet, key, err)
 	}
 
 	mc.recordHit()
@@ -238,7 +244,7 @@ func (mc *MemoryCache) Set(_ context.Context, key string, value any, ttl time.Du
 	if err != nil {
 		mc.recordError(err)
 		mc.emitEvent(EventSet, key, value, err)
-		return NewCacheError("set", key, err)
+		return NewCacheError(opSet, key, err)
 	}
 
 	now := time.Now()
@@ -274,7 +280,7 @@ func (mc *MemoryCache) Set(_ context.Context, key string, value any, ttl time.Du
 		// Update existing item
 		oldMemItem, ok := element.Value.(*memoryItem)
 		if !ok {
-			return NewCacheError("set", key, apperror.NewError("invalid existing item type"))
+			return NewCacheError(opSet, key, apperror.NewError("invalid existing item type"))
 		}
 		element.Value = memItem
 		if mc.config.EnableLRU {
@@ -356,7 +362,7 @@ func (mc *MemoryCache) Exists(_ context.Context, key string) (bool, error) {
 	memItem, ok := element.Value.(*memoryItem)
 	if !ok {
 		sh.mutex.RUnlock()
-		return false, NewCacheError("exists", key, apperror.NewError("invalid item type"))
+		return false, NewCacheError(opExists, key, apperror.NewError("invalid item type"))
 	}
 	item := memItem.item
 
@@ -378,7 +384,7 @@ func (mc *MemoryCache) Exists(_ context.Context, key string) (bool, error) {
 	}
 	currentItem, ok := current.Value.(*memoryItem)
 	if !ok {
-		return false, NewCacheError("exists", key, apperror.NewError("invalid item type"))
+		return false, NewCacheError(opExists, key, apperror.NewError("invalid item type"))
 	}
 	if !currentItem.item.IsExpired() {
 		return true, nil
@@ -460,7 +466,7 @@ func (mc *MemoryCache) GetTTL(_ context.Context, key string) (time.Duration, err
 
 	memItem, ok := element.Value.(*memoryItem)
 	if !ok {
-		return 0, NewCacheError("gettl", key, apperror.NewError("invalid item type"))
+		return 0, NewCacheError(opGetTTL, key, apperror.NewError("invalid item type"))
 	}
 	item := memItem.item
 
@@ -490,7 +496,7 @@ func (mc *MemoryCache) SetTTL(_ context.Context, key string, ttl time.Duration) 
 
 	memItem, ok := element.Value.(*memoryItem)
 	if !ok {
-		return NewCacheError("setttl", key, apperror.NewError("invalid item type"))
+		return NewCacheError(opSetTTL, key, apperror.NewError("invalid item type"))
 	}
 	item := memItem.item
 	item.ExpiresAt = time.Time{}

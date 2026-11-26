@@ -77,6 +77,28 @@ import (
 	"github.com/valentin-kaiser/go-core/config"
 )
 
+// Operation names reported in cache errors.
+const (
+	opClear       = "clear"
+	opDecrement   = "decrement"
+	opDelete      = "delete"
+	opDeleteMulti = "deletemulti"
+	opExists      = "exists"
+	opFlushDB     = "flushdb"
+	opGet         = "get"
+	opGetMulti    = "getmulti"
+	opGetSet      = "getset"
+	opGetTTL      = "getttl"
+	opIncrement   = "increment"
+	opInfo        = "info"
+	opSet         = "set"
+	opSetMulti    = "setmulti"
+	opSetNX       = "setnx"
+	opSetTTL      = "setttl"
+
+	namespaceSeparator = ":"
+)
+
 // Cache defines the interface for cache implementations
 type Cache interface {
 	// Get retrieves a value from the cache and deserializes it into the provided destination
@@ -330,10 +352,16 @@ func (s *NoOpSerializer) Deserialize(data []byte, dest any) error {
 
 // DefaultConfig returns a default cache configuration
 func DefaultConfig() Config {
+	const (
+		defaultMaxSize         = 1000
+		defaultTTL             = time.Hour
+		defaultCleanupInterval = 5 * time.Minute
+	)
+
 	return Config{
-		MaxSize:         1000,
-		DefaultTTL:      time.Hour,
-		CleanupInterval: time.Minute * 5,
+		MaxSize:         defaultMaxSize,
+		DefaultTTL:      defaultTTL,
+		CleanupInterval: defaultCleanupInterval,
 		EnableLRU:       true,
 		EnableStats:     true,
 		EnableEvents:    false,
@@ -447,7 +475,7 @@ func (bc *BaseCache) formatKey(key string) string {
 	if bc.config.Namespace == "" {
 		return key
 	}
-	return bc.config.Namespace + ":" + key
+	return bc.config.Namespace + namespaceSeparator + key
 }
 
 // calculateTTL calculates the effective TTL for a cache entry
