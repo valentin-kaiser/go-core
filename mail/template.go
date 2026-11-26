@@ -20,6 +20,14 @@ import (
 	"golang.org/x/text/language"
 )
 
+// Template function constants.
+const (
+	// defaultDateFormat is the layout used by the date function when none is given.
+	defaultDateFormat = "2006-01-02 15:04:05"
+	// dictPairSize is the number of values forming one key/value pair in dict.
+	dictPairSize = 2
+)
+
 // TemplateManager implements the TemplateManager interface
 type TemplateManager struct {
 	config    TemplateConfig
@@ -523,11 +531,11 @@ func DefaultFuncs() template.FuncMap {
 			return value
 		},
 		"dict": func(values ...any) map[string]any {
-			if len(values)%2 != 0 {
+			if len(values)%dictPairSize != 0 {
 				return nil
 			}
 			dict := make(map[string]any)
-			for i := 0; i < len(values); i += 2 {
+			for i := 0; i < len(values); i += dictPairSize {
 				key, ok := values[i].(string)
 				if !ok {
 					continue
@@ -543,7 +551,7 @@ func DefaultFuncs() template.FuncMap {
 			switch v := date.(type) {
 			case time.Time:
 				if format == "" {
-					format = "2006-01-02 15:04:05"
+					format = defaultDateFormat
 				}
 				return v.Format(format)
 			case *time.Time:
@@ -551,7 +559,7 @@ func DefaultFuncs() template.FuncMap {
 					return ""
 				}
 				if format == "" {
-					format = "2006-01-02 15:04:05"
+					format = defaultDateFormat
 				}
 				return v.Format(format)
 			case string:
@@ -559,7 +567,7 @@ func DefaultFuncs() template.FuncMap {
 				t, parseErr := time.Parse(time.RFC3339, v)
 				if parseErr == nil {
 					if format == "" {
-						format = "2006-01-02 15:04:05"
+						format = defaultDateFormat
 					}
 					return t.Format(format)
 				}

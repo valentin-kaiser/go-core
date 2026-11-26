@@ -10,6 +10,12 @@ import (
 	"github.com/valentin-kaiser/go-core/config"
 )
 
+// maxPort is the highest valid TCP port number.
+const maxPort = 65535
+
+// defaultServerMaxConcurrentHandlers limits concurrent notification handlers.
+const defaultServerMaxConcurrentHandlers = 50
+
 // Config holds the configuration for the mail package
 type Config struct {
 	// SMTP Client Configuration
@@ -153,54 +159,76 @@ type TemplateConfig struct {
 
 // DefaultConfig returns a default configuration
 func DefaultConfig() *Config {
+	const (
+		defaultClientPort       = 587
+		defaultClientTimeout    = 30 * time.Second
+		defaultClientMaxRetries = 3
+		defaultClientRetryDelay = 5 * time.Second
+
+		defaultServerPort            = 2525
+		defaultServerIOTimeout       = 10 * time.Second
+		defaultServerMaxMessageBytes = 10 * 1024 * 1024
+		defaultServerMaxRecipients   = 100
+
+		defaultMaxConnectionsPerIP = 10
+		defaultRateLimitPerIP      = 60 // commands per minute
+		defaultMaxAuthFailures     = 5
+		defaultAuthFailureWindow   = 15 * time.Minute
+
+		defaultQueueWorkerCount = 5
+		defaultQueuePriority    = 1
+		defaultQueueMaxAttempts = 3
+		defaultQueueJobTimeout  = 60 * time.Second
+	)
+
 	return &Config{
 		Client: ClientConfig{
 			Host:                        "localhost",
-			Port:                        587,
+			Port:                        defaultClientPort,
 			From:                        "noreply@example.com",
 			FQDN:                        "localhost",
 			Auth:                        false,
-			AuthMethod:                  "PLAIN",
-			Encryption:                  "STARTTLS",
+			AuthMethod:                  string(AuthMethodPlain),
+			Encryption:                  string(EncryptionSTARTTLS),
 			SkipCertificateVerification: false,
-			Timeout:                     30 * time.Second,
-			MaxRetries:                  3,
-			RetryDelay:                  5 * time.Second,
+			Timeout:                     defaultClientTimeout,
+			MaxRetries:                  defaultClientMaxRetries,
+			RetryDelay:                  defaultClientRetryDelay,
 		},
 		Server: ServerConfig{
 			Enabled:               false,
 			Host:                  "localhost",
-			Port:                  2525,
+			Port:                  defaultServerPort,
 			Domain:                "localhost",
 			Auth:                  false,
 			TLS:                   false,
-			ReadTimeout:           10 * time.Second,
-			WriteTimeout:          10 * time.Second,
-			MaxMessageBytes:       10 * 1024 * 1024, // 10MB
-			MaxRecipients:         100,
+			ReadTimeout:           defaultServerIOTimeout,
+			WriteTimeout:          defaultServerIOTimeout,
+			MaxMessageBytes:       defaultServerMaxMessageBytes,
+			MaxRecipients:         defaultServerMaxRecipients,
 			AllowInsecureAuth:     false,
-			MaxConcurrentHandlers: 50, // Limit concurrent notification handlers
+			MaxConcurrentHandlers: defaultServerMaxConcurrentHandlers,
 			Security: SecurityConfig{
 				HeloValidation:      false,
 				HeloRequireFQDN:     false,
 				HeloDNSCheck:        false,
 				IPAllowlist:         []string{},
 				IPBlocklist:         []string{},
-				MaxConnectionsPerIP: 10,
-				RateLimitPerIP:      60, // 60 commands per minute
+				MaxConnectionsPerIP: defaultMaxConnectionsPerIP,
+				RateLimitPerIP:      defaultRateLimitPerIP,
 				AuthFailureDelay:    time.Second,
-				MaxAuthFailures:     5,
-				AuthFailureWindow:   15 * time.Minute,
+				MaxAuthFailures:     defaultMaxAuthFailures,
+				AuthFailureWindow:   defaultAuthFailureWindow,
 				LogSecurityEvents:   true,
 			},
 		},
 		Queue: QueueConfig{
 			Enabled:     true,
-			WorkerCount: 5,
+			WorkerCount: defaultQueueWorkerCount,
 			QueueName:   "mail",
-			Priority:    1,
-			MaxAttempts: 3,
-			JobTimeout:  60 * time.Second,
+			Priority:    defaultQueuePriority,
+			MaxAttempts: defaultQueueMaxAttempts,
+			JobTimeout:  defaultQueueJobTimeout,
 		},
 		Templates: TemplateConfig{
 			DefaultTemplate: "default.html",
@@ -226,7 +254,7 @@ func (c *ClientConfig) Validate() error {
 	if c.Host == "" {
 		return apperror.NewError("smtp host is required")
 	}
-	if c.Port <= 0 || c.Port > 65535 {
+	if c.Port <= 0 || c.Port > maxPort {
 		return apperror.NewError("smtp port must be between 1 and 65535")
 	}
 	if c.Auth {
@@ -252,7 +280,7 @@ func (c *ServerConfig) Validate() error {
 	if c.Host == "" {
 		return apperror.NewError("smtp server host is required")
 	}
-	if c.Port <= 0 || c.Port > 65535 {
+	if c.Port <= 0 || c.Port > maxPort {
 		return apperror.NewError("smtp server port must be between 1 and 65535")
 	}
 	if c.Domain == "" {

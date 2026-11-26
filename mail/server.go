@@ -29,6 +29,49 @@ import (
 	"github.com/valentin-kaiser/go-core/logging"
 )
 
+// Server tuning and protocol constants.
+const (
+	networkTCP = "tcp"
+
+	// startupProbeAttempts is the number of connection probes used to detect a started server.
+	startupProbeAttempts = 10
+	startupProbeInterval = 10 * time.Millisecond
+	startupDialTimeout   = 100 * time.Millisecond
+	// handlerQueueTimeout is the time to wait for a free slot in the handler queue.
+	handlerQueueTimeout = 100 * time.Millisecond
+	// handlerQueueFactor sizes the handler queue as a multiple of the semaphore size.
+	handlerQueueFactor = 2
+
+	selfSignedKeyBits = 2048
+	// selfSignedValidYears is the validity of generated self-signed certificates.
+	selfSignedValidYears = 1
+	certDirMode          = 0o750
+	certFileMode         = 0o600
+
+	// commandSplitParts splits a command line into the verb and its arguments.
+	commandSplitParts = 2
+	// crlfLen is the length of the line terminator appended to every message line.
+	crlfLen = 2
+	// plainAuthParts is the number of NUL separated fields (authzid, authcid, password) of PLAIN auth.
+	plainAuthParts     = 3
+	plainAuthSeparator = "\x00"
+
+	commandHelo     = "HELO"
+	commandEhlo     = "EHLO"
+	commandStartTLS = "STARTTLS"
+	commandAuth     = "AUTH"
+	commandMail     = "MAIL"
+	commandRcpt     = "RCPT"
+	commandData     = "DATA"
+	commandRset     = "RSET"
+	commandNoop     = "NOOP"
+	commandQuit     = "QUIT"
+
+	mailFromPrefix = "FROM:"
+	rcptToPrefix   = "TO:"
+	addrBrackets   = "<>"
+)
+
 // SMTP errors
 var (
 	ErrServerClosed    = errors.New("smtp: server closed")
@@ -153,7 +196,7 @@ type handlerTask struct {
 func NewSMTPServer(config ServerConfig, manager *Manager) Server {
 	// Set default for MaxConcurrentHandlers if not specified
 	if config.MaxConcurrentHandlers <= 0 {
-		config.MaxConcurrentHandlers = 50
+		config.MaxConcurrentHandlers = defaultServerMaxConcurrentHandlers
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -162,7 +205,7 @@ func NewSMTPServer(config ServerConfig, manager *Manager) Server {
 		manager:          manager,
 		handlers:         make([]NotificationHandler, 0),
 		handlerSemaphore: make(chan struct{}, config.MaxConcurrentHandlers),
-		handlerQueue:     make(chan handlerTask, config.MaxConcurrentHandlers*2), // Queue size = 2x semaphore size
+		handlerQueue:     make(chan handlerTask, config.MaxConcurrentHandlers*handlerQueueFactor),
 		ctx:              ctx,
 		cancel:           cancel,
 		security:         NewSecurityManager(config.Security),
@@ -202,13 +245,12 @@ func (s *smtpServer) Start(_ context.Context) error {
 
 	// Check if server started successfully by attempting to connect
 	go func() {
-		maxAttempts := 10
-		for range maxAttempts {
-			time.Sleep(10 * time.Millisecond)
+		for range startupProbeAttempts {
+			time.Sleep(startupProbeInterval)
 
 			// Try to connect to the server
 			addr := net.JoinHostPort(s.config.Host, strconv.Itoa(s.config.Port))
-			conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+			conn, err := net.DialTimeout(networkTCP, addr, startupDialTimeout)
 			if err == nil {
 				apperror.Catch(conn.Close, "closing connection failed")
 				select {
@@ -323,7 +365,7 @@ func (s *smtpServer) loadTLSConfig() (*tls.Config, error) {
 
 // generateSelfSignedCert generates a self-signed certificate
 func (s *smtpServer) generateSelfSignedCert() (tls.Certificate, error) {
-	privateKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	privateKey, err := rsa.GenerateKey(rand.Reader, selfSignedKeyBits)
 	if err != nil {
 		return tls.Certificate{}, apperror.NewError("generating private key failed").AddError(err)
 	}
@@ -340,7 +382,7 @@ func (s *smtpServer) generateSelfSignedCert() (tls.Certificate, error) {
 			PostalCode:    []string{""},
 		},
 		NotBefore:   time.Now(),
-		NotAfter:    time.Now().AddDate(1, 0, 0), // Valid for 1 year
+		NotAfter:    time.Now().AddDate(selfSignedValidYears, 0, 0),
 		KeyUsage:    x509.KeyUsageKeyEncipherment | x509.KeyUsageDigitalSignature,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		IPAddresses: []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
@@ -369,20 +411,20 @@ func (s *smtpServer) generateSelfSignedCert() (tls.Certificate, error) {
 
 	// Save certificates if paths are specified
 	if s.config.CertFile != "" && s.config.KeyFile != "" {
-		err = os.MkdirAll(filepath.Dir(s.config.CertFile), 0750)
+		err = os.MkdirAll(filepath.Dir(s.config.CertFile), certDirMode)
 		if err != nil {
-			logger.Warn().Err(err).Msg("failed to create certificate directory")
+			logger.Warn().Err(err).Msg("creating certificate directory failed")
 			goto createTLS
 		}
 
-		err = os.WriteFile(s.config.CertFile, certPEM.Bytes(), 0600)
+		err = os.WriteFile(s.config.CertFile, certPEM.Bytes(), certFileMode)
 		if err != nil {
-			logger.Warn().Err(err).Msg("failed to save certificate file")
+			logger.Warn().Err(err).Msg("saving certificate file failed")
 		}
 
-		err = os.WriteFile(s.config.KeyFile, keyPEM.Bytes(), 0600)
+		err = os.WriteFile(s.config.KeyFile, keyPEM.Bytes(), certFileMode)
 		if err != nil {
-			logger.Warn().Err(err).Msg("failed to save key file")
+			logger.Warn().Err(err).Msg("saving key file failed")
 		}
 	}
 
@@ -416,7 +458,7 @@ func (s *smtpServer) notifyHandlers(ctx context.Context, from string, to []strin
 		select {
 		case s.handlerQueue <- task:
 			// Successfully queued
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(handlerQueueTimeout):
 			// Queue is full and timed out - log warning but continue
 			logger.Warn().
 				Field("from", from).
@@ -664,7 +706,7 @@ func (s *session) Logout() error {
 // ListenAndServe starts the server on the configured address
 func (s *smtpServer) ListenAndServe() error {
 	addr := net.JoinHostPort(s.config.Host, strconv.Itoa(s.config.Port))
-	listener, err := net.Listen("tcp", addr)
+	listener, err := net.Listen(networkTCP, addr)
 	if err != nil {
 		return apperror.NewErrorf("listening on %s failed", addr).AddError(err)
 	}
@@ -678,7 +720,7 @@ func (s *smtpServer) ListenAndServeTLS() error {
 	if err != nil {
 		return apperror.NewError("loading TLS configuration failed").AddError(err)
 	}
-	listener, err := tls.Listen("tcp", addr, tlsConfig)
+	listener, err := tls.Listen(networkTCP, addr, tlsConfig)
 	if err != nil {
 		return apperror.NewErrorf("listening with TLS on %s failed", addr).AddError(err)
 	}
@@ -724,7 +766,7 @@ func (s *smtpServer) handleConnection(netConn net.Conn) {
 				logger.Trace().Err(err).Msg("connection closed")
 				return
 			}
-			logger.Error().Err(err).Msg("failed to close connection")
+			logger.Error().Err(err).Msg("closing connection failed")
 		}
 	}()
 
@@ -736,7 +778,7 @@ func (s *smtpServer) handleConnection(netConn net.Conn) {
 				logger.Trace().Err(err).Msg("connection closed while setting read deadline")
 				return
 			}
-			logger.Error().Err(err).Msg("failed to set read deadline")
+			logger.Error().Err(err).Msg("setting read deadline failed")
 			return
 		}
 	}
@@ -747,7 +789,7 @@ func (s *smtpServer) handleConnection(netConn net.Conn) {
 				logger.Trace().Err(err).Msg("connection closed while setting write deadline")
 				return
 			}
-			logger.Error().Err(err).Msg("failed to set write deadline")
+			logger.Error().Err(err).Msg("setting write deadline failed")
 			return
 		}
 	}
@@ -804,7 +846,7 @@ func (s *smtpServer) handleCommands(conn *Conn, session Session) {
 					logger.Trace().Err(err).Field("remote_addr", conn.RemoteAddr()).Msg("connection closed while updating read deadline")
 					return
 				}
-				logger.Error().Err(err).Field("remote_addr", conn.RemoteAddr()).Msg("failed to update read deadline")
+				logger.Error().Err(err).Field("remote_addr", conn.RemoteAddr()).Msg("updating read deadline failed")
 				return
 			}
 		}
@@ -831,7 +873,7 @@ func (s *smtpServer) handleCommands(conn *Conn, session Session) {
 			logger.Trace().Field("command", line).Field("remote_addr", conn.RemoteAddr()).Msg("received SMTP command")
 		}
 
-		parts := strings.SplitN(line, " ", 2)
+		parts := strings.SplitN(line, " ", commandSplitParts)
 		command := strings.ToUpper(parts[0])
 		args := ""
 		if len(parts) > 1 {
@@ -839,26 +881,26 @@ func (s *smtpServer) handleCommands(conn *Conn, session Session) {
 		}
 
 		switch command {
-		case "HELO":
+		case commandHelo:
 			s.handleHelo(conn, args, false)
-		case "EHLO":
+		case commandEhlo:
 			s.handleHelo(conn, args, true)
-		case "STARTTLS":
+		case commandStartTLS:
 			s.handleStartTLS(conn)
-		case "AUTH":
+		case commandAuth:
 			s.handleAuth(conn, session, args)
-		case "MAIL":
+		case commandMail:
 			s.handleMail(conn, session, args)
-		case "RCPT":
+		case commandRcpt:
 			s.handleRcpt(conn, session, args)
-		case "DATA":
+		case commandData:
 			s.handleData(conn, session)
-		case "RSET":
+		case commandRset:
 			session.Reset()
 			s.writeResponse(conn, StatusOK, "OK")
-		case "NOOP":
+		case commandNoop:
 			s.writeResponse(conn, StatusOK, "OK")
-		case "QUIT":
+		case commandQuit:
 			s.writeResponse(conn, StatusClosing, "Bye")
 			return
 		default:
@@ -895,7 +937,7 @@ func (s *smtpServer) writeRaw(conn *Conn, data string) {
 				logger.Trace().Err(err).Msg("connection closed while setting write deadline")
 				return
 			}
-			logger.Warn().Err(err).Msg("failed to set write deadline, continuing anyway")
+			logger.Warn().Err(err).Msg("setting write deadline failed, continuing anyway")
 		}
 	}
 
@@ -905,7 +947,7 @@ func (s *smtpServer) writeRaw(conn *Conn, data string) {
 			logger.Trace().Err(err).Msg("connection closed while writing response")
 			return
 		}
-		logger.Error().Err(err).Msg("failed to write SMTP response")
+		logger.Error().Err(err).Msg("writing SMTP response failed")
 		return
 	}
 	err = conn.writer.Flush()
@@ -914,7 +956,7 @@ func (s *smtpServer) writeRaw(conn *Conn, data string) {
 			logger.Trace().Err(err).Msg("connection closed while flushing response")
 			return
 		}
-		logger.Error().Err(err).Msg("failed to flush SMTP response")
+		logger.Error().Err(err).Msg("flushing SMTP response failed")
 		return
 	}
 
@@ -972,7 +1014,7 @@ func (s *smtpServer) handleHelo(conn *Conn, hostname string, extended bool) {
 
 		// Add supported extensions
 		if s.config.TLS && !conn.TLS() {
-			responses = append(responses, "STARTTLS")
+			responses = append(responses, commandStartTLS)
 		}
 		responses = append(responses, "AUTH PLAIN")
 		if s.config.MaxMessageBytes > 0 {
@@ -1019,7 +1061,7 @@ func (s *smtpServer) handleStartTLS(conn *Conn) {
 
 // handleAuth handles AUTH command
 func (s *smtpServer) handleAuth(conn *Conn, session Session, args string) {
-	parts := strings.SplitN(args, " ", 2)
+	parts := strings.SplitN(args, " ", commandSplitParts)
 	if len(parts) < 1 {
 		s.writeResponse(conn, StatusBadSyntax, "AUTH method required")
 		return
@@ -1027,7 +1069,7 @@ func (s *smtpServer) handleAuth(conn *Conn, session Session, args string) {
 
 	method := strings.ToUpper(parts[0])
 	switch method {
-	case "PLAIN":
+	case string(AuthMethodPlain):
 		s.handleAuthPlain(conn, session, parts)
 	default:
 		s.writeResponse(conn, StatusNotImplemented, "Authentication method not supported")
@@ -1038,7 +1080,7 @@ func (s *smtpServer) handleAuth(conn *Conn, session Session, args string) {
 func (s *smtpServer) handleAuthPlain(conn *Conn, session Session, parts []string) {
 	var username, password string
 
-	if len(parts) == 2 {
+	if len(parts) == commandSplitParts {
 		// Credentials provided in initial command
 		decoded, err := s.decodePlainAuth(parts[1])
 		if err != nil {
@@ -1091,8 +1133,8 @@ func (s *smtpServer) decodePlainAuth(data string) ([]string, error) {
 	}
 
 	// Format: \0username\0password
-	parts := strings.Split(string(decoded), "\x00")
-	if len(parts) != 3 {
+	parts := strings.Split(string(decoded), plainAuthSeparator)
+	if len(parts) != plainAuthParts {
 		return nil, apperror.NewError("invalid plain auth format")
 	}
 	return []string{parts[1], parts[2]}, nil
@@ -1100,13 +1142,13 @@ func (s *smtpServer) decodePlainAuth(data string) ([]string, error) {
 
 // handleMail handles MAIL command
 func (s *smtpServer) handleMail(conn *Conn, session Session, args string) {
-	if !strings.HasPrefix(strings.ToUpper(args), "FROM:") {
+	if !strings.HasPrefix(strings.ToUpper(args), mailFromPrefix) {
 		s.writeResponse(conn, StatusBadSyntax, "MAIL FROM required")
 		return
 	}
 
-	from := strings.TrimSpace(args[5:])
-	from = strings.Trim(from, "<>")
+	from := strings.TrimSpace(args[len(mailFromPrefix):])
+	from = strings.Trim(from, addrBrackets)
 
 	opts := &Options{}
 	err := session.Mail(from, opts)
@@ -1124,13 +1166,13 @@ func (s *smtpServer) handleMail(conn *Conn, session Session, args string) {
 
 // handleRcpt handles RCPT command
 func (s *smtpServer) handleRcpt(conn *Conn, session Session, args string) {
-	if !strings.HasPrefix(strings.ToUpper(args), "TO:") {
+	if !strings.HasPrefix(strings.ToUpper(args), rcptToPrefix) {
 		s.writeResponse(conn, StatusBadSyntax, "RCPT TO required")
 		return
 	}
 
-	to := strings.TrimSpace(args[3:])
-	to = strings.Trim(to, "<>")
+	to := strings.TrimSpace(args[len(rcptToPrefix):])
+	to = strings.Trim(to, addrBrackets)
 
 	opts := &RcptOptions{}
 	err := session.Rcpt(to, opts)
@@ -1172,7 +1214,7 @@ func (s *smtpServer) handleData(conn *Conn, current Session) {
 			line = line[1:]
 		}
 
-		if s.config.MaxMessageBytes > 0 && int64(len(data)+len(line)+2) > s.config.MaxMessageBytes {
+		if s.config.MaxMessageBytes > 0 && int64(len(data)+len(line)+crlfLen) > s.config.MaxMessageBytes {
 			tooLarge = true
 			data = nil
 			continue

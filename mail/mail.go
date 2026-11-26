@@ -112,6 +112,36 @@ import (
 	"github.com/valentin-kaiser/go-core/queue"
 )
 
+// Queue job constants.
+const (
+	jobTypeMail = "mail"
+
+	jobKeyID           = "id"
+	jobKeyFrom         = "from"
+	jobKeyTo           = "to"
+	jobKeyCC           = "cc"
+	jobKeyBCC          = "bcc"
+	jobKeyReplyTo      = "reply_to"
+	jobKeySubject      = "subject"
+	jobKeyTextBody     = "text_body"
+	jobKeyHTMLBody     = "html_body"
+	jobKeyTemplate     = "template"
+	jobKeyTemplateData = "template_data"
+	jobKeyAttachments  = "attachments"
+	jobKeyHeaders      = "headers"
+	jobKeyPriority     = "priority"
+	jobKeyCreatedAt    = "created_at"
+	jobKeyScheduleAt   = "schedule_at"
+	jobKeyMetadata     = "metadata"
+
+	attachmentKeyFilename    = "filename"
+	attachmentKeyContentType = "content_type"
+	attachmentKeyContent     = "content"
+	attachmentKeySize        = "size"
+	attachmentKeyInline      = "inline"
+	attachmentKeyContentID   = "content_id"
+)
+
 var logger = logging.GetPackageLogger("mail")
 
 // Manager manages email sending and SMTP server functionality
@@ -179,18 +209,18 @@ func (m *Manager) Start() error {
 			m.running.Store(0)
 			return apperror.NewError("starting queue manager failed").AddError(err)
 		}
-		m.queueManager.RegisterHandler("mail", m.handleMailJob)
+		m.queueManager.RegisterHandler(jobTypeMail, m.handleMailJob)
 	}
 
 	if m.config.Server.Enabled && m.server != nil {
 		m.wg.Go(func() {
 			err := m.server.Start(m.ctx)
 			if err != nil {
-				logger.Error().Err(err).Msg("failed to start SMTP server")
+				logger.Error().Err(err).Msg("starting SMTP server failed")
 			}
 		})
 
-		logger.Info().Msgf("SMTP server started on %s:%d", m.config.Server.Host, m.config.Server.Port)
+		logger.Info().Fields(logging.F("host", m.config.Server.Host), logging.F("port", m.config.Server.Port)).Msg("SMTP server started")
 	}
 
 	return nil
@@ -206,14 +236,14 @@ func (m *Manager) Stop(ctx context.Context) error {
 	if m.server != nil && m.server.IsRunning() {
 		err := m.server.Stop(ctx)
 		if err != nil {
-			logger.Error().Err(err).Msg("failed to stop SMTP server")
+			logger.Error().Err(err).Msg("stopping SMTP server failed")
 		}
 	}
 
 	if m.config.Queue.Enabled && m.queueManager != nil {
 		err := m.queueManager.Stop()
 		if err != nil {
-			logger.Error().Err(err).Msg("failed to stop queue manager")
+			logger.Error().Err(err).Msg("stopping queue manager failed")
 		}
 	}
 
@@ -291,26 +321,26 @@ func (m *Manager) SendAsync(ctx context.Context, message *Message) error {
 
 	// Create queue job
 	jobData := map[string]any{
-		"id":            message.ID,
-		"from":          message.From,
-		"to":            message.To,
-		"cc":            message.CC,
-		"bcc":           message.BCC,
-		"reply_to":      message.ReplyTo,
-		"subject":       message.Subject,
-		"text_body":     message.TextBody,
-		"html_body":     message.HTMLBody,
-		"template":      message.Template,
-		"template_data": message.TemplateData,
-		"attachments":   message.Attachments,
-		"headers":       message.Headers,
-		"priority":      int(message.Priority),
-		"created_at":    message.CreatedAt,
-		"schedule_at":   message.ScheduleAt,
-		"metadata":      message.Metadata,
+		jobKeyID:           message.ID,
+		jobKeyFrom:         message.From,
+		jobKeyTo:           message.To,
+		jobKeyCC:           message.CC,
+		jobKeyBCC:          message.BCC,
+		jobKeyReplyTo:      message.ReplyTo,
+		jobKeySubject:      message.Subject,
+		jobKeyTextBody:     message.TextBody,
+		jobKeyHTMLBody:     message.HTMLBody,
+		jobKeyTemplate:     message.Template,
+		jobKeyTemplateData: message.TemplateData,
+		jobKeyAttachments:  message.Attachments,
+		jobKeyHeaders:      message.Headers,
+		jobKeyPriority:     int(message.Priority),
+		jobKeyCreatedAt:    message.CreatedAt,
+		jobKeyScheduleAt:   message.ScheduleAt,
+		jobKeyMetadata:     message.Metadata,
 	}
 
-	job := queue.NewJob("mail").
+	job := queue.NewJob(jobTypeMail).
 		WithID(message.ID).
 		WithPayload(jobData).
 		WithPriority(queue.Priority(message.Priority)).
@@ -493,55 +523,55 @@ func (m *Manager) updateLastReceived() {
 func (m *Manager) jobDataToMessage(jobData map[string]any) (*Message, error) {
 	message := &Message{}
 
-	id, ok := jobData["id"].(string)
+	id, ok := jobData[jobKeyID].(string)
 	if ok {
 		message.ID = id
 	}
-	from, ok := jobData["from"].(string)
+	from, ok := jobData[jobKeyFrom].(string)
 	if ok {
 		message.From = from
 	}
-	to, ok := jobData["to"]
+	to, ok := jobData[jobKeyTo]
 	if ok {
 		message.To = convertToStringSlice(to)
 	}
-	cc, ok := jobData["cc"]
+	cc, ok := jobData[jobKeyCC]
 	if ok {
 		message.CC = convertToStringSlice(cc)
 	}
-	bcc, ok := jobData["bcc"]
+	bcc, ok := jobData[jobKeyBCC]
 	if ok {
 		message.BCC = convertToStringSlice(bcc)
 	}
-	replyTo, ok := jobData["reply_to"].(string)
+	replyTo, ok := jobData[jobKeyReplyTo].(string)
 	if ok {
 		message.ReplyTo = replyTo
 	}
-	subject, ok := jobData["subject"].(string)
+	subject, ok := jobData[jobKeySubject].(string)
 	if ok {
 		message.Subject = subject
 	}
-	textBody, ok := jobData["text_body"].(string)
+	textBody, ok := jobData[jobKeyTextBody].(string)
 	if ok {
 		message.TextBody = textBody
 	}
-	htmlBody, ok := jobData["html_body"].(string)
+	htmlBody, ok := jobData[jobKeyHTMLBody].(string)
 	if ok {
 		message.HTMLBody = htmlBody
 	}
-	template, ok := jobData["template"].(string)
+	template, ok := jobData[jobKeyTemplate].(string)
 	if ok {
 		message.Template = template
 	}
-	templateData, ok := jobData["template_data"]
+	templateData, ok := jobData[jobKeyTemplateData]
 	if ok {
 		message.TemplateData = templateData
 	}
-	priority, ok := jobData["priority"].(float64)
+	priority, ok := jobData[jobKeyPriority].(float64)
 	if ok {
 		message.Priority = Priority(int(priority))
 	}
-	if headers, ok := jobData["headers"].(map[string]any); ok {
+	if headers, ok := jobData[jobKeyHeaders].(map[string]any); ok {
 		message.Headers = make(map[string]string)
 		for k, v := range headers {
 			s, ok := v.(string)
@@ -550,7 +580,7 @@ func (m *Manager) jobDataToMessage(jobData map[string]any) (*Message, error) {
 			}
 		}
 	}
-	if metadata, ok := jobData["metadata"].(map[string]any); ok {
+	if metadata, ok := jobData[jobKeyMetadata].(map[string]any); ok {
 		message.Metadata = make(map[string]string)
 		for k, v := range metadata {
 			s, ok := v.(string)
@@ -559,34 +589,34 @@ func (m *Manager) jobDataToMessage(jobData map[string]any) (*Message, error) {
 			}
 		}
 	}
-	if createdAt, ok := jobData["created_at"].(string); ok {
+	if createdAt, ok := jobData[jobKeyCreatedAt].(string); ok {
 		t, err := time.Parse(time.RFC3339, createdAt)
 		if err != nil {
 			return nil, apperror.NewError("invalid created_at format").AddError(err)
 		}
 		message.CreatedAt = t
 	}
-	if scheduleAt, ok := jobData["schedule_at"].(string); ok && scheduleAt != "" {
+	if scheduleAt, ok := jobData[jobKeyScheduleAt].(string); ok && scheduleAt != "" {
 		t, err := time.Parse(time.RFC3339, scheduleAt)
 		if err != nil {
 			return nil, apperror.NewError("invalid schedule_at format").AddError(err)
 		}
 		message.ScheduleAt = &t
 	}
-	if attachments, ok := jobData["attachments"].([]any); ok {
+	if attachments, ok := jobData[jobKeyAttachments].([]any); ok {
 		message.Attachments = make([]Attachment, 0, len(attachments))
 		for _, att := range attachments {
 			if attMap, ok := att.(map[string]any); ok {
 				attachment := Attachment{}
-				filename, ok := attMap["filename"].(string)
+				filename, ok := attMap[attachmentKeyFilename].(string)
 				if ok {
 					attachment.Filename = filename
 				}
-				contentType, ok := attMap["content_type"].(string)
+				contentType, ok := attMap[attachmentKeyContentType].(string)
 				if ok {
 					attachment.ContentType = contentType
 				}
-				content, ok := attMap["content"].(string)
+				content, ok := attMap[attachmentKeyContent].(string)
 				if ok {
 					decoded, err := base64.StdEncoding.DecodeString(content)
 					if err != nil {
@@ -594,15 +624,15 @@ func (m *Manager) jobDataToMessage(jobData map[string]any) (*Message, error) {
 					}
 					attachment.Content = decoded
 				}
-				size, ok := attMap["size"].(float64)
+				size, ok := attMap[attachmentKeySize].(float64)
 				if ok {
 					attachment.Size = int64(size)
 				}
-				inline, ok := attMap["inline"].(bool)
+				inline, ok := attMap[attachmentKeyInline].(bool)
 				if ok {
 					attachment.Inline = inline
 				}
-				contentID, ok := attMap["content_id"].(string)
+				contentID, ok := attMap[attachmentKeyContentID].(string)
 				if ok {
 					attachment.ContentID = contentID
 				}

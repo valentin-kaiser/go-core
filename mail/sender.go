@@ -15,6 +15,24 @@ import (
 	"github.com/valentin-kaiser/go-core/mail/internal/email"
 )
 
+// Sender header and challenge constants.
+const (
+	headerMessageID          = "Message-ID"
+	headerXPriority          = "X-Priority"
+	headerContentID          = "Content-ID"
+	headerContentDisposition = "Content-Disposition"
+
+	priorityHighest = "1 (Highest)"
+	priorityHigh    = "2 (High)"
+	priorityNormal  = "3 (Normal)"
+	priorityLow     = "4 (Low)"
+
+	loginFirstPrompt        = "Username:"
+	loginFirstPromptBase64  = "VXNlcm5hbWU6"
+	loginSecondPrompt       = "Password:"
+	loginSecondPromptBase64 = "UGFzc3dvcmQ6"
+)
+
 // smtpSender implements the Sender interface using internal email package
 type smtpSender struct {
 	config          ClientConfig
@@ -163,13 +181,13 @@ func (s *smtpSender) createEmail(message *Message) (*email.Email, error) {
 
 	// Add Message-ID if available
 	if message.ID != "" {
-		emailMsg.Headers["Message-ID"] = []string{fmt.Sprintf("<%s@%s>", message.ID, s.config.Host)}
+		emailMsg.Headers[headerMessageID] = []string{fmt.Sprintf("<%s@%s>", message.ID, s.config.Host)}
 	}
 
 	// Add priority header
 	if message.Priority != PriorityNormal {
 		priority := s.getPriorityHeader(message.Priority)
-		emailMsg.Headers["X-Priority"] = []string{priority}
+		emailMsg.Headers[headerXPriority] = []string{priority}
 	}
 
 	// Add custom headers
@@ -208,8 +226,8 @@ func (s *smtpSender) addAttachment(emailMsg *email.Email, attachment Attachment)
 			return apperror.NewErrorf("attaching inline file %s failed", attachment.Filename).AddError(err)
 		}
 		// Set Content-ID header for inline attachments
-		a.Header.Set("Content-ID", fmt.Sprintf("<%s>", attachment.ContentID))
-		a.Header.Set("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", attachment.Filename))
+		a.Header.Set(headerContentID, fmt.Sprintf("<%s>", attachment.ContentID))
+		a.Header.Set(headerContentDisposition, fmt.Sprintf("inline; filename=\"%s\"", attachment.Filename))
 		return nil
 	}
 
@@ -234,9 +252,9 @@ func (s *smtpSender) sendEmail(_ context.Context, emailMsg *email.Email) error {
 
 	// Send based on encryption method
 	switch strings.ToUpper(s.config.Encryption) {
-	case "TLS":
+	case string(EncryptionTLS):
 		return s.sendWithTLS(emailMsg, addr, auth)
-	case "STARTTLS":
+	case string(EncryptionSTARTTLS):
 		return s.sendWithStartTLS(emailMsg, addr, auth)
 	default:
 		return s.sendPlain(emailMsg, addr, auth)
@@ -246,10 +264,10 @@ func (s *smtpSender) sendEmail(_ context.Context, emailMsg *email.Email) error {
 // createAuth creates SMTP authentication
 func (s *smtpSender) createAuth() smtp.Auth {
 	switch strings.ToUpper(s.config.AuthMethod) {
-	case "CRAMMD5":
+	case string(AuthMethodCRAMMD5):
 		// Use the proper CRAM-MD5 implementation from net/smtp
 		return smtp.CRAMMD5Auth(s.config.Username, s.config.Password)
-	case "LOGIN":
+	case string(AuthMethodLogin):
 		return NewLoginAuth(s.config.Username, s.config.Password)
 	default:
 		return smtp.PlainAuth("", s.config.Username, s.config.Password, s.config.Host)
@@ -277,15 +295,15 @@ func (s *smtpSender) sendPlain(emailMsg *email.Email, addr string, auth smtp.Aut
 func (s *smtpSender) getPriorityHeader(priority Priority) string {
 	switch priority {
 	case PriorityCritical:
-		return "1 (Highest)"
+		return priorityHighest
 	case PriorityHigh:
-		return "2 (High)"
+		return priorityHigh
 	case PriorityNormal:
-		return "3 (Normal)"
+		return priorityNormal
 	case PriorityLow:
-		return "4 (Low)"
+		return priorityLow
 	default:
-		return "3 (Normal)"
+		return priorityNormal
 	}
 }
 
@@ -296,21 +314,21 @@ type LoginAuth struct {
 
 // NewLoginAuth creates a new LOGIN authenticator
 func NewLoginAuth(username, password string) smtp.Auth {
-	return &LoginAuth{username, password}
+	return &LoginAuth{username: username, password: password}
 }
 
 // Start begins the LOGIN authentication
 func (a *LoginAuth) Start(_ *smtp.ServerInfo) (string, []byte, error) {
-	return "LOGIN", []byte(a.username), nil
+	return string(AuthMethodLogin), []byte(a.username), nil
 }
 
 // Next handles the LOGIN authentication process
 func (a *LoginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
 	if more {
 		switch string(fromServer) {
-		case "Username:", "VXNlcm5hbWU6": // "Username:" in base64
+		case loginFirstPrompt, loginFirstPromptBase64:
 			return []byte(a.username), nil
-		case "Password:", "UGFzc3dvcmQ6": // "Password:" in base64
+		case loginSecondPrompt, loginSecondPromptBase64:
 			return []byte(a.password), nil
 		default:
 			return nil, apperror.NewError("unexpected server challenge: " + string(fromServer))
