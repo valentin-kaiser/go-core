@@ -11,6 +11,11 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
+const (
+	readBufferSize = 64 * 1024
+	commentPrefix  = "--"
+)
+
 // forEachStatement reads an SQL dump line by line and calls fn with every complete statement, in
 // order. Blank lines and lines starting with "--" are skipped, and a statement ends at a line that
 // ends with a semicolon. Text after the last semicolon is not a statement and is dropped.
@@ -21,7 +26,7 @@ import (
 //
 // The first error returned by fn stops the reading and is returned.
 func forEachStatement(r io.Reader, fn func(stmt string) error) error {
-	reader := bufio.NewReaderSize(r, 64*1024)
+	reader := bufio.NewReaderSize(r, readBufferSize)
 	var stmt []byte
 	var long []byte // a line longer than the reader's buffer, collected in pieces
 
@@ -40,7 +45,7 @@ func forEachStatement(r io.Reader, fn func(stmt string) error) error {
 		}
 
 		trimmed := bytes.TrimSpace(line)
-		if len(trimmed) > 0 && !bytes.HasPrefix(trimmed, []byte("--")) {
+		if len(trimmed) > 0 && !bytes.HasPrefix(trimmed, []byte(commentPrefix)) {
 			stmt = append(stmt, bytes.TrimSuffix(line, []byte("\n"))...)
 			stmt = append(stmt, '\n')
 			if trimmed[len(trimmed)-1] == ';' {

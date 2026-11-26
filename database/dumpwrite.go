@@ -22,6 +22,26 @@ import (
 const (
 	dumpBatchRows  = 500
 	dumpBatchBytes = 1 << 20
+
+	redactedPassword   = "xxxxx"
+	mysqlTimeLayout    = "2006-01-02 15:04:05.999999"
+	postgresTimeLayout = "2006-01-02 15:04:05.999999999-07:00"
+
+	decimalBase       = 10
+	floatFormat       = 'g'
+	shortestPrecision = -1
+	float64BitSize    = 64
+	writeBufferSize   = 256 * 1024
+
+	nullLiteral          = "NULL"
+	insertInto           = "INSERT INTO "
+	selectAllFrom        = "SELECT * FROM " //nolint:unqueryvet // a dump needs every column
+	valuesKeyword        = " VALUES"
+	mysqlStatementEnd    = ";"
+	postgresStatementEnd = " ON CONFLICT DO NOTHING;"
+	mysqlShowTables      = "SHOW TABLES"
+	mysqlDumpHeader      = "SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS = 0;\n\n"
+	mysqlDumpFooter      = "SET FOREIGN_KEY_CHECKS = 1;\n"
 )
 
 // redactDSN hides the password of a DSN so it does not end up in a backup file
@@ -29,7 +49,7 @@ func redactDSN(dsn string) string {
 	u, err := url.Parse(dsn)
 	if err == nil && u.Scheme != "" && u.User != nil {
 		if _, ok := u.User.Password(); ok {
-			u.User = url.UserPassword(u.User.Username(), "xxxxx")
+			u.User = url.UserPassword(u.User.Username(), redactedPassword)
 			return u.String()
 		}
 		return dsn
@@ -37,7 +57,7 @@ func redactDSN(dsn string) string {
 	// user:password@tcp(host:port)/name, the form of the MySQL driver
 	if at := strings.LastIndex(dsn, "@"); at > 0 {
 		if colon := strings.Index(dsn[:at], ":"); colon >= 0 {
-			return dsn[:colon+1] + "xxxxx" + dsn[at:]
+			return dsn[:colon+1] + redactedPassword + dsn[at:]
 		}
 	}
 	return dsn
@@ -76,21 +96,21 @@ func appendMySQLString(dst []byte, s string) []byte {
 func appendMySQLValue(dst []byte, val any) []byte {
 	switch v := val.(type) {
 	case nil:
-		return append(dst, "NULL"...)
+		return append(dst, nullLiteral...)
 	case []byte:
 		return appendMySQLString(dst, string(v))
 	case string:
 		return appendMySQLString(dst, v)
 	case time.Time:
 		dst = append(dst, '\'')
-		dst = v.AppendFormat(dst, "2006-01-02 15:04:05.999999")
+		dst = v.AppendFormat(dst, mysqlTimeLayout)
 		return append(dst, '\'')
 	case int64:
-		return strconv.AppendInt(dst, v, 10)
+		return strconv.AppendInt(dst, v, decimalBase)
 	case uint64:
-		return strconv.AppendUint(dst, v, 10)
+		return strconv.AppendUint(dst, v, decimalBase)
 	case float64:
-		return strconv.AppendFloat(dst, v, 'g', -1, 64)
+		return strconv.AppendFloat(dst, v, floatFormat, shortestPrecision, float64BitSize)
 	case bool:
 		return strconv.AppendBool(dst, v)
 	default:
@@ -135,19 +155,19 @@ func appendPostgresBytea(dst []byte, b []byte) []byte {
 func appendPostgresValue(dst []byte, val any) []byte {
 	switch v := val.(type) {
 	case nil:
-		return append(dst, "NULL"...)
+		return append(dst, nullLiteral...)
 	case []byte:
 		return appendPostgresBytea(dst, v)
 	case string:
 		return appendPostgresString(dst, v)
 	case time.Time:
 		dst = append(dst, '\'')
-		dst = v.AppendFormat(dst, "2006-01-02 15:04:05.999999999-07:00")
+		dst = v.AppendFormat(dst, postgresTimeLayout)
 		return append(dst, '\'')
 	case int64:
-		return strconv.AppendInt(dst, v, 10)
+		return strconv.AppendInt(dst, v, decimalBase)
 	case float64:
-		return strconv.AppendFloat(dst, v, 'g', -1, 64)
+		return strconv.AppendFloat(dst, v, floatFormat, shortestPrecision, float64BitSize)
 	case bool:
 		return strconv.AppendBool(dst, v)
 	default:
@@ -241,7 +261,7 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 		return apperror.NewError("creating backup file failed").AddError(err)
 	}
 	// Writes are buffered: a dump has one small write per row otherwise
-	w := bufio.NewWriterSize(file, 256*1024)
+	w := bufio.NewWriterSize(file, writeBufferSize)
 	defer func() {
 		flushErr := w.Flush()
 		if err == nil && flushErr != nil {
@@ -263,7 +283,7 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 		return apperror.NewError("writing charset settings failed").AddError(err)
 	}
 
-	rows, err := dbInstance.Query("SHOW TABLES")
+	rows, err := dbInstance.Query(mysqlShowTables)
 	if err != nil {
 		return apperror.NewError("listing tables failed").AddError(err)
 	}
@@ -282,13 +302,13 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 	for _, table := range tables {
 		quotedTable, err := quoteIdentifier(table, DriverMySQL)
 		if err != nil {
-			d.logger.Warn().Err(err).Msgf("invalid table name: %s", table)
+			d.logger.Warn().Err(err).Field("table", table).Msg("validating table name failed")
 			continue
 		}
 		var tableName, createStmt string
 		err = dbInstance.QueryRow("SHOW CREATE TABLE "+quotedTable).Scan(&tableName, &createStmt)
 		if err != nil {
-			d.logger.Warn().Err(err).Msgf("getting schema of table %s failed", table)
+			d.logger.Warn().Err(err).Field("table", table).Msg("getting table schema failed")
 			continue
 		}
 		_, err = fmt.Fprintf(w, "\n-- Table structure for %s\nDROP TABLE IF EXISTS %s;\n%s;\n\n", table, quotedTable, createStmt)
@@ -296,9 +316,9 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 			return apperror.NewError("writing table schema failed").AddError(err)
 		}
 
-		dataRows, err := dbInstance.Query("SELECT * FROM " + quotedTable) //nolint:gosec,unqueryvet // quotedTable is escaped by quoteIdentifier; a dump needs every column
+		dataRows, err := dbInstance.Query(selectAllFrom + quotedTable) //nolint:gosec,unqueryvet // quotedTable is escaped by quoteIdentifier; a dump needs every column
 		if err != nil {
-			d.logger.Warn().Err(err).Msgf("reading data of table %s failed", table)
+			d.logger.Warn().Err(err).Field("table", table).Msg("reading table data failed")
 			continue
 		}
 		columns, err := dataRows.Columns()
@@ -317,8 +337,8 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 				apperror.Catch(dataRows.Close, "closing table data rows failed")
 				return apperror.NewError("writing data header failed").AddError(err)
 			}
-			prefix := "INSERT INTO " + quotedTable + " (" + cols + ") VALUES"
-			err = dumpTable(w, dataRows, len(columns), prefix, ";", appendMySQLValue)
+			prefix := insertInto + quotedTable + " (" + cols + ")" + valuesKeyword
+			err = dumpTable(w, dataRows, len(columns), prefix, mysqlStatementEnd, appendMySQLValue)
 			if err != nil {
 				apperror.Catch(dataRows.Close, "closing table data rows failed")
 				return apperror.NewErrorf("dumping data of table %s failed", table).AddError(err)
@@ -337,7 +357,7 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 		return apperror.NewError("writing footer failed").AddError(err)
 	}
 
-	d.logger.Info().Msgf("database backup created: %s", path)
+	d.logger.Info().Field("path", path).Msg("database backup created")
 	return nil
 }
 
@@ -347,7 +367,7 @@ func (d *Database[Q]) backupPostgres(dbInstance *sql.DB, path string, schema str
 	if err != nil {
 		return apperror.NewError("creating backup file failed").AddError(err)
 	}
-	w := bufio.NewWriterSize(file, 256*1024)
+	w := bufio.NewWriterSize(file, writeBufferSize)
 	defer func() {
 		flushErr := w.Flush()
 		if err == nil && flushErr != nil {
@@ -405,7 +425,7 @@ func (d *Database[Q]) backupPostgres(dbInstance *sql.DB, path string, schema str
 			GROUP BY c.relname
 		`, table, schema).Scan(&createStmt)
 		if err != nil {
-			d.logger.Warn().Err(err).Msgf("getting schema of table %s failed", table)
+			d.logger.Warn().Err(err).Field("table", table).Msg("getting table schema failed")
 			continue
 		}
 		_, err = fmt.Fprintf(w, "\n-- Table: %s\n%s\n\n", table, createStmt)
@@ -418,9 +438,9 @@ func (d *Database[Q]) backupPostgres(dbInstance *sql.DB, path string, schema str
 			return apperror.NewError("quoting table name failed").AddError(err)
 		}
 
-		dataRows, err := dbInstance.Query("SELECT * FROM " + quotedSchema + "." + quotedTable) //nolint:gosec,unqueryvet // both identifiers are escaped by quoteIdentifier; a dump needs every column
+		dataRows, err := dbInstance.Query(selectAllFrom + quotedSchema + "." + quotedTable) //nolint:gosec,unqueryvet // both identifiers are escaped by quoteIdentifier; a dump needs every column
 		if err != nil {
-			d.logger.Warn().Err(err).Msgf("reading data of table %s failed", table)
+			d.logger.Warn().Err(err).Field("table", table).Msg("reading table data failed")
 			continue
 		}
 		columns, err := dataRows.Columns()
@@ -439,9 +459,9 @@ func (d *Database[Q]) backupPostgres(dbInstance *sql.DB, path string, schema str
 				apperror.Catch(dataRows.Close, "closing table data rows failed")
 				return apperror.NewError("writing data header failed").AddError(err)
 			}
-			prefix := "INSERT INTO " + quotedSchema + "." + quotedTable + " (" + cols + ") VALUES"
+			prefix := insertInto + quotedSchema + "." + quotedTable + " (" + cols + ")" + valuesKeyword
 			// Rows that exist already are kept: one duplicate would otherwise abort the whole restore
-			err = dumpTable(w, dataRows, len(columns), prefix, " ON CONFLICT DO NOTHING;", appendPostgresValue)
+			err = dumpTable(w, dataRows, len(columns), prefix, postgresStatementEnd, appendPostgresValue)
 			if err != nil {
 				apperror.Catch(dataRows.Close, "closing table data rows failed")
 				return apperror.NewErrorf("dumping data of table %s failed", table).AddError(err)
@@ -454,6 +474,6 @@ func (d *Database[Q]) backupPostgres(dbInstance *sql.DB, path string, schema str
 		}
 	}
 
-	d.logger.Info().Msgf("database backup created: %s", path)
+	d.logger.Info().Field("path", path).Msg("database backup created")
 	return nil
 }

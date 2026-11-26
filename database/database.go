@@ -159,7 +159,6 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -192,6 +191,30 @@ const (
 const (
 	sqliteWALSuffix = "-wal"
 	sqliteSHMSuffix = "-shm"
+
+	loggerNamePrefix = "database:"
+
+	sqliteDSNPrefix           = "file:"
+	sqliteCheckpointStatement = "PRAGMA wal_checkpoint(TRUNCATE);"
+
+	dsnQuerySeparator    = "?"
+	dsnParamSeparator    = "&"
+	dsnKeyValueSeparator = "="
+	dsnSplitParts        = 2
+
+	mysqlAutocommitOff      = "SET autocommit = 0"
+	mysqlAutocommitOn       = "SET autocommit = 1"
+	mysqlForeignKeyChecksOn = "SET FOREIGN_KEY_CHECKS = 1"
+	mysqlRollback           = "ROLLBACK"
+	mysqlCommit             = "COMMIT"
+
+	mysqlIdentifierQuote = "`"
+	ansiIdentifierQuote  = "\""
+
+	backupDirMode      os.FileMode = 0o750
+	statementLogLength             = 50
+	pingTimeout                    = 2 * time.Second
+	pingRetryPause                 = 100 * time.Millisecond
 )
 
 // Database represents a database connection instance with its own state and configuration.
@@ -226,7 +249,7 @@ func New[Q any](driver Driver, name string) *Database[Q] {
 	return &Database[Q]{
 		driver:           driver,
 		done:             make(chan bool),
-		logger:           logging.GetPackageLogger("database:" + name),
+		logger:           logging.GetPackageLogger(loggerNamePrefix + name),
 		onConnectHandler: make([]func(db *sql.DB) error, 0),
 		middlewares:      make([]Middleware, 0),
 	}
@@ -603,7 +626,7 @@ func (d *Database[Q]) Connect(interval time.Duration, dsn string) {
 					pingSucceeded := false
 
 					for i := range maxRetries {
-						ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+						ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
 						err := dbInstance.PingContext(ctx)
 						cancel()
 
@@ -615,12 +638,12 @@ func (d *Database[Q]) Connect(interval time.Duration, dsn string) {
 
 						// Brief pause between retries to allow bad connections to be removed from pool
 						if i < maxRetries-1 {
-							time.Sleep(100 * time.Millisecond)
+							time.Sleep(pingRetryPause)
 						}
 					}
 
 					if !pingSucceeded && d.connected.Load() {
-						d.logger.Error().Err(lastErr).Msgf("connection lost after %d ping attempts", maxRetries)
+						d.logger.Error().Err(lastErr).Field("attempts", maxRetries).Msg("connection lost after ping attempts")
 						d.connected.Store(false)
 						d.failed.Store(true)
 					}
@@ -741,14 +764,14 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 	}
 
 	dir := filepath.Dir(path)
-	err := os.MkdirAll(dir, 0750)
+	err := os.MkdirAll(dir, backupDirMode)
 	if err != nil {
 		return apperror.NewError("creating backup directory failed").AddError(err)
 	}
 
 	switch d.driver {
 	case DriverSQLite:
-		if !strings.HasPrefix(d.getDSN(), "file:") {
+		if !strings.HasPrefix(d.getDSN(), sqliteDSNPrefix) {
 			return apperror.NewError("database backup is only supported for file-based SQLite databases")
 		}
 
@@ -757,7 +780,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 		d.dbMutex.RUnlock()
 
 		// Execute a checkpoint to ensure all WAL data is in the main database file
-		_, err := dbInstance.Exec("PRAGMA wal_checkpoint(TRUNCATE);")
+		_, err := dbInstance.Exec(sqliteCheckpointStatement)
 		if err != nil {
 			return apperror.NewError("checkpointing WAL failed").AddError(err)
 		}
@@ -774,7 +797,7 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 			return apperror.NewError("copying database file failed").AddError(err)
 		}
 
-		d.logger.Info().Msgf("database backup created: %s", path)
+		d.logger.Info().Field("path", path).Msg("database backup created")
 		return nil
 
 	case DriverMySQL:
@@ -822,7 +845,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 
 	switch d.driver {
 	case DriverSQLite:
-		if !strings.HasPrefix(d.getDSN(), "file:") {
+		if !strings.HasPrefix(d.getDSN(), sqliteDSNPrefix) {
 			return apperror.NewError("restore is only supported for file-based SQLite databases")
 		}
 
@@ -857,7 +880,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 			}
 		}
 
-		d.logger.Info().Msgf("database restored from backup: %s", backupPath)
+		d.logger.Info().Field("path", backupPath).Msg("database restored from backup")
 
 		d.Reconnect(d.getDSN())
 		return nil
@@ -888,13 +911,13 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		// Every statement is its own transaction otherwise, and each commit waits for the disk. The
 		// CREATE and DROP statements of the dump commit implicitly, so the rows of a table go in as
 		// one transaction.
-		_, err = conn.ExecContext(context.Background(), "SET autocommit = 0")
+		_, err = conn.ExecContext(context.Background(), mysqlAutocommitOff)
 		if err != nil {
 			return apperror.NewError("starting restore failed").AddError(err)
 		}
 		// The connection goes back to the pool, so it must not stay in this mode
 		defer func() {
-			for _, stmt := range []string{"SET autocommit = 1", "SET FOREIGN_KEY_CHECKS = 1"} {
+			for _, stmt := range []string{mysqlAutocommitOn, mysqlForeignKeyChecksOn} {
 				apperror.Catch(func() error {
 					_, err := conn.ExecContext(context.Background(), stmt)
 					return err
@@ -906,7 +929,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		err = forEachStatement(backupFile, func(stmt string) error {
 			_, err := conn.ExecContext(context.Background(), stmt)
 			if err != nil {
-				return apperror.NewErrorf("executing statement %s failed", stmt[:min(50, len(stmt))]).AddError(err)
+				return apperror.NewErrorf("executing statement %s failed", stmt[:min(statementLogLength, len(stmt))]).AddError(err)
 			}
 			return nil
 		})
@@ -914,19 +937,19 @@ func (d *Database[Q]) Restore(backupPath string) error {
 			// Roll back what is still open. Earlier CREATE and DROP statements have committed
 			// implicitly and cannot be undone.
 			restoreErr := apperror.NewError("restoring backup failed").AddError(err)
-			_, rbErr := conn.ExecContext(context.Background(), "ROLLBACK")
+			_, rbErr := conn.ExecContext(context.Background(), mysqlRollback)
 			if rbErr != nil {
 				return restoreErr.AddError(apperror.NewError("rolling back restore failed").AddError(rbErr))
 			}
 			return restoreErr
 		}
 
-		_, err = conn.ExecContext(context.Background(), "COMMIT")
+		_, err = conn.ExecContext(context.Background(), mysqlCommit)
 		if err != nil {
 			return apperror.NewError("committing restore failed").AddError(err)
 		}
 
-		d.logger.Info().Msgf("database restored from backup: %s", backupPath)
+		d.logger.Info().Field("path", backupPath).Msg("database restored from backup")
 		return nil
 
 	case DriverPostgres:
@@ -953,7 +976,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 		err = forEachStatement(backupFile, func(stmt string) error {
 			_, err := tx.Exec(stmt)
 			if err != nil {
-				return apperror.NewErrorf("executing statement %s failed", stmt[:min(50, len(stmt))]).AddError(err)
+				return apperror.NewErrorf("executing statement %s failed", stmt[:min(statementLogLength, len(stmt))]).AddError(err)
 			}
 			return nil
 		})
@@ -975,7 +998,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 			return apperror.NewError("committing transaction failed").AddError(err)
 		}
 
-		d.logger.Info().Msgf("database restored from backup: %s", backupPath)
+		d.logger.Info().Field("path", backupPath).Msg("database restored from backup")
 		return nil
 
 	default:
@@ -1006,11 +1029,11 @@ func quoteIdentifier(identifier string, driver Driver) (string, error) {
 	}
 	switch driver {
 	case DriverMySQL:
-		return "`" + identifier + "`", nil
+		return mysqlIdentifierQuote + identifier + mysqlIdentifierQuote, nil
 	case DriverPostgres:
-		return "\"" + identifier + "\"", nil
+		return ansiIdentifierQuote + identifier + ansiIdentifierQuote, nil
 	case DriverSQLite:
-		return "\"" + identifier + "\"", nil
+		return ansiIdentifierQuote + identifier + ansiIdentifierQuote, nil
 	default:
 		return "", apperror.NewErrorf("unsupported driver: %s", driver)
 	}
@@ -1020,18 +1043,18 @@ func quoteIdentifier(identifier string, driver Driver) (string, error) {
 // SQLite DSN format: "file:path/to/db.db[?options]"
 // Returns the file path without the "file:" prefix and query parameters.
 func parseSQLiteFilePath(dsn string) (string, error) {
-	if len(dsn) <= 5 || !strings.HasPrefix(dsn, "file:") {
+	if len(dsn) <= len(sqliteDSNPrefix) || !strings.HasPrefix(dsn, sqliteDSNPrefix) {
 		return "", apperror.NewErrorf("invalid SQLite DSN format: %s (expected 'file:path')", dsn)
 	}
 
 	// Remove "file:" prefix
-	pathWithQuery := dsn[5:]
+	pathWithQuery := dsn[len(sqliteDSNPrefix):]
 	if pathWithQuery == "" {
 		return "", apperror.NewError("DSN of SQLite database contains no file path after 'file:' prefix")
 	}
 
 	// Split on '?' to remove query parameters
-	parts := strings.SplitN(pathWithQuery, "?", 2)
+	parts := strings.SplitN(pathWithQuery, dsnQuerySeparator, dsnSplitParts)
 	filePath := parts[0]
 
 	// Clean and normalize the file path
@@ -1041,22 +1064,22 @@ func parseSQLiteFilePath(dsn string) (string, error) {
 // escapeDSNParams takes a DSN string and URL-encodes the values of any query parameters.
 // For example, "user:password@tcp(localhost:3306)/dbname?time_zone='+00:00'" becomes "user:password@tcp(localhost:3306)/dbname?time_zone=%27%2B00%3A00%27"
 func escapeDSNParams(dsn string) string {
-	s := strings.Split(dsn, "?")
-	if len(s) != 2 {
+	s := strings.Split(dsn, dsnQuerySeparator)
+	if len(s) != dsnSplitParts {
 		return dsn
 	}
 
 	base := s[0]
-	params := strings.Split(s[1], "&")
+	params := strings.Split(s[1], dsnParamSeparator)
 	for i, param := range params {
-		kv := strings.SplitN(param, "=", 2)
-		if len(kv) != 2 {
+		kv := strings.SplitN(param, dsnKeyValueSeparator, dsnSplitParts)
+		if len(kv) != dsnSplitParts {
 			continue
 		}
 		key := kv[0]
 		value := kv[1]
-		params[i] = fmt.Sprintf("%s=%s", key, url.QueryEscape(value))
+		params[i] = key + dsnKeyValueSeparator + url.QueryEscape(value)
 	}
 
-	return base + "?" + strings.Join(params, "&")
+	return base + dsnQuerySeparator + strings.Join(params, dsnParamSeparator)
 }
