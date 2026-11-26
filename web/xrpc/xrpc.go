@@ -299,7 +299,12 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request, wr wire) {
 		return
 	}
 
-	out, err := wr.encodeReplies(replies, batch)
+	var out []byte
+	if batch {
+		out, err = wr.encodeBatch(replies)
+	} else {
+		out, err = wr.encodeReplies(replies)
+	}
 	if err != nil {
 		logger.Error().Err(err).Msg("encoding response failed")
 		http.Error(w, "failed to encode response", http.StatusInternalServerError)

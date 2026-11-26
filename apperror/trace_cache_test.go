@@ -28,15 +28,15 @@ func TestTraceNamesTheCaller(t *testing.T) {
 }
 
 func TestTraceAnonymous(t *testing.T) {
-	apperror.Anonymous(true)
-	t.Cleanup(func() { apperror.Anonymous(false) })
+	apperror.EnableAnonymous()
+	t.Cleanup(func() { apperror.DisableAnonymous() })
 
 	got := traceHere()
 	if !strings.Contains(got, "apperror_test.TestTraceAnonymous:") || strings.Contains(got, ".go:") {
 		t.Fatalf("anonymous trace %q should hold the function name and no file", got)
 	}
 
-	apperror.Anonymous(false)
+	apperror.DisableAnonymous()
 	if got := traceHere(); !strings.Contains(got, "trace_cache_test.go:") {
 		t.Fatalf("after switching anonymous off: %q", got)
 	}

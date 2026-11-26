@@ -30,7 +30,7 @@
 //		memCache := cache.NewMemoryCache().
 //			WithMaxSize(1000).
 //			WithDefaultTTL(time.Hour).
-//			WithLRUEviction(true)
+//			WithLRUEviction()
 //
 //		// Create a Redis-backed cache
 //		redisCache := cache.NewRedisCache(cache.RedisConfig{

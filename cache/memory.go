@@ -114,9 +114,15 @@ func (mc *MemoryCache) WithDefaultTTL(ttl time.Duration) *MemoryCache {
 	return mc
 }
 
-// WithLRUEviction enables or disables LRU eviction
-func (mc *MemoryCache) WithLRUEviction(enabled bool) *MemoryCache {
-	mc.config.EnableLRU = enabled
+// WithLRUEviction enables LRU eviction
+func (mc *MemoryCache) WithLRUEviction() *MemoryCache {
+	mc.config.EnableLRU = true
+	return mc
+}
+
+// WithoutLRUEviction disables LRU eviction
+func (mc *MemoryCache) WithoutLRUEviction() *MemoryCache {
+	mc.config.EnableLRU = false
 	return mc
 }
 

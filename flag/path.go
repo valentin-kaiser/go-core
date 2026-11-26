@@ -40,23 +40,33 @@ const (
 	currentDir = "."
 )
 
-// DataPath returns the directory for the data of an application. A service gets a system wide
-// location, an interactive application one in the profile of the user. An empty appName is
-// replaced by the name of the executable.
-func DataPath(service bool, appName string) string {
-	if appName == "" {
-		execName := executableName()
-		if execName == "" {
-			execName = defaultAppName
-		}
-		appName = execName
-	}
-
-	return dataPathFor(appName, service)
+// AppDataPath returns the directory for the data of an interactive application, located in the
+// profile of the user. An empty appName is replaced by the name of the executable.
+func AppDataPath(appName string) string {
+	return absoluteDataPath(userDataRoot(), resolveAppName(appName))
 }
 
-func dataPathFor(appName string, service bool) string {
-	path := filepath.Join(dataRoot(service), appName)
+// ServiceAppDataPath returns the machine-wide directory for the data of a service.
+// An empty appName is replaced by the name of the executable.
+func ServiceAppDataPath(appName string) string {
+	return absoluteDataPath(serviceDataRoot(), resolveAppName(appName))
+}
+
+func resolveAppName(appName string) string {
+	if appName != "" {
+		return appName
+	}
+
+	execName := executableName()
+	if execName == "" {
+		return defaultAppName
+	}
+
+	return execName
+}
+
+func absoluteDataPath(root, appName string) string {
+	path := filepath.Join(root, appName)
 	absPath, err := filepath.Abs(path)
 	if err == nil {
 		return absPath
@@ -65,17 +75,9 @@ func dataPathFor(appName string, service bool) string {
 	return filepath.Clean(path)
 }
 
-func dataRoot(service bool) string {
+func userDataRoot() string {
 	switch runtime.GOOS {
 	case osWindows:
-		if service {
-			if programData := os.Getenv(envProgramData); programData != "" {
-				return programData
-			}
-
-			return windowsProgramDataFallback
-		}
-
 		if localAppData := os.Getenv(envLocalAppData); localAppData != "" {
 			return localAppData
 		}
@@ -90,10 +92,6 @@ func dataRoot(service bool) string {
 
 		return windowsPublicFallback
 	case osLinux:
-		if service {
-			return linuxServiceRoot
-		}
-
 		if xdgDataHome := os.Getenv(envXDGDataHome); xdgDataHome != "" {
 			return xdgDataHome
 		}
@@ -105,10 +103,6 @@ func dataRoot(service bool) string {
 
 		return linuxRelativeFallback
 	case osDarwin:
-		if service {
-			return darwinServiceRoot
-		}
-
 		home, err := os.UserHomeDir()
 		if err == nil && home != "" {
 			return filepath.Join(home, darwinLibraryDir, darwinSupportDir)
@@ -116,11 +110,24 @@ func dataRoot(service bool) string {
 
 		return darwinRelativeFallback
 	default:
-		if service {
-			return string(os.PathSeparator) + unixVarDir + string(os.PathSeparator) + unixLibDir
+		return currentDir
+	}
+}
+
+func serviceDataRoot() string {
+	switch runtime.GOOS {
+	case osWindows:
+		if programData := os.Getenv(envProgramData); programData != "" {
+			return programData
 		}
 
-		return currentDir
+		return windowsProgramDataFallback
+	case osLinux:
+		return linuxServiceRoot
+	case osDarwin:
+		return darwinServiceRoot
+	default:
+		return string(os.PathSeparator) + unixVarDir + string(os.PathSeparator) + unixLibDir
 	}
 }
 

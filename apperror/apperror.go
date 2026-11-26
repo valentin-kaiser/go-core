@@ -422,11 +422,16 @@ func Where(level int) string {
 	return sb.String()
 }
 
-// Anonymous enables or disables anonymous caller tracking
-// When enabled, the trace will use package name and line number instead of full file path
+// EnableAnonymous enables anonymous caller tracking
+// The trace then uses package name and line number instead of full file path
 // This can help reduce noise in logs while still providing useful context
-func Anonymous(enable bool) {
-	anonymous.Store(enable)
+func EnableAnonymous() {
+	anonymous.Store(true)
+}
+
+// DisableAnonymous disables anonymous caller tracking
+func DisableAnonymous() {
+	anonymous.Store(false)
 }
 
 // TraceError generates a stack TraceError for the error

@@ -271,12 +271,12 @@ func (v *Release) CompareVersions(c *Release) (int, error) {
 	return CompareVersions(v.GitTag, c.GitTag)
 }
 
-// VersionComponents returns the parsed version components
-func (v *Release) VersionComponents() (map[string]any, error) {
+// Components returns the parsed version components
+func (v *Release) Components() (map[string]any, error) {
 	if v.ParsedVersion != nil {
-		return VersionComponents(v.GitTag)
+		return Components(v.GitTag)
 	}
-	return VersionComponents(v.GitTag)
+	return Components(v.GitTag)
 }
 
 // IsCalVer returns true if the release uses Calendar Versioning
@@ -900,8 +900,8 @@ func CompareVersions(tag1, tag2 string) (int, error) {
 	return parser.Compare(tag1, tag2)
 }
 
-// VersionComponents returns the version components as a map for any supported format
-func VersionComponents(tag string) (map[string]any, error) {
+// Components returns the version components as a map for any supported format
+func Components(tag string) (map[string]any, error) {
 	pv, err := ParseVersion(tag)
 	if err != nil {
 		return nil, apperror.NewErrorf("parsing version %q failed", tag).AddError(err)

@@ -459,7 +459,7 @@ func TestDatabase_Debug(t *testing.T) {
 
 	logger := logging.NewNoOpAdapter()
 	loggingMw := database.NewLoggingMiddleware(logger)
-	loggingMw.SetEnabled(false) // Disable by default
+	loggingMw.Disable() // Disable by default
 	db.RegisterMiddleware(loggingMw)
 
 	dsn := memoryDSN

@@ -129,7 +129,7 @@ func TestErrorString(t *testing.T) {
 	originalDebug := flag.Debug
 	t.Cleanup(func() {
 		flag.Debug = originalDebug
-		apperror.Anonymous(false)
+		apperror.DisableAnonymous()
 	})
 
 	// Test without debug mode
@@ -149,7 +149,7 @@ func TestErrorString(t *testing.T) {
 
 	// Test with debug mode
 	flag.Debug = true
-	apperror.Anonymous(true) // Enable anonymous mode to get function names in trace
+	apperror.EnableAnonymous() // Enable anonymous mode to get function names in trace
 	err = apperror.NewError("test error")
 	errorStr := err.Error()
 

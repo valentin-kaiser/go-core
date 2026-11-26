@@ -79,7 +79,10 @@ type wire interface {
 	protocol() Protocol
 	contentType() string
 	parse(data []byte) (envs []*envelope, batch bool, err *Error)
-	encodeReplies(replies []*reply, batch bool) ([]byte, error)
+	// encodeReplies encodes the replies of a single request.
+	encodeReplies(replies []*reply) ([]byte, error)
+	// encodeBatch encodes the replies of a batch request.
+	encodeBatch(replies []*reply) ([]byte, error)
 	// encodeRequest builds a request; a request without id is a notification.
 	encodeRequest(id rpcID, method string, params proto.Message) ([]byte, error)
 	// encodeEvent builds a stream notification carrying {id, data}.
@@ -221,14 +224,11 @@ func (w jsonWire) bindParams(params []byte, m proto.Message) error {
 	return apperror.NewError("params must be an object or an array with at most one element")
 }
 
-func (w jsonWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
+func (w jsonWire) encodeReplies(replies []*reply) ([]byte, error) {
 	var (
 		b   []byte
 		err error
 	)
-	if batch {
-		b = append(b, '[')
-	}
 	for i, r := range replies {
 		if i > 0 {
 			b = append(b, ',')
@@ -238,10 +238,18 @@ func (w jsonWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
 			return nil, err
 		}
 	}
-	if batch {
-		b = append(b, ']')
-	}
 	return b, nil
+}
+
+func (w jsonWire) encodeBatch(replies []*reply) ([]byte, error) {
+	items, err := w.encodeReplies(replies)
+	if err != nil {
+		return nil, err
+	}
+	b := make([]byte, 0, len(items)+2)
+	b = append(b, '[')
+	b = append(b, items...)
+	return append(b, ']'), nil
 }
 
 func (w jsonWire) appendReply(b []byte, r *reply) ([]byte, error) {

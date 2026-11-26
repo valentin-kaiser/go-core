@@ -119,7 +119,7 @@ func TestMemoryCache_TTL(t *testing.T) {
 func TestMemoryCache_LRUEviction(t *testing.T) {
 	c := cache.NewMemoryCache().
 		WithMaxSize(lruMaxSize).
-		WithLRUEviction(true)
+		WithLRUEviction()
 
 	closeOnCleanup(t, "cache", c)
 

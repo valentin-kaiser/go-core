@@ -44,8 +44,18 @@ func (c *wsConn) send(data []byte) error {
 	return nil
 }
 
-func (c *wsConn) sendReplies(replies []*reply, batch bool) {
-	out, err := c.wire.encodeReplies(replies, batch)
+func (c *wsConn) sendReplies(replies []*reply) {
+	out, err := c.wire.encodeReplies(replies)
+	c.sendEncoded(out, err)
+}
+
+func (c *wsConn) sendBatch(replies []*reply) {
+	out, err := c.wire.encodeBatch(replies)
+	c.sendEncoded(out, err)
+}
+
+// sendEncoded sends the result of an encode call, or logs why encoding failed.
+func (c *wsConn) sendEncoded(out []byte, err error) {
 	if err != nil {
 		logger.Error().Err(err).Msg("encoding response failed")
 		return
@@ -57,7 +67,7 @@ func (c *wsConn) sendReplies(replies []*reply, batch bool) {
 }
 
 func (c *wsConn) fail(id rpcID, err *Error) {
-	c.sendReplies([]*reply{{id: id, err: err}}, false)
+	c.sendReplies([]*reply{{id: id, err: err}})
 }
 
 func (c *wsConn) acquire() bool {
@@ -122,8 +132,14 @@ func (c *wsConn) dispatch(ctx context.Context, data []byte) {
 	}
 	go func() {
 		defer c.release()
-		if replies := c.svc.process(ctx, envs); len(replies) > 0 {
-			c.sendReplies(replies, batch)
+		replies := c.svc.process(ctx, envs)
+		if len(replies) == 0 {
+			return
+		}
+		if batch {
+			c.sendBatch(replies)
+		} else {
+			c.sendReplies(replies)
 		}
 	}()
 }
@@ -235,7 +251,7 @@ func (c *wsConn) startStream(parent context.Context, m *method, e *envelope) {
 		case m.kind == kindClientStream:
 			r.result = res
 		}
-		c.sendReplies([]*reply{r}, false)
+		c.sendReplies([]*reply{r})
 	}()
 }
 

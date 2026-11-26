@@ -471,30 +471,30 @@ func TestGetVersionComponents(t *testing.T) {
 	}
 
 	for _, tc := range testCases {
-		result, err := version.VersionComponents(tc.tag)
+		result, err := version.Components(tc.tag)
 		if tc.expectError {
 			if err == nil {
-				t.Errorf("VersionComponents(%q) expected error but got none", tc.tag)
+				t.Errorf("Components(%q) expected error but got none", tc.tag)
 			}
 			continue
 		}
 
 		if err != nil {
-			t.Errorf("VersionComponents(%q) unexpected error: %v", tc.tag, err)
+			t.Errorf("Components(%q) unexpected error: %v", tc.tag, err)
 			continue
 		}
 
 		if result == nil {
-			t.Errorf("VersionComponents(%q) returned nil result", tc.tag)
+			t.Errorf("Components(%q) returned nil result", tc.tag)
 			continue
 		}
 
 		// Check that format and original are always present
 		if _, ok := result["format"]; !ok {
-			t.Errorf("VersionComponents(%q) missing 'format' field", tc.tag)
+			t.Errorf("Components(%q) missing 'format' field", tc.tag)
 		}
 		if _, ok := result["original"]; !ok {
-			t.Errorf("VersionComponents(%q) missing 'original' field", tc.tag)
+			t.Errorf("Components(%q) missing 'original' field", tc.tag)
 		}
 	}
 }

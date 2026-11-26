@@ -125,7 +125,13 @@ func (c *Client) Call(ctx context.Context, method string, in, out proto.Message)
 	}
 	// An error response may carry a null id when the server could not determine the request id.
 	nullErr := envs[0].err != nil && (!envs[0].id.set || envs[0].id.null)
-	if !nullErr && !sameID(envs[0].id, id, c.protocol == ProtocolXML) {
+	var matched bool
+	if c.protocol == ProtocolXML {
+		matched = sameTextID(envs[0].id, id)
+	} else {
+		matched = sameID(envs[0].id, id)
+	}
+	if !nullErr && !matched {
 		return apperror.NewErrorf("response id mismatch (HTTP %d): %s", resp.StatusCode, truncate(data, 200))
 	}
 	if envs[0].err != nil {
@@ -443,12 +449,14 @@ func grpcPath(method string) string {
 	return pathSeparator + method
 }
 
-// sameID reports whether got matches want. XML ids are attributes and carry no numeric type.
-func sameID(got, want rpcID, textOnly bool) bool {
-	if textOnly {
-		return got.set && got.text == want.text
-	}
+// sameID reports whether got matches want.
+func sameID(got, want rpcID) bool {
 	return got.key() == want.key()
+}
+
+// sameTextID reports whether got matches want by text. XML ids are attributes and carry no numeric type.
+func sameTextID(got, want rpcID) bool {
+	return got.set && got.text == want.text
 }
 
 func truncate(b []byte, n int) string {

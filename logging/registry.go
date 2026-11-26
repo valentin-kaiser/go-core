@@ -138,14 +138,24 @@ func SetPackageAdapter(pkg string, adapter Adapter) {
 	packages.Store(pkg, adapter)
 }
 
-// Debug sets whether to use caller tracking
-func Debug(d bool) {
-	debug.Store(d)
+// EnableDebug enables caller tracking
+func EnableDebug() {
+	debug.Store(true)
 }
 
-// Anonymous sets whether to use anonymous caller tracking
-func Anonymous(a bool) {
-	anonymous.Store(a)
+// DisableDebug disables caller tracking
+func DisableDebug() {
+	debug.Store(false)
+}
+
+// EnableAnonymous enables anonymous caller tracking
+func EnableAnonymous() {
+	anonymous.Store(true)
+}
+
+// DisableAnonymous disables anonymous caller tracking
+func DisableAnonymous() {
+	anonymous.Store(false)
 }
 
 // PackageLogger returns a logger for a specific package

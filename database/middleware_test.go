@@ -62,8 +62,8 @@ func TestLoggingMiddleware_New(t *testing.T) {
 	}
 }
 
-// TestLoggingMiddleware_SetEnabled tests enabling/disabling logging
-func TestLoggingMiddleware_SetEnabled(t *testing.T) {
+// TestLoggingMiddleware_EnableDisable tests enabling/disabling logging
+func TestLoggingMiddleware_EnableDisable(t *testing.T) {
 	logger := logging.NewNoOpAdapter()
 	mw := database.NewLoggingMiddleware(logger)
 
@@ -73,33 +73,45 @@ func TestLoggingMiddleware_SetEnabled(t *testing.T) {
 	}
 
 	// Disable
-	mw.SetEnabled(false)
+	mw.Disable()
 	if mw.IsEnabled() {
-		t.Error("Middleware should be disabled after SetEnabled(false)")
+		t.Error("Middleware should be disabled after Disable()")
 	}
 
 	// Enable again
-	mw.SetEnabled(true)
+	mw.Enable()
 	if !mw.IsEnabled() {
-		t.Error("Middleware should be enabled after SetEnabled(true)")
+		t.Error("Middleware should be enabled after Enable()")
 	}
 }
 
-// TestLoggingMiddleware_SetTrace tests trace mode
-func TestLoggingMiddleware_SetTrace(t *testing.T) {
+// TestLoggingMiddleware_Trace tests trace mode
+func TestLoggingMiddleware_Trace(t *testing.T) {
 	logger := logging.NewNoOpAdapter()
 	mw := database.NewLoggingMiddleware(logger)
 
-	// Test SetTrace returns the same instance for chaining
-	result := mw.SetTrace(true)
+	// Test EnableTrace returns the same instance for chaining
+	result := mw.EnableTrace()
 	if result != mw {
-		t.Error("SetTrace should return the same instance for chaining")
+		t.Error("EnableTrace should return the same instance for chaining")
 	}
 
-	// Test SetEnabled returns the same instance for chaining
-	result = mw.SetEnabled(false)
+	// Test DisableTrace returns the same instance for chaining
+	result = mw.DisableTrace()
 	if result != mw {
-		t.Error("SetEnabled should return the same instance for chaining")
+		t.Error("DisableTrace should return the same instance for chaining")
+	}
+
+	// Test Disable returns the same instance for chaining
+	result = mw.Disable()
+	if result != mw {
+		t.Error("Disable should return the same instance for chaining")
+	}
+
+	// Test Enable returns the same instance for chaining
+	result = mw.Enable()
+	if result != mw {
+		t.Error("Enable should return the same instance for chaining")
 	}
 }
 
@@ -174,7 +186,7 @@ func TestLoggingMiddleware_BeginTx(t *testing.T) {
 func TestLoggingMiddleware_DisabledLogging(_ *testing.T) {
 	logger := logging.NewNoOpAdapter()
 	mw := database.NewLoggingMiddleware(logger)
-	mw.SetEnabled(false)
+	mw.Disable()
 
 	ctx := context.Background()
 	query := "SELECT id FROM users"
@@ -361,7 +373,7 @@ func BenchmarkLoggingMiddleware_AfterQuery(b *testing.B) {
 func BenchmarkLoggingMiddleware_Disabled(b *testing.B) {
 	logger := logging.NewNoOpAdapter()
 	mw := database.NewLoggingMiddleware(logger)
-	mw.SetEnabled(false)
+	mw.Disable()
 	ctx := context.Background()
 	query := "SELECT id FROM users WHERE id = ?"
 	args := []driver.NamedValue{{Ordinal: 1, Value: 1}}

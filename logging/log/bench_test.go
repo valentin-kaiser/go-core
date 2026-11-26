@@ -18,11 +18,15 @@ func setupDisabled(b *testing.B, debug bool) {
 	b.Helper()
 	prev := logging.CurrentAdapter()
 	logging.SetGlobalAdapter(logging.NewZerologAdapterWithLogger(zerolog.New(io.Discard)).SetLevel(logging.InfoLevel))
-	logging.Debug(debug)
-	logging.Anonymous(true)
+	if debug {
+		logging.EnableDebug()
+	} else {
+		logging.DisableDebug()
+	}
+	logging.EnableAnonymous()
 	b.Cleanup(func() {
-		logging.Debug(false)
-		logging.Anonymous(false)
+		logging.DisableDebug()
+		logging.DisableAnonymous()
 		logging.SetGlobalAdapter(prev)
 	})
 }

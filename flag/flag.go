@@ -113,12 +113,12 @@ func RegisterEnvVar(name, env string) {
 
 // DefaultDataPath returns the OS-specific application data path for the current executable.
 func DefaultDataPath() string {
-	return DataPath(false, "")
+	return AppDataPath("")
 }
 
 // ServiceDataPath returns the OS-specific machine-wide data path for the current executable.
 func ServiceDataPath() string {
-	return DataPath(true, "")
+	return ServiceAppDataPath("")
 }
 
 // Init initializes the flags and parses them

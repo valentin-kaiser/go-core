@@ -272,15 +272,27 @@ func NewLoggingMiddleware(logger logging.Adapter) *LoggingMiddleware {
 	return mw
 }
 
-// SetEnabled enables or disables logging at runtime
-func (m *LoggingMiddleware) SetEnabled(enabled bool) *LoggingMiddleware {
-	m.enabled.Store(enabled)
+// Enable enables logging at runtime
+func (m *LoggingMiddleware) Enable() *LoggingMiddleware {
+	m.enabled.Store(true)
 	return m
 }
 
-// SetTrace enables or disables the caller field of the log events at runtime.
-func (m *LoggingMiddleware) SetTrace(enabled bool) *LoggingMiddleware {
-	m.trace.Store(enabled)
+// Disable disables logging at runtime
+func (m *LoggingMiddleware) Disable() *LoggingMiddleware {
+	m.enabled.Store(false)
+	return m
+}
+
+// EnableTrace enables the caller field of the log events at runtime.
+func (m *LoggingMiddleware) EnableTrace() *LoggingMiddleware {
+	m.trace.Store(true)
+	return m
+}
+
+// DisableTrace disables the caller field of the log events at runtime.
+func (m *LoggingMiddleware) DisableTrace() *LoggingMiddleware {
+	m.trace.Store(false)
 	return m
 }
 

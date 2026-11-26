@@ -130,7 +130,7 @@
 //	// LoggingMiddleware must be registered for Debug() to work
 //	logger := logging.PackageLogger("database")
 //	loggingMiddleware := database.NewLoggingMiddleware(logger)
-//	loggingMiddleware.SetEnabled(false) // Disabled by default
+//	loggingMiddleware.Disable() // Disabled by default
 //	db.RegisterMiddleware(loggingMiddleware)
 //
 //	db.Connect(time.Second, "file:example.db")
@@ -305,13 +305,11 @@ func (d *Connection[Q]) Execute(call func(db *sql.DB) error) error {
 	}
 
 	if d.debug {
-		loggingMW := d.findLoggingMiddleware()
-		if loggingMW == nil {
-			return apperror.NewError("debug mode requires LoggingMiddleware to be registered")
+		restore, err := d.enableDebugLogging()
+		if err != nil {
+			return err
 		}
-		wasEnabled := loggingMW.IsEnabled()
-		loggingMW.SetEnabled(true)
-		defer loggingMW.SetEnabled(wasEnabled)
+		defer restore()
 	}
 
 	err := call(instance)
@@ -346,13 +344,11 @@ func (d *Connection[Q]) Query(call func(q *Q) error) error {
 	}
 
 	if d.debug {
-		loggingMW := d.findLoggingMiddleware()
-		if loggingMW == nil {
-			return apperror.NewError("debug mode requires LoggingMiddleware to be registered")
+		restore, err := d.enableDebugLogging()
+		if err != nil {
+			return err
 		}
-		wasEnabled := loggingMW.IsEnabled()
-		loggingMW.SetEnabled(true)
-		defer loggingMW.SetEnabled(wasEnabled)
+		defer restore()
 	}
 
 	queries, err := parent.newQueries(dbInstance)
@@ -431,13 +427,11 @@ func (d *Connection[Q]) QueryTransaction(call func(q *Q) error) error {
 	}
 
 	if d.debug {
-		loggingMW := d.findLoggingMiddleware()
-		if loggingMW == nil {
-			return apperror.NewError("debug mode requires LoggingMiddleware to be registered")
+		restore, err := d.enableDebugLogging()
+		if err != nil {
+			return err
 		}
-		wasEnabled := loggingMW.IsEnabled()
-		loggingMW.SetEnabled(true)
-		defer loggingMW.SetEnabled(wasEnabled)
+		defer restore()
 	}
 
 	tx, err := dbInstance.Begin()
@@ -714,6 +708,22 @@ func (d *Connection[Q]) findLoggingMiddleware() *LoggingMiddleware {
 	}
 
 	return nil
+}
+
+// enableDebugLogging switches the LoggingMiddleware on and returns a function that restores its previous state.
+func (d *Connection[Q]) enableDebugLogging() (restore func(), err error) {
+	loggingMW := d.findLoggingMiddleware()
+	if loggingMW == nil {
+		return nil, apperror.NewError("debug mode requires LoggingMiddleware to be registered")
+	}
+
+	wasEnabled := loggingMW.IsEnabled()
+	loggingMW.Enable()
+	return func() {
+		if !wasEnabled {
+			loggingMW.Disable()
+		}
+	}, nil
 }
 
 // connect will try to connect to the database and return the connection

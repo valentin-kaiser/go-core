@@ -17,14 +17,14 @@ const (
 	serviceLib   = "/var/lib"
 )
 
-func TestDataPathForInteractiveRoot(t *testing.T) {
+func TestAppDataPath(t *testing.T) {
 	t.Setenv("LOCALAPPDATA", localAppData)
 	t.Setenv("APPDATA", roamingData)
 	t.Setenv("PROGRAMDATA", programData)
 	t.Setenv("USERPROFILE", userProfile)
 	t.Setenv("XDG_DATA_HOME", xdgDataHome)
 
-	got := dataPathFor("SampleApp", false)
+	got := AppDataPath("SampleApp")
 	if got == "" {
 		t.Fatal("expected a default interactive data path")
 	}
@@ -47,10 +47,10 @@ func TestDataPathForInteractiveRoot(t *testing.T) {
 	}
 }
 
-func TestDataPathForServiceRoot(t *testing.T) {
+func TestServiceAppDataPath(t *testing.T) {
 	t.Setenv("PROGRAMDATA", programData)
 
-	got := dataPathFor("SampleService", true)
+	got := ServiceAppDataPath("SampleService")
 	if got == "" {
 		t.Fatal("expected a default service data path")
 	}

@@ -126,20 +126,26 @@ func (w xmlWire) parseResponse(n *xmlNode, e *envelope) {
 	}
 }
 
-func (w xmlWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
+func (w xmlWire) encodeReplies(replies []*reply) ([]byte, error) {
 	var b bytes.Buffer
-	if batch {
-		b.WriteString("<batch>")
-	}
 	for _, r := range replies {
 		err := w.writeReply(&b, r)
 		if err != nil {
 			return nil, err
 		}
 	}
-	if batch {
-		b.WriteString("</batch>")
+	return b.Bytes(), nil
+}
+
+func (w xmlWire) encodeBatch(replies []*reply) ([]byte, error) {
+	items, err := w.encodeReplies(replies)
+	if err != nil {
+		return nil, err
 	}
+	var b bytes.Buffer
+	b.WriteString("<batch>")
+	b.Write(items)
+	b.WriteString("</batch>")
 	return b.Bytes(), nil
 }
 

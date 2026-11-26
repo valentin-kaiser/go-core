@@ -860,9 +860,9 @@ func (s *smtpServer) handleCommands(conn *Conn, session Session) {
 		}
 		switch command {
 		case commandHelo:
-			s.handleHelo(conn, args, false)
+			s.handleHelo(conn, args)
 		case commandEhlo:
-			s.handleHelo(conn, args, true)
+			s.handleEhlo(conn, args)
 		case commandStartTLS:
 			s.handleStartTLS(conn)
 		case commandAuth:
@@ -979,8 +979,8 @@ func (s *smtpServer) writeRaw(conn *Conn, data string) {
 	logger.Trace().Field("response", strings.TrimSpace(data)).Msg("sent SMTP response")
 }
 
-// handleHelo handles HELO/EHLO commands
-func (s *smtpServer) handleHelo(conn *Conn, hostname string, extended bool) {
+// handleHelo handles the HELO command
+func (s *smtpServer) handleHelo(conn *Conn, hostname string) {
 	if hostname == "" {
 		s.writeResponse(conn, StatusBadSyntax, "Hostname required")
 		return
@@ -988,22 +988,33 @@ func (s *smtpServer) handleHelo(conn *Conn, hostname string, extended bool) {
 
 	conn.mutex.Lock()
 	conn.hostname = hostname
-	conn.ehlo = extended
+	conn.ehlo = false
 	conn.mutex.Unlock()
 
-	if extended {
-		responses := []string{s.config.Domain + " Hello " + hostname}
-		if s.config.TLS && !conn.TLS() {
-			responses = append(responses, commandStartTLS)
-		}
-		responses = append(responses, "AUTH PLAIN")
-		if s.config.MaxMessageBytes > 0 {
-			responses = append(responses, fmt.Sprintf("SIZE %d", s.config.MaxMessageBytes))
-		}
-		s.writeMultiResponse(conn, StatusOK, responses)
-	} else {
-		s.writeResponse(conn, StatusOK, s.config.Domain+" Hello "+hostname)
+	s.writeResponse(conn, StatusOK, s.config.Domain+" Hello "+hostname)
+}
+
+// handleEhlo handles the EHLO command and announces the supported extensions
+func (s *smtpServer) handleEhlo(conn *Conn, hostname string) {
+	if hostname == "" {
+		s.writeResponse(conn, StatusBadSyntax, "Hostname required")
+		return
 	}
+
+	conn.mutex.Lock()
+	conn.hostname = hostname
+	conn.ehlo = true
+	conn.mutex.Unlock()
+
+	responses := []string{s.config.Domain + " Hello " + hostname}
+	if s.config.TLS && !conn.TLS() {
+		responses = append(responses, commandStartTLS)
+	}
+	responses = append(responses, "AUTH PLAIN")
+	if s.config.MaxMessageBytes > 0 {
+		responses = append(responses, fmt.Sprintf("SIZE %d", s.config.MaxMessageBytes))
+	}
+	s.writeMultiResponse(conn, StatusOK, responses)
 }
 
 // handleStartTLS handles STARTTLS command

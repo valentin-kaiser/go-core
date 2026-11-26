@@ -107,14 +107,28 @@ func (z *ZerologAdapter) WithConsole() *ZerologAdapter {
 }
 
 // WithFileRotation adds a file writer with rotation to the logger
-func (z *ZerologAdapter) WithFileRotation(name string, size, age, backups int, compress bool) *ZerologAdapter {
-	file := &lumberjack.Logger{
+// Size is given in megabytes, age in days and backups is the number of kept files
+func (z *ZerologAdapter) WithFileRotation(name string, size, age, backups int) *ZerologAdapter {
+	return z.withRotatingFile(&lumberjack.Logger{
 		Filename:   name,
-		MaxSize:    size,    // megabytes
-		MaxAge:     age,     // days
-		MaxBackups: backups, // number of backups
-		Compress:   compress,
-	}
+		MaxSize:    size,
+		MaxAge:     age,
+		MaxBackups: backups,
+	})
+}
+
+// WithCompressedFileRotation adds a file writer with rotation to the logger and compresses rotated files
+func (z *ZerologAdapter) WithCompressedFileRotation(name string, size, age, backups int) *ZerologAdapter {
+	return z.withRotatingFile(&lumberjack.Logger{
+		Filename:   name,
+		MaxSize:    size,
+		MaxAge:     age,
+		MaxBackups: backups,
+		Compress:   true,
+	})
+}
+
+func (z *ZerologAdapter) withRotatingFile(file *lumberjack.Logger) *ZerologAdapter {
 	z.config.Lock()
 	z.file = file
 	z.config.Unlock()

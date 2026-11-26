@@ -652,7 +652,12 @@ func (e *Message) writeBody(buf io.Writer, w *multipart.Writer, layout multipart
 	}
 
 	if len(e.Text) > 0 {
-		err := writeMessage(buf, e.Text, layout.mixed || layout.alternative, mediaTypeTextPlain, subWriter)
+		var err error
+		if layout.mixed || layout.alternative {
+			err = writePartMessage(buf, e.Text, mediaTypeTextPlain, subWriter)
+		} else {
+			err = writeMessage(buf, e.Text)
+		}
 		if err != nil {
 			return apperror.NewError("writing text part failed").AddError(err)
 		}
@@ -695,7 +700,12 @@ func (e *Message) writeHTMLPart(buf io.Writer, w, subWriter *multipart.Writer, l
 		messageWriter = w
 	}
 
-	err := writeMessage(buf, e.HTML, layout.mixed || layout.alternative || layout.related, mediaTypeTextHTML, messageWriter)
+	var err error
+	if layout.mixed || layout.alternative || layout.related {
+		err = writePartMessage(buf, e.HTML, mediaTypeTextHTML, messageWriter)
+	} else {
+		err = writeMessage(buf, e.HTML)
+	}
 	if err != nil {
 		return apperror.NewError("writing HTML part failed").AddError(err)
 	}
@@ -839,18 +849,21 @@ func writeAttachmentParts(w *multipart.Writer, attachments []*Attachment, kind s
 	return nil
 }
 
-func writeMessage(buf io.Writer, msg []byte, multipart bool, mediaType string, w *multipart.Writer) error {
-	if multipart {
-		header := textproto.MIMEHeader{
-			headerContentType:             {mediaType + charsetUTF8Suffix},
-			headerContentTransferEncoding: {encodingQuotedPrintable},
-		}
-		_, err := w.CreatePart(header)
-		if err != nil {
-			return apperror.NewError("creating message part failed").AddError(err)
-		}
+// writePartMessage starts a new part of w and writes the message into it.
+func writePartMessage(buf io.Writer, msg []byte, mediaType string, w *multipart.Writer) error {
+	header := textproto.MIMEHeader{
+		headerContentType:             {mediaType + charsetUTF8Suffix},
+		headerContentTransferEncoding: {encodingQuotedPrintable},
 	}
+	_, err := w.CreatePart(header)
+	if err != nil {
+		return apperror.NewError("creating message part failed").AddError(err)
+	}
+	return writeMessage(buf, msg)
+}
 
+// writeMessage writes the message quoted-printable encoded.
+func writeMessage(buf io.Writer, msg []byte) error {
 	qp := quotedprintable.NewWriter(buf)
 	_, err := qp.Write(msg)
 	if err != nil {

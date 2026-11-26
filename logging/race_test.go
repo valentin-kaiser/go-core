@@ -24,14 +24,18 @@ const (
 // The debug flag is toggled while another goroutine logs.
 func TestConcurrentDebugFlag(t *testing.T) {
 	a := logging.NewZerologAdapterWithLogger(zerolog.New(io.Discard)).SetLevel(logging.InfoLevel)
-	t.Cleanup(func() { logging.Debug(false) })
+	t.Cleanup(func() { logging.DisableDebug() })
 
 	var wg sync.WaitGroup
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
 		for i := range concurrentIterations {
-			logging.Debug(i%2 == 0)
+			if i%2 == 0 {
+				logging.EnableDebug()
+			} else {
+				logging.DisableDebug()
+			}
 		}
 	}()
 	go func() {
@@ -119,8 +123,8 @@ func TestCallerFieldPointsAtCaller(t *testing.T) {
 	var buf bytes.Buffer
 	zl := logging.NewZerologAdapterWithLogger(zerolog.New(&buf)).SetLevel(logging.InfoLevel)
 	st := logging.NewStandardAdapterWithLogger(log.New(&buf, "", 0)).SetLevel(logging.InfoLevel)
-	logging.Debug(true)
-	t.Cleanup(func() { logging.Debug(false) })
+	logging.EnableDebug()
+	t.Cleanup(func() { logging.DisableDebug() })
 
 	// The depth is calibrated for the log facade
 	prev := logging.CurrentAdapter()
