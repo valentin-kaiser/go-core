@@ -35,7 +35,8 @@ func TestMiddlewareSeesLanguagesAddedLater(t *testing.T) {
 		t.Fatalf("after Register: got %q, want %q", got, i18n.German)
 	}
 
-	if err := b.RegisterJSON("fr", []byte(`{"hello":"Bonjour"}`)); err != nil {
+	err = b.RegisterJSON("fr", []byte(`{"hello":"Bonjour"}`))
+	if err != nil {
 		t.Fatal(err)
 	}
 	if got := resolve(t, b, "fr-CA,fr;q=0.9"); got != "fr" {
@@ -51,12 +52,12 @@ func TestMiddlewareConcurrentRegister(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		for i := 0; i < 200; i++ {
+		for range 200 {
 			b.Register(i18n.German, map[string]string{"k": "v"})
 			b.Register(i18n.Language("fr"), map[string]string{"k": "v"})
 		}
 	}()
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		_ = resolve(t, b, "de,fr;q=0.8")
 	}
 	<-done
