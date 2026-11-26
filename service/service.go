@@ -141,18 +141,42 @@ var (
 // It includes service name, display name, description, dependencies, and platform-specific settings.
 type Config = service.Config
 
-func init() {
-	var err error
-	interactive = service.AvailableSystems()[len(service.AvailableSystems())-1].Interactive()
-	if !interactive {
-		flag.Path = flag.ServiceDataPath()
+// Service wraps the kardianos/service.Service interface and provides additional
+// functionality for managing application lifecycle with custom start and stop handlers.
+// It includes error handling and graceful shutdown capabilities.
+type Service struct {
+	service.Service
+
+	err   chan error
+	start func(s *Service) error
+	stop  func(s *Service) error
+}
+
+// Start implements the service.Interface Start method and executes the custom start handler.
+// It is called by the service manager when the service should start.
+func (s *Service) Start(svc service.Service) error {
+	s.Service = svc
+	if s.start == nil {
+		return apperror.NewError("service start function is not defined")
+	}
+	go func() {
+		s.err <- s.start(s)
+	}()
+	return nil
+}
+
+// Stop implements the service.Interface Stop method and executes the custom stop handler.
+// It is called by the service manager when the service should stop gracefully.
+func (s *Service) Stop(svc service.Service) error {
+	s.Service = svc
+	if s.stop == nil {
+		return apperror.NewError("service stop function is not defined")
 	}
 
-	flag.Path, err = filepath.Abs(flag.Path)
-	if err != nil {
-		logger.Error().Err(err).Msg("determining absolute path failed")
-		return
-	}
+	go func() {
+		s.err <- s.stop(s)
+	}()
+	return nil
 }
 
 // Run starts a service with the provided configuration and start/stop functions.
@@ -202,40 +226,16 @@ func IsInteractive() bool {
 	return interactive
 }
 
-// Service wraps the kardianos/service.Service interface and provides additional
-// functionality for managing application lifecycle with custom start and stop handlers.
-// It includes error handling and graceful shutdown capabilities.
-type Service struct {
-	service.Service
-
-	err   chan error
-	start func(s *Service) error
-	stop  func(s *Service) error
-}
-
-// Start implements the service.Interface Start method and executes the custom start handler.
-// It is called by the service manager when the service should start.
-func (s *Service) Start(svc service.Service) error {
-	s.Service = svc
-	if s.start == nil {
-		return apperror.NewError("service start function is not defined")
-	}
-	go func() {
-		s.err <- s.start(s)
-	}()
-	return nil
-}
-
-// Stop implements the service.Interface Stop method and executes the custom stop handler.
-// It is called by the service manager when the service should stop gracefully.
-func (s *Service) Stop(svc service.Service) error {
-	s.Service = svc
-	if s.stop == nil {
-		return apperror.NewError("service stop function is not defined")
+func init() {
+	var err error
+	interactive = service.AvailableSystems()[len(service.AvailableSystems())-1].Interactive()
+	if !interactive {
+		flag.Path = flag.ServiceDataPath()
 	}
 
-	go func() {
-		s.err <- s.stop(s)
-	}()
-	return nil
+	flag.Path, err = filepath.Abs(flag.Path)
+	if err != nil {
+		logger.Error().Err(err).Msg("determining absolute path failed")
+		return
+	}
 }

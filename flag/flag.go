@@ -96,6 +96,11 @@ var (
 	envNameCache sync.Map
 )
 
+type cachedEnvName struct {
+	prefix string
+	env    string
+}
+
 // RegisterEnvVar maps a flag name to the environment variable name it is read
 // from, without the prefix. It is used by the config package, whose
 // configuration keys do not always match the derived flag names.
@@ -104,19 +109,6 @@ func RegisterEnvVar(name, env string) {
 	defer envNamesM.Unlock()
 	envNames[name] = env
 	envNameCache.Clear()
-}
-
-type cachedEnvName struct {
-	prefix string
-	env    string
-}
-
-func init() {
-	Path = DefaultDataPath()
-	pflag.StringVar(&Path, pathFlagName, Path, "Sets the application working directory")
-	pflag.BoolVar(&Help, helpFlagName, false, "Prints the help page")
-	pflag.BoolVar(&Version, versionFlagName, false, "Prints the software version")
-	pflag.BoolVar(&Debug, debugFlagName, false, "Enables debug mode")
 }
 
 // DefaultDataPath returns the OS-specific application data path for the current executable.
@@ -349,4 +341,12 @@ func Unregister(name string) {
 	})
 
 	pflag.CommandLine = newCommandLine
+}
+
+func init() {
+	Path = DefaultDataPath()
+	pflag.StringVar(&Path, pathFlagName, Path, "Sets the application working directory")
+	pflag.BoolVar(&Help, helpFlagName, false, "Prints the help page")
+	pflag.BoolVar(&Version, versionFlagName, false, "Prints the software version")
+	pflag.BoolVar(&Debug, debugFlagName, false, "Enables debug mode")
 }
