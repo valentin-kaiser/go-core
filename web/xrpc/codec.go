@@ -526,13 +526,7 @@ func parseXML(data []byte) (*xmlNode, error) {
 			if count > maxXMLNodes || len(stack) >= maxXMLDepth {
 				return nil, errDepth
 			}
-			n := &xmlNode{name: t.Name.Local}
-			if len(t.Attr) > 0 {
-				n.attrs = make(map[string]string, len(t.Attr))
-				for _, a := range t.Attr {
-					n.attrs[a.Name.Local] = a.Value
-				}
-			}
+			n := newXMLNode(t)
 			switch {
 			case len(stack) > 0:
 				p := stack[len(stack)-1]
@@ -554,6 +548,17 @@ func parseXML(data []byte) (*xmlNode, error) {
 	}
 }
 
+func newXMLNode(t xml.StartElement) *xmlNode {
+	n := &xmlNode{name: t.Name.Local}
+	if len(t.Attr) > 0 {
+		n.attrs = make(map[string]string, len(t.Attr))
+		for _, a := range t.Attr {
+			n.attrs[a.Name.Local] = a.Value
+		}
+	}
+	return n
+}
+
 func (c codec) writeXMLFields(b *bytes.Buffer, m protoreflect.Message, depth int) error {
 	if depth > maxDepth {
 		return errDepth
@@ -570,31 +575,40 @@ func (c codec) writeXMLFields(b *bytes.Buffer, m protoreflect.Message, depth int
 	}
 
 	for _, f := range setFields(m) {
-		name := c.xmlName(f.fd)
-		var err error
-		switch {
-		case f.fd.IsList():
-			l := f.v.List()
-			for i := 0; i < l.Len() && err == nil; i++ {
-				err = c.writeXMLElem(b, name, nil, f.fd, l.Get(i), depth)
-			}
-		case f.fd.IsMap():
-			mp := f.v.Map()
-			for _, k := range sortedMapKeys(mp) {
-				key := k.String()
-				err = c.writeXMLElem(b, name, &key, f.fd.MapValue(), mp.Get(k), depth)
-				if err != nil {
-					break
-				}
-			}
-		default:
-			err = c.writeXMLElem(b, name, nil, f.fd, f.v, depth)
-		}
+		err := c.writeXMLField(b, f, depth)
 		if err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// writeXMLField writes every element of one set field: one per list entry, one per map entry or a single one.
+func (c codec) writeXMLField(b *bytes.Buffer, f fieldValue, depth int) error {
+	name := c.xmlName(f.fd)
+	switch {
+	case f.fd.IsList():
+		l := f.v.List()
+		for i := 0; i < l.Len(); i++ {
+			err := c.writeXMLElem(b, name, nil, f.fd, l.Get(i), depth)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	case f.fd.IsMap():
+		mp := f.v.Map()
+		for _, k := range sortedMapKeys(mp) {
+			key := k.String()
+			err := c.writeXMLElem(b, name, &key, f.fd.MapValue(), mp.Get(k), depth)
+			if err != nil {
+				return err
+			}
+		}
+		return nil
+	default:
+		return c.writeXMLElem(b, name, nil, f.fd, f.v, depth)
+	}
 }
 
 func (c codec) writeXMLElem(b *bytes.Buffer, name string, key *string, fd protoreflect.FieldDescriptor, v protoreflect.Value, depth int) error {

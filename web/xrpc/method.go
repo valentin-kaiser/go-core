@@ -170,13 +170,14 @@ func feed(ctx context.Context, cancel context.CancelFunc, ch reflect.Value, recv
 		defer closeSafe(ch)
 		for {
 			msg, err := recv()
+			if errors.Is(err, io.EOF) {
+				return
+			}
 			if err != nil {
-				if !errors.Is(err, io.EOF) {
-					mu.Lock()
-					res = err
-					mu.Unlock()
-					cancel()
-				}
+				mu.Lock()
+				res = err
+				mu.Unlock()
+				cancel()
 				return
 			}
 			chosen, _, _ := reflect.Select([]reflect.SelectCase{

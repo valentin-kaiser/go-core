@@ -237,20 +237,7 @@ func (c *Client) streamGRPC(ctx context.Context, method string, k kind, first pr
 		}
 	}
 	if next != nil {
-		go func() {
-			for {
-				msg, ok := next(ctx)
-				if !ok {
-					apperror.Catch(cs.CloseSend, "closing client stream failed")
-					return
-				}
-				err := cs.SendMsg(msg)
-				if err != nil {
-					logger.Trace().Err(err).Msg("sending grpc message failed")
-					return
-				}
-			}
-		}()
+		go sendGRPCMessages(ctx, cs, next)
 	}
 
 	if k == kindClientStream {
@@ -268,6 +255,22 @@ func (c *Client) streamGRPC(ctx context.Context, method string, k kind, first pr
 		err = deliver(msg)
 		if err != nil {
 			return apperror.NewError("delivering grpc message failed").AddError(err)
+		}
+	}
+}
+
+// sendGRPCMessages forwards the messages of next to the stream and closes the send side when next is exhausted.
+func sendGRPCMessages(ctx context.Context, cs grpc.ClientStream, next nextFunc) {
+	for {
+		msg, ok := next(ctx)
+		if !ok {
+			apperror.Catch(cs.CloseSend, "closing client stream failed")
+			return
+		}
+		err := cs.SendMsg(msg)
+		if err != nil {
+			logger.Trace().Err(err).Msg("sending grpc message failed")
+			return
 		}
 	}
 }
@@ -347,37 +350,8 @@ func (c *Client) streamWS(ctx context.Context, method string, first proto.Messag
 
 	sendErr := make(chan error, 1)
 	if next != nil {
-		go func() {
-			for {
-				msg, ok := next(ctx)
-				if !ok {
-					if ctx.Err() == nil {
-						data, err := w.encodeEvent(methodClose, id, nil)
-						if err != nil {
-							logger.Trace().Err(err).Msg("encoding close event failed")
-							return
-						}
-						err = write(data)
-						if err != nil {
-							logger.Trace().Err(err).Msg("writing stream message failed")
-							return
-						}
-					}
-					return
-				}
-				data, err := w.encodeEvent(methodMessage, id, msg)
-				if err != nil {
-					sendErr <- apperror.NewError("encoding message failed").AddError(err)
-					cancel()
-					return
-				}
-				err = write(data)
-				if err != nil {
-					logger.Trace().Err(err).Msg("writing stream message failed")
-					return
-				}
-			}
-		}()
+		sender := &wsSender{w: w, id: id, write: write, sendErr: sendErr, cancel: cancel}
+		go sender.pump(ctx, next)
 	}
 
 	for {
@@ -423,6 +397,54 @@ func (c *Client) streamWS(ctx context.Context, method string, first proto.Messag
 				return apperror.NewError("delivering stream message failed").AddError(err)
 			}
 		}
+	}
+}
+
+// wsSender is the sending side of a websocket stream.
+type wsSender struct {
+	w       wire
+	id      rpcID
+	write   func([]byte) error
+	sendErr chan<- error
+	cancel  context.CancelFunc
+}
+
+// pump sends the messages of next until it is exhausted or a send fails. An encoding failure is reported on
+// sendErr and cancels the stream.
+func (s *wsSender) pump(ctx context.Context, next nextFunc) {
+	for {
+		msg, ok := next(ctx)
+		if !ok {
+			s.sendClose(ctx)
+			return
+		}
+		data, err := s.w.encodeEvent(methodMessage, s.id, msg)
+		if err != nil {
+			s.sendErr <- apperror.NewError("encoding message failed").AddError(err)
+			s.cancel()
+			return
+		}
+		err = s.write(data)
+		if err != nil {
+			logger.Trace().Err(err).Msg("writing stream message failed")
+			return
+		}
+	}
+}
+
+// sendClose tells the server that the client stream ended, unless the stream was cancelled.
+func (s *wsSender) sendClose(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+	data, err := s.w.encodeEvent(methodClose, s.id, nil)
+	if err != nil {
+		logger.Trace().Err(err).Msg("encoding close event failed")
+		return
+	}
+	err = s.write(data)
+	if err != nil {
+		logger.Trace().Err(err).Msg("writing stream message failed")
 	}
 }
 
