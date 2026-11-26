@@ -43,8 +43,11 @@ jobs:
         if: failure()
         run: bash .github/scripts/test-report.sh test.log Linux
 
-      - name: Run race detector on concurrency-sensitive packages
-        run: go test -race ./logging/... ./cache ./config ./web/... ./i18n ./flag ./security ./version ./apperror ./queue ./database ./etcd ./mail
+      - name: Run race detector
+        run: |
+          # The machine package is excluded for the same reason as in the test step
+          packages=$(go list ./... | grep -v '/machine$')
+          go test -race $packages
 
       - name: Run go vet
         run: go vet ./...
@@ -108,3 +111,25 @@ jobs:
       - name: Report test failures
         if: failure()
         run: bash .github/scripts/test-report.sh test.log macOS
+
+  test-integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Start services
+        run: docker compose -f test/compose.yaml up -d --wait
+
+      - name: Run integration tests
+        run: go test -race -tags integration ./cache ./queue ./database
+
+      - name: Stop services
+        if: always()
+        run: docker compose -f test/compose.yaml down
