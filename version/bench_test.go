@@ -9,21 +9,30 @@ import (
 func BenchmarkParseVersionSemver(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, _ = version.ParseVersion("v1.22.3-rc.1+build.5")
+		_, err := version.ParseVersion("v1.22.3-rc.1+build.5")
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 func BenchmarkParseVersionCalVer(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, _ = version.ParseVersion("2026.10.09")
+		_, err := version.ParseVersion("2026.10.09")
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
 func BenchmarkCompareVersions(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, _ = version.CompareVersions("v1.22.3", "v1.22.10")
+		_, err := version.CompareVersions("v1.22.3", "v1.22.10")
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -37,7 +46,10 @@ func BenchmarkDetectFormat(b *testing.B) {
 func BenchmarkGetVersionComponents(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, _ = version.GetVersionComponents("v1.22.3")
+		_, err := version.GetVersionComponents("v1.22.3")
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

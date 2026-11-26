@@ -429,6 +429,19 @@ func semverSegment(tag string, n int) int {
 	return v
 }
 
+// parseNumbers converts regex captures to integers and fails on values that overflow int.
+func parseNumbers(parts ...string) ([]int, error) {
+	nums := make([]int, len(parts))
+	for i, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, apperror.NewErrorf("parsing number %q failed", part).AddError(err)
+		}
+		nums[i] = n
+	}
+	return nums, nil
+}
+
 // ExtractSemanticVersion parses the version number from the Git tag.
 // It returns the version string without the "v" prefix and any pre-release/build metadata.
 // If the tag is not a valid Git tag, it returns an empty string.
@@ -483,7 +496,7 @@ func CompareVersions(tag1, tag2 string) (int, error) {
 func GetVersionComponents(tag string) (map[string]any, error) {
 	pv, err := ParseVersion(tag)
 	if err != nil {
-		return nil, err
+		return nil, apperror.NewErrorf("parsing version %q failed", tag).AddError(err)
 	}
 
 	components := make(map[string]any)
@@ -581,9 +594,11 @@ func IsCalVerYYYYMMDD(tag string) bool {
 		return false
 	}
 
-	year, _ := strconv.Atoi(matches[1])
-	month, _ := strconv.Atoi(matches[2])
-	day, _ := strconv.Atoi(matches[3])
+	nums, err := parseNumbers(matches[1:4]...)
+	if err != nil {
+		return false
+	}
+	year, month, day := nums[0], nums[1], nums[2]
 
 	return year > 0 && month >= 1 && month <= 12 && day >= 1 && day <= 31
 }
@@ -598,9 +613,11 @@ func IsCalVerYYMMMICRO(tag string) bool {
 		return false
 	}
 
-	year, _ := strconv.Atoi(matches[1])
-	month, _ := strconv.Atoi(matches[2])
-	micro, _ := strconv.Atoi(matches[3])
+	nums, err := parseNumbers(matches[1:4]...)
+	if err != nil {
+		return false
+	}
+	year, month, micro := nums[0], nums[1], nums[2]
 
 	// Validate ranges - YY format with month and micro
 	return year >= 0 && year <= 99 && month >= 1 && month <= 12 && micro >= 0
@@ -616,8 +633,11 @@ func IsCalVerYYYYWW(tag string) bool {
 		return false
 	}
 
-	year, _ := strconv.Atoi(matches[1])
-	week, _ := strconv.Atoi(matches[2])
+	nums, err := parseNumbers(matches[1:3]...)
+	if err != nil {
+		return false
+	}
+	year, week := nums[0], nums[1]
 
 	// Validate ranges - year and week of year
 	return year > 0 && week >= 1 && week <= 53
@@ -633,10 +653,11 @@ func IsCalVerYYYYMMDDMICRO(tag string) bool {
 		return false
 	}
 
-	year, _ := strconv.Atoi(matches[1])
-	month, _ := strconv.Atoi(matches[2])
-	day, _ := strconv.Atoi(matches[3])
-	micro, _ := strconv.Atoi(matches[4])
+	nums, err := parseNumbers(matches[1:5]...)
+	if err != nil {
+		return false
+	}
+	year, month, day, micro := nums[0], nums[1], nums[2], nums[3]
 
 	// Validate date ranges
 	return year > 0 && month >= 1 && month <= 12 && day >= 1 && day <= 31 && micro >= 0
@@ -679,11 +700,11 @@ func (p *SemVerParser) Format() Format {
 func (p *SemVerParser) Compare(tag1, tag2 string) (int, error) {
 	pv1, err := p.Parse(tag1)
 	if err != nil {
-		return 0, err
+		return 0, apperror.NewErrorf("parsing version %q failed", tag1).AddError(err)
 	}
 	pv2, err := p.Parse(tag2)
 	if err != nil {
-		return 0, err
+		return 0, apperror.NewErrorf("parsing version %q failed", tag2).AddError(err)
 	}
 
 	if pv1.Major != pv2.Major {
@@ -721,12 +742,14 @@ func (p *CalVerYYYYMMDDParser) Parse(tag string) (*ParsedVersion, error) {
 
 	matches := calverYYYYMMDD.FindStringSubmatch(tag)
 	if len(matches) < 4 {
-		return nil, apperror.NewError("failed to parse YYYY.MM.DD CalVer format")
+		return nil, apperror.NewError("parsing YYYY.MM.DD CalVer format failed")
 	}
 
-	year, _ := strconv.Atoi(matches[1])
-	month, _ := strconv.Atoi(matches[2])
-	day, _ := strconv.Atoi(matches[3])
+	nums, err := parseNumbers(matches[1:4]...)
+	if err != nil {
+		return nil, apperror.NewError("parsing CalVer components failed").AddError(err)
+	}
+	year, month, day := nums[0], nums[1], nums[2]
 
 	pv := &ParsedVersion{
 		Original: tag,
@@ -753,11 +776,11 @@ func (p *CalVerYYYYMMDDParser) Format() Format {
 func (p *CalVerYYYYMMDDParser) Compare(tag1, tag2 string) (int, error) {
 	pv1, err := p.Parse(tag1)
 	if err != nil {
-		return 0, err
+		return 0, apperror.NewErrorf("parsing version %q failed", tag1).AddError(err)
 	}
 	pv2, err := p.Parse(tag2)
 	if err != nil {
-		return 0, err
+		return 0, apperror.NewErrorf("parsing version %q failed", tag2).AddError(err)
 	}
 
 	if pv1.Year != pv2.Year {
@@ -795,12 +818,14 @@ func (p *CalVerYYMMMICROParser) Parse(tag string) (*ParsedVersion, error) {
 
 	matches := calverYYMMMICRO.FindStringSubmatch(tag)
 	if len(matches) < 4 {
-		return nil, apperror.NewError("failed to parse YY.MM.MICRO CalVer format")
+		return nil, apperror.NewError("parsing YY.MM.MICRO CalVer format failed")
 	}
 
-	year, _ := strconv.Atoi(matches[1])
-	month, _ := strconv.Atoi(matches[2])
-	micro, _ := strconv.Atoi(matches[3])
+	nums, err := parseNumbers(matches[1:4]...)
+	if err != nil {
+		return nil, apperror.NewError("parsing CalVer components failed").AddError(err)
+	}
+	year, month, micro := nums[0], nums[1], nums[2]
 
 	pv := &ParsedVersion{
 		Original: tag,
@@ -827,11 +852,11 @@ func (p *CalVerYYMMMICROParser) Format() Format {
 func (p *CalVerYYMMMICROParser) Compare(tag1, tag2 string) (int, error) {
 	pv1, err := p.Parse(tag1)
 	if err != nil {
-		return 0, err
+		return 0, apperror.NewErrorf("parsing version %q failed", tag1).AddError(err)
 	}
 	pv2, err := p.Parse(tag2)
 	if err != nil {
-		return 0, err
+		return 0, apperror.NewErrorf("parsing version %q failed", tag2).AddError(err)
 	}
 
 	if pv1.Year != pv2.Year {
@@ -869,11 +894,14 @@ func (p *CalVerYYYYWWParser) Parse(tag string) (*ParsedVersion, error) {
 
 	matches := calverYYYYWW.FindStringSubmatch(tag)
 	if len(matches) < 3 {
-		return nil, apperror.NewError("failed to parse YYYY.WW CalVer format")
+		return nil, apperror.NewError("parsing YYYY.WW CalVer format failed")
 	}
 
-	year, _ := strconv.Atoi(matches[1])
-	week, _ := strconv.Atoi(matches[2])
+	nums, err := parseNumbers(matches[1:3]...)
+	if err != nil {
+		return nil, apperror.NewError("parsing CalVer components failed").AddError(err)
+	}
+	year, week := nums[0], nums[1]
 
 	pv := &ParsedVersion{
 		Original: tag,
@@ -899,11 +927,11 @@ func (p *CalVerYYYYWWParser) Format() Format {
 func (p *CalVerYYYYWWParser) Compare(tag1, tag2 string) (int, error) {
 	pv1, err := p.Parse(tag1)
 	if err != nil {
-		return 0, err
+		return 0, apperror.NewErrorf("parsing version %q failed", tag1).AddError(err)
 	}
 	pv2, err := p.Parse(tag2)
 	if err != nil {
-		return 0, err
+		return 0, apperror.NewErrorf("parsing version %q failed", tag2).AddError(err)
 	}
 
 	if pv1.Year != pv2.Year {
@@ -934,13 +962,14 @@ func (p *CalVerYYYYMMDDMICROParser) Parse(tag string) (*ParsedVersion, error) {
 
 	matches := calverYYYYMMDDMICRO.FindStringSubmatch(tag)
 	if len(matches) < 5 {
-		return nil, apperror.NewError("failed to parse YYYY.MM.DD.MICRO CalVer format")
+		return nil, apperror.NewError("parsing YYYY.MM.DD.MICRO CalVer format failed")
 	}
 
-	year, _ := strconv.Atoi(matches[1])
-	month, _ := strconv.Atoi(matches[2])
-	day, _ := strconv.Atoi(matches[3])
-	micro, _ := strconv.Atoi(matches[4])
+	nums, err := parseNumbers(matches[1:5]...)
+	if err != nil {
+		return nil, apperror.NewError("parsing CalVer components failed").AddError(err)
+	}
+	year, month, day, micro := nums[0], nums[1], nums[2], nums[3]
 
 	pv := &ParsedVersion{
 		Original: tag,
@@ -968,11 +997,11 @@ func (p *CalVerYYYYMMDDMICROParser) Format() Format {
 func (p *CalVerYYYYMMDDMICROParser) Compare(tag1, tag2 string) (int, error) {
 	pv1, err := p.Parse(tag1)
 	if err != nil {
-		return 0, err
+		return 0, apperror.NewErrorf("parsing version %q failed", tag1).AddError(err)
 	}
 	pv2, err := p.Parse(tag2)
 	if err != nil {
-		return 0, err
+		return 0, apperror.NewErrorf("parsing version %q failed", tag2).AddError(err)
 	}
 
 	if pv1.Year != pv2.Year {
