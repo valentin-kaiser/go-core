@@ -15,6 +15,12 @@ import (
 	logpkg "github.com/valentin-kaiser/go-core/logging/log"
 )
 
+const (
+	concurrentIterations = 1000
+	packageName          = "p"
+	racePackageName      = "racepkg"
+)
+
 // The debug flag is toggled while another goroutine logs.
 func TestConcurrentDebugFlag(t *testing.T) {
 	a := logging.NewZerologAdapterWithLogger(zerolog.New(io.Discard)).SetLevel(logging.InfoLevel)
@@ -24,13 +30,13 @@ func TestConcurrentDebugFlag(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		for i := range 1000 {
+		for i := range concurrentIterations {
 			logging.Debug(i%2 == 0)
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		for range 1000 {
+		for range concurrentIterations {
 			a.Trace().Msg("x")
 			a.Info().Msg("x")
 		}
@@ -47,23 +53,23 @@ func TestConcurrentSetLevel(_ *testing.T) {
 	wg.Add(3)
 	go func() {
 		defer wg.Done()
-		for range 1000 {
+		for range concurrentIterations {
 			a.SetLevel(logging.DebugLevel)
 			s.SetLevel(logging.ErrorLevel)
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		for range 1000 {
+		for range concurrentIterations {
 			a.Info().Msg("x")
-			_ = a.WithPackage("p").GetLevel()
+			a.WithPackage(packageName).GetLevel()
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		for range 1000 {
-			_ = s.GetLevel()
-			_ = s.Enabled()
+		for range concurrentIterations {
+			s.GetLevel()
+			s.Enabled()
 		}
 	}()
 	wg.Wait()
@@ -72,14 +78,14 @@ func TestConcurrentSetLevel(_ *testing.T) {
 // A level change on the parent has to reach the cached package adapter.
 func TestWithPackageFollowsParentLevel(t *testing.T) {
 	a := logging.NewZerologAdapterWithLogger(zerolog.New(io.Discard)).SetLevel(logging.InfoLevel)
-	if got := a.WithPackage("p").GetLevel(); got != logging.InfoLevel {
+	if got := a.WithPackage(packageName).GetLevel(); got != logging.InfoLevel {
 		t.Fatalf("level = %v, want info", got)
 	}
 	a.SetLevel(logging.ErrorLevel)
-	if got := a.WithPackage("p").GetLevel(); got != logging.ErrorLevel {
+	if got := a.WithPackage(packageName).GetLevel(); got != logging.ErrorLevel {
 		t.Fatalf("package level = %v after parent change, want error", got)
 	}
-	if a.WithPackage("p") != a.WithPackage("p") {
+	if a.WithPackage(packageName) != a.WithPackage(packageName) {
 		t.Fatal("package adapter is not cached")
 	}
 }
@@ -87,9 +93,9 @@ func TestWithPackageFollowsParentLevel(t *testing.T) {
 // Global adapter and package overrides set at runtime must be picked up by existing package loggers.
 func TestPackageLoggerFollowsRegistry(t *testing.T) {
 	prev := logging.GetGlobalAdapterInterface()
-	t.Cleanup(func() { logging.SetGlobalAdapter(prev); logging.EnablePackage("racepkg") })
+	t.Cleanup(func() { logging.SetGlobalAdapter(prev); logging.EnablePackage(racePackageName) })
 
-	pl := logging.GetPackageLogger("racepkg")
+	pl := logging.GetPackageLogger(racePackageName)
 	logging.SetGlobalAdapter(logging.NewZerologAdapterWithLogger(zerolog.New(io.Discard)).SetLevel(logging.InfoLevel))
 	if got := pl.GetLevel(); got != logging.InfoLevel {
 		t.Fatalf("level = %v, want info", got)
@@ -98,11 +104,11 @@ func TestPackageLoggerFollowsRegistry(t *testing.T) {
 	if got := pl.GetLevel(); got != logging.ErrorLevel {
 		t.Fatalf("level = %v after global swap, want error", got)
 	}
-	logging.SetPackageLevel("racepkg", logging.WarnLevel)
+	logging.SetPackageLevel(racePackageName, logging.WarnLevel)
 	if got := pl.GetLevel(); got != logging.WarnLevel {
 		t.Fatalf("level = %v after package override, want warn", got)
 	}
-	logging.EnablePackage("racepkg")
+	logging.EnablePackage(racePackageName)
 	if got := pl.GetLevel(); got != logging.ErrorLevel {
 		t.Fatalf("level = %v after removing override, want error", got)
 	}
@@ -152,7 +158,7 @@ func TestFieldOutputMatchesInterface(t *testing.T) {
 // The standard adapter's line format must stay as it was while avoiding fmt for common values.
 func TestStandardAdapterLineFormat(t *testing.T) {
 	var buf bytes.Buffer
-	a := logging.NewStandardAdapterWithLogger(log.New(&buf, "", 0)).SetLevel(logging.InfoLevel).WithPackage("p")
+	a := logging.NewStandardAdapterWithLogger(log.New(&buf, "", 0)).SetLevel(logging.InfoLevel).WithPackage(packageName)
 	err := errors.New("boom")
 	a.Warn().Field("s", "text").Field("i", 42).Field("u", uint64(7)).Field("b", true).Field("f", 1.5).
 		Field("st", time.Second).Field("sl", []int{1, 2}).Err(err).Msg("hello")
