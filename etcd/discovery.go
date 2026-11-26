@@ -81,26 +81,25 @@ func (c *Client) WatchService(ctx context.Context, name string, handler func(Ser
 	watchCtx, cancel := context.WithCancel(ctx)
 	ch := c.raw.Watch(watchCtx, prefix, clientv3.WithPrefix(), clientv3.WithPrevKV())
 
-	go func() {
-		for {
-			select {
-			case <-watchCtx.Done():
-				return
-			case resp, ok := <-ch:
-				if !ok {
-					return
-				}
-				if resp.Canceled {
-					return
-				}
-				for _, ev := range resp.Events {
-					emit(ev, handler)
-				}
-			}
-		}
-	}()
+	go watchServiceEvents(watchCtx, ch, handler)
 
 	return cancel, nil
+}
+
+func watchServiceEvents(ctx context.Context, ch clientv3.WatchChan, handler func(ServiceEvent)) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case resp, ok := <-ch:
+			if !ok || resp.Canceled {
+				return
+			}
+			for _, ev := range resp.Events {
+				emit(ev, handler)
+			}
+		}
+	}
 }
 
 func emit(ev *clientv3.Event, handler func(ServiceEvent)) {

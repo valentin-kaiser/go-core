@@ -105,25 +105,28 @@ func (c *Client) Register(ctx context.Context, info Descriptor, ttl time.Duratio
 		done:    make(chan struct{}),
 	}
 
-	go func() {
-		defer close(reg.done)
-		for {
-			select {
-			case <-keepAliveCtx.Done():
-				return
-			case <-ctx.Done():
-				// Parent context cancelled - terminate registration.
-				apperror.Catch(func() error { return reg.Deregister(context.WithoutCancel(ctx)) }, "deregistering service after context cancellation failed")
-				return
-			case _, ok := <-ka:
-				if !ok {
-					return
-				}
-			}
-		}
-	}()
+	go reg.keepAlive(ctx, keepAliveCtx, ka)
 
 	return reg, nil
+}
+
+// keepAlive drains the keep-alive responses until the lease is lost, and deregisters the
+// service when the parent context is cancelled.
+func (r *Registration) keepAlive(ctx, keepAliveCtx context.Context, ka <-chan *clientv3.LeaseKeepAliveResponse) {
+	defer close(r.done)
+	for {
+		select {
+		case <-keepAliveCtx.Done():
+			return
+		case <-ctx.Done():
+			apperror.Catch(func() error { return r.Deregister(context.WithoutCancel(ctx)) }, "deregistering service after context cancellation failed")
+			return
+		case _, ok := <-ka:
+			if !ok {
+				return
+			}
+		}
+	}
 }
 
 // abortRegistration revokes the lease of a registration that did not complete and

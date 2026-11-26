@@ -110,34 +110,33 @@ func (s *source) Watch(ctx context.Context, onChange func(map[string]any)) (func
 	watchCtx, cancel := context.WithCancel(ctx)
 	ch := s.cli.raw.Watch(watchCtx, s.keyPrefix, clientv3.WithPrefix())
 
-	go func() {
-		for {
-			select {
-			case <-watchCtx.Done():
-				return
-			case resp, ok := <-ch:
-				if !ok {
-					return
-				}
-				if resp.Canceled || len(resp.Events) == 0 {
-					if resp.Canceled {
-						return
-					}
-					continue
-				}
-				values, err := s.Load(watchCtx)
-				if err != nil {
-					// Either the keys were deleted or another transient
-					// issue occurred; emit an empty map so the manager
-					// can re-bootstrap if needed.
-					values = map[string]any{}
-				}
-				onChange(values)
-			}
-		}
-	}()
+	go s.watchChanges(watchCtx, ch, onChange)
 
 	return cancel, nil
+}
+
+func (s *source) watchChanges(ctx context.Context, ch clientv3.WatchChan, onChange func(map[string]any)) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case resp, ok := <-ch:
+			if !ok || resp.Canceled {
+				return
+			}
+			if len(resp.Events) == 0 {
+				continue
+			}
+			values, err := s.Load(ctx)
+			if err != nil {
+				// Either the keys were deleted or another transient
+				// issue occurred; emit an empty map so the manager
+				// can re-bootstrap if needed.
+				values = map[string]any{}
+			}
+			onChange(values)
+		}
+	}
 }
 
 // flattenConfig marshals a Config to YAML and returns its flat dotted-key
@@ -173,15 +172,21 @@ func flatten(data map[string]any, prefix string, out map[string]any) {
 		case map[string]any:
 			flatten(nested, key, out)
 		case map[any]any:
-			conv := make(map[string]any, len(nested))
-			for nk, nv := range nested {
-				if ks, ok := nk.(string); ok {
-					conv[ks] = nv
-				}
-			}
-			flatten(conv, key, out)
+			flatten(stringKeyedMap(nested), key, out)
 		default:
 			out[strings.ToLower(key)] = v
 		}
 	}
+}
+
+// stringKeyedMap converts a map with generic keys to a map with string keys, dropping entries
+// whose key is not a string.
+func stringKeyedMap(generic map[any]any) map[string]any {
+	converted := make(map[string]any, len(generic))
+	for k, v := range generic {
+		if keyStr, ok := k.(string); ok {
+			converted[keyStr] = v
+		}
+	}
+	return converted
 }

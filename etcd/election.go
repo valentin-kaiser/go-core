@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 
 	"github.com/valentin-kaiser/go-core/apperror"
@@ -91,31 +92,32 @@ func (e *Election) Leader(ctx context.Context) (string, error) {
 // underlying session is lost.
 func (e *Election) Observe(ctx context.Context) <-chan string {
 	out := make(chan string, 1)
-	source := e.election.Observe(ctx)
-	go func() {
-		defer close(out)
-		for {
+	go e.forwardLeaders(ctx, out, e.election.Observe(ctx))
+	return out
+}
+
+func (e *Election) forwardLeaders(ctx context.Context, out chan<- string, source <-chan *clientv3.GetResponse) {
+	defer close(out)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-e.session.Done():
+			return
+		case resp, ok := <-source:
+			if !ok {
+				return
+			}
+			if len(resp.Kvs) == 0 {
+				continue
+			}
 			select {
+			case out <- string(resp.Kvs[0].Value):
 			case <-ctx.Done():
 				return
-			case <-e.session.Done():
-				return
-			case resp, ok := <-source:
-				if !ok {
-					return
-				}
-				if len(resp.Kvs) == 0 {
-					continue
-				}
-				select {
-				case out <- string(resp.Kvs[0].Value):
-				case <-ctx.Done():
-					return
-				}
 			}
 		}
-	}()
-	return out
+	}
 }
 
 // Resign relinquishes leadership (if held) and closes the underlying
