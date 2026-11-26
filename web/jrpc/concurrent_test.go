@@ -13,11 +13,9 @@ func TestUnaryConcurrentCalls(t *testing.T) {
 	mux := benchMux()
 
 	var wg sync.WaitGroup
-	for g := 0; g < 8; g++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for i := 0; i < 50; i++ {
+	for range 8 {
+		wg.Go(func() {
+			for range 50 {
 				req := httptest.NewRequest(http.MethodPost, "/rpc/Health/Check", strings.NewReader(`{"service":"x"}`))
 				rec := httptest.NewRecorder()
 				mux.ServeHTTP(rec, req)
@@ -26,7 +24,7 @@ func TestUnaryConcurrentCalls(t *testing.T) {
 					return
 				}
 			}
-		}()
+		})
 	}
 	wg.Wait()
 }

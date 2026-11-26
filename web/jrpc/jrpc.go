@@ -98,8 +98,8 @@ var (
 	errExpectedError            = apperror.NewError("expected error type in method return value")
 
 	// Cached reflection types to avoid repeated type operations
-	contextType = reflect.TypeOf((*context.Context)(nil)).Elem()
-	errorType   = reflect.TypeOf((*error)(nil)).Elem()
+	contextType = reflect.TypeFor[context.Context]()
+	errorType   = reflect.TypeFor[error]()
 )
 
 // upgrader is the WebSocket upgrader with default options
@@ -111,7 +111,7 @@ var upgrader = websocket.Upgrader{
 
 // bufferPool provides a pool of byte buffers for JSON operations
 var bufferPool = sync.Pool{
-	New: func() interface{} {
+	New: func() any {
 		buf := make([]byte, 0, 1024) // Pre-allocate 1KB buffers
 		return &buf
 	},
@@ -134,6 +134,7 @@ const (
 // protocol buffer message handling, and context enrichment.
 type Service struct {
 	Server
+
 	methods            map[string]*methodInfo                  // cached method information for faster lookup
 	types              map[protoreflect.FullName]proto.Message // cached message types
 	caseInsensitive    bool                                    // enables case-insensitive method lookups
@@ -550,14 +551,6 @@ func GetWebSocketConn(ctx context.Context) (*websocket.Conn, bool) {
 	return conn, ok
 }
 
-func (s *Service) call(ctx context.Context, service, method string, req proto.Message) (any, error) {
-	methodInfo, err := s.find(service, method)
-	if err != nil {
-		return nil, err
-	}
-	return s.invoke(ctx, methodInfo, service, method, req)
-}
-
 // invoke calls an already resolved method
 func (s *Service) invoke(ctx context.Context, methodInfo *methodInfo, service, method string, req proto.Message) (any, error) {
 	var err error
@@ -584,7 +577,7 @@ func (s *Service) invoke(ctx context.Context, methodInfo *methodInfo, service, m
 	}
 
 	wanted := mt.In(1)
-	if wanted.Kind() != reflect.Ptr {
+	if wanted.Kind() != reflect.Pointer {
 		return nil, apperror.Wrap(errRequestMustBePointer)
 	}
 
@@ -610,7 +603,7 @@ func (s *Service) invoke(ctx context.Context, methodInfo *methodInfo, service, m
 		if err != nil {
 			return nil, apperror.Wrap(err)
 		}
-		pm, ok := reqPtr.Interface().(proto.Message)
+		pm, ok := reflect.TypeAssert[proto.Message](reqPtr)
 		if !ok {
 			return nil, apperror.Wrap(errExpectedProtoMessage)
 		}
@@ -624,7 +617,7 @@ func (s *Service) invoke(ctx context.Context, methodInfo *methodInfo, service, m
 	// Ensure the request value is never a nil pointer. If it is, initialize
 	// a zero-value instance of the expected type so handlers always receive
 	// a non-nil argument.
-	if reqVal.Kind() == reflect.Ptr && reqVal.IsNil() {
+	if reqVal.Kind() == reflect.Pointer && reqVal.IsNil() {
 		reqVal = reflect.New(reqVal.Type().Elem())
 	}
 
@@ -754,7 +747,7 @@ func (s *Service) handleServerStream(ctx context.Context, conn *websocket.Conn, 
 	}
 
 	if reqPtr.IsValid() && len(reflect.ValueOf(msg).Elem().String()) > 0 {
-		pmsg, ok := reqPtr.Interface().(proto.Message)
+		pmsg, ok := reflect.TypeAssert[proto.Message](reqPtr)
 		if !ok {
 			s.closeWS(conn, websocket.CloseInternalServerErr, apperror.NewError("request message is not a proto message"))
 			return
@@ -783,7 +776,7 @@ func (s *Service) handleServerStream(ctx context.Context, conn *websocket.Conn, 
 		return
 	}
 
-	if reqVal.Kind() == reflect.Ptr && reqVal.IsNil() {
+	if reqVal.Kind() == reflect.Pointer && reqVal.IsNil() {
 		reqVal = reflect.New(reqVal.Type().Elem())
 	}
 
@@ -883,11 +876,11 @@ func (s *Service) readWSMessage(conn *websocket.Conn, msgPtr reflect.Value) erro
 		return apperror.NewError("only text messages are supported")
 	}
 
-	if msgPtr.Type().Kind() != reflect.Ptr {
+	if msgPtr.Type().Kind() != reflect.Pointer {
 		return apperror.NewError("message type is not a pointer")
 	}
 
-	msg, ok := msgPtr.Interface().(proto.Message)
+	msg, ok := reflect.TypeAssert[proto.Message](msgPtr)
 	if !ok {
 		return apperror.NewError("message type is not a proto message")
 	}
@@ -940,7 +933,7 @@ func (s *Service) startMessageReader(ctx context.Context, conn *websocket.Conn, 
 func (s *Service) writeWSMessage(conn *websocket.Conn, val reflect.Value, t reflect.Type) error {
 	var out any
 	switch t.Kind() {
-	case reflect.Ptr, reflect.Struct:
+	case reflect.Pointer, reflect.Struct:
 		out = val.Interface()
 	default:
 		return apperror.NewError("unsupported type for websocket message")
@@ -1087,7 +1080,7 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 		}
 
 		// Validate input channel type: chan *InputMsg
-		if mt.In(1).Kind() != reflect.Chan || mt.In(1).Elem().Kind() != reflect.Ptr {
+		if mt.In(1).Kind() != reflect.Chan || mt.In(1).Elem().Kind() != reflect.Pointer {
 			return StreamingTypeInvalid, apperror.NewError("second parameter must be chan *InputMsg")
 		}
 		actualInputType := mt.In(1).Elem().Elem() // chan *T -> T
@@ -1101,7 +1094,7 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 		}
 		actualOutputType := mt.In(2).Elem() // chan T -> T
 		// For output, we need to handle both *T and T cases
-		if actualOutputType.Kind() == reflect.Ptr {
+		if actualOutputType.Kind() == reflect.Pointer {
 			actualOutputType = actualOutputType.Elem()
 		}
 		if !s.typesMatch(actualOutputType, outputType) {
@@ -1117,7 +1110,7 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 		}
 
 		// Validate input type: *InputMsg
-		if mt.In(1).Kind() != reflect.Ptr {
+		if mt.In(1).Kind() != reflect.Pointer {
 			return StreamingTypeInvalid, apperror.NewError("second parameter must be *InputMsg")
 		}
 		actualInputType := mt.In(1).Elem() // *T -> T
@@ -1130,7 +1123,7 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 			return StreamingTypeInvalid, apperror.NewError("third parameter must be send chan OutputMsg")
 		}
 		actualOutputType := mt.In(2).Elem() // chan T -> T
-		if actualOutputType.Kind() == reflect.Ptr {
+		if actualOutputType.Kind() == reflect.Pointer {
 			actualOutputType = actualOutputType.Elem()
 		}
 		if !s.typesMatch(actualOutputType, outputType) {
@@ -1146,7 +1139,7 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 		}
 
 		// Validate input channel type: chan *InputMsg
-		if mt.In(1).Kind() != reflect.Chan || mt.In(1).Elem().Kind() != reflect.Ptr {
+		if mt.In(1).Kind() != reflect.Chan || mt.In(1).Elem().Kind() != reflect.Pointer {
 			return StreamingTypeInvalid, apperror.NewError("second parameter must be chan *InputMsg")
 		}
 		actualInputType := mt.In(1).Elem().Elem() // chan *T -> T
@@ -1156,7 +1149,7 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 
 		// Validate output type: OutputMsg or *OutputMsg
 		actualOutputType := mt.Out(0)
-		if actualOutputType.Kind() == reflect.Ptr {
+		if actualOutputType.Kind() == reflect.Pointer {
 			actualOutputType = actualOutputType.Elem()
 		}
 		if !s.typesMatch(actualOutputType, outputType) {
@@ -1172,7 +1165,7 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 		}
 
 		// Validate input type: *InputMsg
-		if mt.In(1).Kind() != reflect.Ptr {
+		if mt.In(1).Kind() != reflect.Pointer {
 			return StreamingTypeInvalid, apperror.NewError("second parameter must be *InputMsg")
 		}
 		actualInputType := mt.In(1).Elem() // *T -> T
@@ -1182,7 +1175,7 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 
 		// Validate output type: OutputMsg or *OutputMsg
 		actualOutputType := mt.Out(0)
-		if actualOutputType.Kind() == reflect.Ptr {
+		if actualOutputType.Kind() == reflect.Pointer {
 			actualOutputType = actualOutputType.Elem()
 		}
 		if !s.typesMatch(actualOutputType, outputType) {
