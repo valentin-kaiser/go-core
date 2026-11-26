@@ -19,6 +19,12 @@ const (
 	aesKey256Bytes = 32
 )
 
+// aeadCache is a GCM cipher together with the key it was built from
+type aeadCache struct {
+	key  []byte
+	aead cipher.AEAD
+}
+
 // AesCipher is a struct that provides methods for encrypting and decrypting data using AES.
 // It uses the crypto/aes and crypto/cipher packages from the Go standard library.
 type AesCipher struct {
@@ -28,30 +34,6 @@ type AesCipher struct {
 	// most of the cost of encrypting a short message. It is an atomic pointer so a cipher that
 	// is only used for successful calls stays safe to share between goroutines.
 	aead atomic.Pointer[aeadCache]
-}
-
-// aeadCache is a GCM cipher together with the key it was built from
-type aeadCache struct {
-	key  []byte
-	aead cipher.AEAD
-}
-
-// gcm returns the GCM cipher for the current passphrase, building it only when the passphrase changed.
-func (a *AesCipher) gcm() (cipher.AEAD, error) {
-	if cached := a.aead.Load(); cached != nil && bytes.Equal(cached.key, a.passphrase) {
-		return cached.aead, nil
-	}
-
-	block, err := aes.NewCipher(a.passphrase)
-	if err != nil {
-		return nil, apperror.NewError("creating AES cipher failed").AddError(err)
-	}
-	aead, err := cipher.NewGCM(block)
-	if err != nil {
-		return nil, apperror.NewError("creating GCM cipher failed").AddError(err)
-	}
-	a.aead.Store(&aeadCache{key: append([]byte(nil), a.passphrase...), aead: aead})
-	return aead, nil
 }
 
 // NewAesCipher creates a new AesCipher instance with the specified key.
@@ -163,4 +145,22 @@ func (a *AesCipher) Decrypt(ciphertext string, out io.Writer) *AesCipher {
 	}
 
 	return a
+}
+
+// gcm returns the GCM cipher for the current passphrase, building it only when the passphrase changed.
+func (a *AesCipher) gcm() (cipher.AEAD, error) {
+	if cached := a.aead.Load(); cached != nil && bytes.Equal(cached.key, a.passphrase) {
+		return cached.aead, nil
+	}
+
+	block, err := aes.NewCipher(a.passphrase)
+	if err != nil {
+		return nil, apperror.NewError("creating AES cipher failed").AddError(err)
+	}
+	aead, err := cipher.NewGCM(block)
+	if err != nil {
+		return nil, apperror.NewError("creating GCM cipher failed").AddError(err)
+	}
+	a.aead.Store(&aeadCache{key: append([]byte(nil), a.passphrase...), aead: aead})
+	return aead, nil
 }
