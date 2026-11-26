@@ -476,7 +476,7 @@ func (rc *RedisCache) GetSet(ctx context.Context, key string, value interface{})
 		return nil, false, NewCacheError("getset", key, err)
 	}
 
-	oldData, err := rc.client.GetSet(ctx, formattedKey, data).Result()
+	oldData, err := rc.client.SetArgs(ctx, formattedKey, data, redis.SetArgs{Get: true}).Result()
 	if err != nil {
 		if err == redis.Nil {
 			rc.updateStats(func(s *Stats) { s.Sets++ })
