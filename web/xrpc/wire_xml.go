@@ -9,6 +9,21 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const (
+	xmlElemBatch    = "batch"
+	xmlElemRequest  = "request"
+	xmlElemResponse = "response"
+	xmlElemParams   = "params"
+	xmlElemData     = "data"
+	xmlElemError    = "error"
+	xmlElemResult   = "result"
+
+	xmlAttrID      = "id"
+	xmlAttrMethod  = "method"
+	xmlAttrCode    = "code"
+	xmlAttrMessage = "message"
+)
+
 // xmlWire carries JSON-RPC 2.0 semantics in XML:
 //
 //	<request id="1" method="Service.Method"><params>…</params></request>
@@ -20,7 +35,7 @@ import (
 type xmlWire struct{ c codec }
 
 func (xmlWire) protocol() Protocol  { return ProtocolXML }
-func (xmlWire) contentType() string { return "application/xml" }
+func (xmlWire) contentType() string { return mediaTypeXML }
 
 func (w xmlWire) parse(data []byte) ([]*envelope, bool, *Error) {
 	root, err := parseXML(data)
@@ -30,7 +45,7 @@ func (w xmlWire) parse(data []byte) ([]*envelope, bool, *Error) {
 	if root == nil {
 		return nil, false, NewError(CodeParseError, "parse error")
 	}
-	if root.name == "batch" {
+	if root.name == xmlElemBatch {
 		if len(root.kids) == 0 {
 			return nil, true, NewError(CodeInvalidRequest, "invalid request")
 		}
@@ -45,19 +60,19 @@ func (w xmlWire) parse(data []byte) ([]*envelope, bool, *Error) {
 
 func (w xmlWire) parseOne(n *xmlNode) *envelope {
 	e := &envelope{}
-	if v, ok := n.attr("id"); ok {
+	if v, ok := n.attr(xmlAttrID); ok {
 		e.id = rpcID{set: true, text: v}
 	}
 
 	switch n.name {
-	case "request":
-		method, _ := n.attr("method")
+	case xmlElemRequest:
+		method, _ := n.attr(xmlAttrMethod)
 		if method == "" {
 			e.err = NewError(CodeInvalidRequest, "invalid request")
 			return e
 		}
 		e.method = method
-		params := n.child("params")
+		params := n.child(xmlElemParams)
 		e.bind = func(m proto.Message) error {
 			if params == nil {
 				return nil
@@ -68,11 +83,11 @@ func (w xmlWire) parseOne(n *xmlNode) *envelope {
 			if params == nil {
 				return rpcID{}, nil, errMissingStreamID
 			}
-			v, ok := params.attr("id")
+			v, ok := params.attr(xmlAttrID)
 			if !ok {
 				return rpcID{}, nil, errMissingStreamID
 			}
-			data := params.child("data")
+			data := params.child(xmlElemData)
 			return rpcID{set: true, text: v}, func(m proto.Message) error {
 				if data == nil {
 					return nil
@@ -80,16 +95,16 @@ func (w xmlWire) parseOne(n *xmlNode) *envelope {
 				return w.c.readXMLFields(data, m.ProtoReflect(), 0)
 			}, nil
 		}
-	case "response":
+	case xmlElemResponse:
 		e.isResp = true
-		if er := n.child("error"); er != nil {
-			code, _ := er.attr("code")
-			msg, _ := er.attr("message")
+		if er := n.child(xmlElemError); er != nil {
+			code, _ := er.attr(xmlAttrCode)
+			msg, _ := er.attr(xmlAttrMessage)
 			c, _ := strconv.Atoi(code)
 			e.err = &Error{Code: c, Message: msg}
 			return e
 		}
-		result := n.child("result")
+		result := n.child(xmlElemResult)
 		e.bind = func(m proto.Message) error {
 			if m == nil || result == nil {
 				return nil
@@ -141,11 +156,11 @@ func (w xmlWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
 		b.WriteByte('>')
 		if r.err != nil {
 			b.WriteString("<error")
-			err := writeAttr(&b, "code", strconv.Itoa(r.err.Code))
+			err := writeAttr(&b, xmlAttrCode, strconv.Itoa(r.err.Code))
 			if err != nil {
 				return nil, apperror.NewError("writing error code failed").AddError(err)
 			}
-			err = writeAttr(&b, "message", r.err.Message)
+			err = writeAttr(&b, xmlAttrMessage, r.err.Message)
 			if err != nil {
 				return nil, apperror.NewError("writing error message failed").AddError(err)
 			}
@@ -184,7 +199,7 @@ func (w xmlWire) encodeRequest(id rpcID, method string, params proto.Message) ([
 	if err != nil {
 		return nil, apperror.NewError("writing request id failed").AddError(err)
 	}
-	err = writeAttr(&b, "method", method)
+	err = writeAttr(&b, xmlAttrMethod, method)
 	if err != nil {
 		return nil, apperror.NewError("writing request method failed").AddError(err)
 	}
@@ -204,12 +219,12 @@ func (w xmlWire) encodeRequest(id rpcID, method string, params proto.Message) ([
 func (w xmlWire) encodeEvent(method string, id rpcID, data proto.Message) ([]byte, error) {
 	var b bytes.Buffer
 	b.WriteString("<request")
-	err := writeAttr(&b, "method", method)
+	err := writeAttr(&b, xmlAttrMethod, method)
 	if err != nil {
 		return nil, apperror.NewError("writing event method failed").AddError(err)
 	}
 	b.WriteString("><params")
-	err = writeAttr(&b, "id", id.text)
+	err = writeAttr(&b, xmlAttrID, id.text)
 	if err != nil {
 		return nil, apperror.NewError("writing event id failed").AddError(err)
 	}

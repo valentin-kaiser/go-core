@@ -19,8 +19,31 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-// maxDepth limits message nesting on decode and encode.
-const maxDepth = 100
+const (
+	// maxDepth limits message nesting on decode and encode.
+	maxDepth = 100
+	// maxXMLDepth allows two XML levels per message level.
+	maxXMLDepth = maxDepth * 2
+
+	decimalBase = 10
+	bitSize32   = 32
+	bitSize64   = 64
+
+	textNaN    = "NaN"
+	textPosInf = "Infinity"
+	textNegInf = "-Infinity"
+	textTrue   = "true"
+	textFalse  = "false"
+	textNull   = "null"
+
+	firstPrintableASCII = 0x20
+	hexNibbleBits       = 4
+	hexNibbleMask       = 0xf
+
+	xmlAttrKey        = "k"
+	xmlAttrEncoding   = "enc"
+	xmlEncodingBase64 = "b64"
+)
 
 var errDepth = apperror.NewError("message nesting too deep")
 
@@ -62,7 +85,7 @@ func setFields(m protoreflect.Message) []fieldValue {
 	var out []fieldValue
 	m.Range(func(fd protoreflect.FieldDescriptor, v protoreflect.Value) bool {
 		if !fd.IsExtension() {
-			out = append(out, fieldValue{fd, v})
+			out = append(out, fieldValue{fd: fd, v: v})
 		}
 		return true
 	})
@@ -97,7 +120,7 @@ func (c codec) xmlName(fd protoreflect.FieldDescriptor) string {
 func lookupField(md protoreflect.MessageDescriptor, key string) protoreflect.FieldDescriptor {
 	fields := md.Fields()
 	num := strings.TrimPrefix(key, "_")
-	n, err := strconv.ParseInt(num, 10, 32)
+	n, err := strconv.ParseInt(num, decimalBase, bitSize32)
 	if err == nil {
 		return fields.ByNumber(protoreflect.FieldNumber(n))
 	}
@@ -113,19 +136,19 @@ func scalarText(fd protoreflect.FieldDescriptor, v protoreflect.Value) string {
 		return strconv.FormatBool(v.Bool())
 	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind,
 		protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
-		return strconv.FormatInt(v.Int(), 10)
+		return strconv.FormatInt(v.Int(), decimalBase)
 	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind, protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
-		return strconv.FormatUint(v.Uint(), 10)
+		return strconv.FormatUint(v.Uint(), decimalBase)
 	case protoreflect.FloatKind:
-		return formatFloat(v.Float(), 32)
+		return formatFloat(v.Float(), bitSize32)
 	case protoreflect.DoubleKind:
-		return formatFloat(v.Float(), 64)
+		return formatFloat(v.Float(), bitSize64)
 	case protoreflect.StringKind:
 		return v.String()
 	case protoreflect.BytesKind:
 		return base64.StdEncoding.EncodeToString(v.Bytes())
 	case protoreflect.EnumKind:
-		return strconv.FormatInt(int64(v.Enum()), 10)
+		return strconv.FormatInt(int64(v.Enum()), decimalBase)
 	}
 	return ""
 }
@@ -133,11 +156,11 @@ func scalarText(fd protoreflect.FieldDescriptor, v protoreflect.Value) string {
 func formatFloat(f float64, bits int) string {
 	switch {
 	case math.IsNaN(f):
-		return "NaN"
+		return textNaN
 	case math.IsInf(f, 1):
-		return "Infinity"
+		return textPosInf
 	case math.IsInf(f, -1):
-		return "-Infinity"
+		return textNegInf
 	}
 	return strconv.FormatFloat(f, 'g', -1, bits)
 }
@@ -146,29 +169,29 @@ func parseScalar(fd protoreflect.FieldDescriptor, s string) (protoreflect.Value,
 	switch fd.Kind() {
 	case protoreflect.BoolKind:
 		switch s {
-		case "true":
+		case textTrue:
 			return protoreflect.ValueOfBool(true), nil
-		case "false":
+		case textFalse:
 			return protoreflect.ValueOfBool(false), nil
 		}
 		return protoreflect.Value{}, apperror.NewErrorf("invalid bool %q", s)
 	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
-		n, err := strconv.ParseInt(s, 10, 32)
+		n, err := strconv.ParseInt(s, decimalBase, bitSize32)
 		return protoreflect.ValueOfInt32(int32(n)), err
 	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
-		n, err := strconv.ParseInt(s, 10, 64)
+		n, err := strconv.ParseInt(s, decimalBase, bitSize64)
 		return protoreflect.ValueOfInt64(n), err
 	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
-		n, err := strconv.ParseUint(s, 10, 32)
+		n, err := strconv.ParseUint(s, decimalBase, bitSize32)
 		return protoreflect.ValueOfUint32(uint32(n)), err
 	case protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
-		n, err := strconv.ParseUint(s, 10, 64)
+		n, err := strconv.ParseUint(s, decimalBase, bitSize64)
 		return protoreflect.ValueOfUint64(n), err
 	case protoreflect.FloatKind:
-		f, err := strconv.ParseFloat(s, 32)
+		f, err := strconv.ParseFloat(s, bitSize32)
 		return protoreflect.ValueOfFloat32(float32(f)), err
 	case protoreflect.DoubleKind:
-		f, err := strconv.ParseFloat(s, 64)
+		f, err := strconv.ParseFloat(s, bitSize64)
 		return protoreflect.ValueOfFloat64(f), err
 	case protoreflect.StringKind:
 		if !utf8.ValidString(s) {
@@ -179,7 +202,7 @@ func parseScalar(fd protoreflect.FieldDescriptor, s string) (protoreflect.Value,
 		b, err := decodeBase64(s)
 		return protoreflect.ValueOfBytes(b), err
 	case protoreflect.EnumKind:
-		n, err := strconv.ParseInt(s, 10, 32)
+		n, err := strconv.ParseInt(s, decimalBase, bitSize32)
 		if err == nil {
 			return protoreflect.ValueOfEnum(protoreflect.EnumNumber(n)), nil
 		}
@@ -323,8 +346,8 @@ func appendString(b []byte, s string) []byte {
 			b = append(b, '\\', 'r')
 		case ch == '\t':
 			b = append(b, '\\', 't')
-		case ch < 0x20:
-			b = append(b, '\\', 'u', '0', '0', hexDigits[ch>>4], hexDigits[ch&0xf])
+		case ch < firstPrintableASCII:
+			b = append(b, '\\', 'u', '0', '0', hexDigits[ch>>hexNibbleBits], hexDigits[ch&hexNibbleMask])
 		default:
 			b = append(b, ch)
 		}
@@ -332,7 +355,7 @@ func appendString(b []byte, s string) []byte {
 	return append(b, '"')
 }
 
-func isNull(raw []byte) bool { return bytes.Equal(bytes.TrimSpace(raw), []byte("null")) }
+func isNull(raw []byte) bool { return bytes.Equal(bytes.TrimSpace(raw), []byte(textNull)) }
 
 func (c codec) readJSON(data []byte, m protoreflect.Message, depth int) error {
 	if depth > maxDepth {
@@ -500,7 +523,7 @@ func parseXML(data []byte) (*xmlNode, error) {
 		switch t := tok.(type) {
 		case xml.StartElement:
 			count++
-			if count > maxXMLNodes || len(stack) >= maxDepth*2 {
+			if count > maxXMLNodes || len(stack) >= maxXMLDepth {
 				return nil, errDepth
 			}
 			n := &xmlNode{name: t.Name.Local}
@@ -663,7 +686,7 @@ func (c codec) readXMLField(m protoreflect.Message, fd protoreflect.FieldDescrip
 		list.Append(v)
 		return nil
 	case fd.IsMap():
-		ks, ok := n.attr("k")
+		ks, ok := n.attr(xmlAttrKey)
 		if !ok {
 			return apperror.NewError("map entry without key attribute")
 		}
@@ -698,7 +721,7 @@ func (c codec) readXMLValue(fd protoreflect.FieldDescriptor, n *xmlNode, cur pro
 	}
 	text := n.text
 	switch {
-	case fd.Kind() == protoreflect.StringKind && n.attrs["enc"] == "b64":
+	case fd.Kind() == protoreflect.StringKind && n.attrs[xmlAttrEncoding] == xmlEncodingBase64:
 		raw, err := decodeBase64(strings.TrimSpace(text))
 		if err != nil {
 			return protoreflect.Value{}, err

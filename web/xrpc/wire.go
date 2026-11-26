@@ -26,6 +26,12 @@ const (
 	methodCancel  = "xrpc.cancel"  // client aborts a stream
 )
 
+const (
+	jsonRPCVersion = "2.0"
+	idPrefixNumber = "n"
+	idPrefixString = "s"
+)
+
 type rpcID struct {
 	set  bool
 	null bool
@@ -35,15 +41,15 @@ type rpcID struct {
 
 func (i rpcID) key() string {
 	if i.num {
-		return "n" + i.text
+		return idPrefixNumber + i.text
 	}
-	return "s" + i.text
+	return idPrefixString + i.text
 }
 
 func (i rpcID) appendJSON(b []byte) []byte {
 	switch {
 	case !i.set || i.null:
-		return append(b, "null"...)
+		return append(b, textNull...)
 	case i.num:
 		return append(b, i.text...)
 	}
@@ -51,7 +57,7 @@ func (i rpcID) appendJSON(b []byte) []byte {
 }
 
 func numericID(n uint64) rpcID {
-	return rpcID{set: true, num: true, text: strconv.FormatUint(n, 10)}
+	return rpcID{set: true, num: true, text: strconv.FormatUint(n, decimalBase)}
 }
 
 func parseJSONID(raw []byte) (rpcID, bool) {
@@ -105,15 +111,15 @@ type wire interface {
 
 func newWire(p Protocol, c codec) wire {
 	if p == ProtocolXML {
-		return xmlWire{c}
+		return xmlWire{c: c}
 	}
-	return jsonWire{c}
+	return jsonWire{c: c}
 }
 
 type jsonWire struct{ c codec }
 
 func (jsonWire) protocol() Protocol  { return ProtocolJSON }
-func (jsonWire) contentType() string { return "application/json" }
+func (jsonWire) contentType() string { return mediaTypeJSON }
 
 func (w jsonWire) parse(data []byte) ([]*envelope, bool, *Error) {
 	data = bytes.TrimSpace(data)
@@ -156,7 +162,7 @@ func (w jsonWire) parseOne(raw []byte) *envelope {
 	if !ok {
 		return invalid(rpcID{set: true, null: true})
 	}
-	if msg.Version != "2.0" {
+	if msg.Version != jsonRPCVersion {
 		return invalid(id)
 	}
 
@@ -252,7 +258,7 @@ func (w jsonWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
 		b = append(b, `{"jsonrpc":"2.0",`...)
 		if r.err != nil {
 			b = append(b, `"error":{"code":`...)
-			b = strconv.AppendInt(b, int64(r.err.Code), 10)
+			b = strconv.AppendInt(b, int64(r.err.Code), decimalBase)
 			b = append(b, `,"message":`...)
 			b = appendString(b, r.err.Message)
 			if r.err.Data != nil {
@@ -266,7 +272,7 @@ func (w jsonWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
 		} else {
 			b = append(b, `"result":`...)
 			if r.result == nil {
-				b = append(b, "null"...)
+				b = append(b, textNull...)
 			} else {
 				b, err = w.c.appendJSON(b, r.result.ProtoReflect(), 0)
 				if err != nil {
