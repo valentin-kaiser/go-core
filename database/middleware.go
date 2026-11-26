@@ -254,6 +254,9 @@ func (s *statement) QueryContext(ctx context.Context, args []d.NamedValue) (d.Ro
 	return rows, err
 }
 
+// startTimeKey is the context key of the time a statement started
+type startTimeKey struct{}
+
 // LoggingMiddleware logs all SQL statements and their execution time
 type LoggingMiddleware struct {
 	logger  logging.Adapter
@@ -285,9 +288,6 @@ func (m *LoggingMiddleware) SetTrace(enabled bool) *LoggingMiddleware {
 func (m *LoggingMiddleware) IsEnabled() bool {
 	return m.enabled.Load()
 }
-
-// startTimeKey is the context key of the time a statement started
-type startTimeKey struct{}
 
 // BeforeExec remembers when the statement started, if logging is enabled
 func (m *LoggingMiddleware) BeforeExec(ctx context.Context, _ string, _ []d.NamedValue) context.Context {
