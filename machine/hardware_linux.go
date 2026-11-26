@@ -12,6 +12,41 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
+const (
+	machineIDPrefix = "machine:"
+
+	procCPUInfoPath           = "/proc/cpuinfo"
+	dmiProductUUIDPath        = "/sys/class/dmi/id/product_uuid"
+	virtualDMIProductUUIDPath = "/sys/devices/virtual/dmi/id/product_uuid"
+	dmiBoardSerialPath        = "/sys/class/dmi/id/board_serial"
+	virtualDMIBoardSerialPath = "/sys/devices/virtual/dmi/id/board_serial"
+	machineIDPath             = "/etc/machine-id"
+	dbusMachineIDPath         = "/var/lib/dbus/machine-id"
+	sysClassNetPath           = "/sys/class/net"
+	sysBlockPath              = "/sys/block"
+
+	cpuInfoSeparator = ":"
+	cpuInfoParts     = 2
+	cpuInfoProcessor = "processor"
+	cpuInfoVendorID  = "vendor_id"
+	cpuInfoModelName = "model name"
+	cpuInfoFlags     = "flags"
+	cpuIDFormat      = "%s:%s:%s:%s"
+
+	nullUUID          = "00000000-0000-0000-0000-000000000000"
+	loopbackInterface = "lo"
+	macAddressFile    = "address"
+	loopDevicePrefix  = "loop"
+	blockDeviceDir    = "device"
+	blockSerialFile   = "serial"
+
+	lsblkCommand      = "lsblk"
+	lsblkNoPartitions = "-d"
+	lsblkNoHeadings   = "-n"
+	lsblkOutputFlag   = "-o"
+	lsblkSerialColumn = "SERIAL"
+)
+
 // collectHardwareIdentifiersWithOptions gathers Linux-specific hardware identifiers based on generator config
 func collectHardwareIdentifiersWithOptions(g *generator) ([]string, error) {
 	if g == nil {
@@ -21,20 +56,20 @@ func collectHardwareIdentifiersWithOptions(g *generator) ([]string, error) {
 	var collectors []func() []string
 
 	if g.includeCPU {
-		collectors = append(collectors, func() []string { return collectIfValid(getLinuxCPUID, "cpu:") })
+		collectors = append(collectors, func() []string { return collectIfValid(getLinuxCPUID, cpuPrefix) })
 	}
 	if g.includeSystemUUID {
-		collectors = append(collectors, func() []string { return collectIfValid(getLinuxSystemUUID, "uuid:") })
-		collectors = append(collectors, func() []string { return collectIfValid(getLinuxMachineID, "machine:") })
+		collectors = append(collectors, func() []string { return collectIfValid(getLinuxSystemUUID, uuidPrefix) })
+		collectors = append(collectors, func() []string { return collectIfValid(getLinuxMachineID, machineIDPrefix) })
 	}
 	if g.includeMotherboard {
-		collectors = append(collectors, func() []string { return collectIfValid(getLinuxMotherboardSerial, "mb:") })
+		collectors = append(collectors, func() []string { return collectIfValid(getLinuxMotherboardSerial, motherboardPrefix) })
 	}
 	if g.includeMAC {
-		collectors = append(collectors, func() []string { return collectMultipleIfValid(getLinuxMACAddresses, "mac:") })
+		collectors = append(collectors, func() []string { return collectMultipleIfValid(getLinuxMACAddresses, macPrefix) })
 	}
 	if g.includeDisk {
-		collectors = append(collectors, func() []string { return collectMultipleIfValid(getLinuxDiskSerials, "disk:") })
+		collectors = append(collectors, func() []string { return collectMultipleIfValid(getLinuxDiskSerials, diskPrefix) })
 	}
 
 	return collectFromAll(collectors), nil
@@ -82,7 +117,7 @@ func collectFromAll(collectors []func() []string) []string {
 
 // getLinuxCPUID retrieves CPU information from /proc/cpuinfo
 func getLinuxCPUID() (string, error) {
-	data, err := os.ReadFile("/proc/cpuinfo")
+	data, err := os.ReadFile(procCPUInfoPath)
 	switch err {
 	case nil:
 		return parseCPUInfo(string(data)), nil
@@ -93,36 +128,36 @@ func getLinuxCPUID() (string, error) {
 
 // parseCPUInfo extracts CPU information from /proc/cpuinfo content
 func parseCPUInfo(content string) string {
-	lines := strings.Split(content, "\n")
+	lines := strings.Split(content, lineSeparator)
 	var processor, vendorID, modelName, flags string
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		parts := strings.SplitN(line, ":", 2)
+		parts := strings.SplitN(line, cpuInfoSeparator, cpuInfoParts)
 		switch {
-		case len(parts) != 2:
+		case len(parts) != cpuInfoParts:
 			continue
-		case strings.HasPrefix(line, "processor"):
+		case strings.HasPrefix(line, cpuInfoProcessor):
 			processor = strings.TrimSpace(parts[1])
-		case strings.HasPrefix(line, "vendor_id"):
+		case strings.HasPrefix(line, cpuInfoVendorID):
 			vendorID = strings.TrimSpace(parts[1])
-		case strings.HasPrefix(line, "model name"):
+		case strings.HasPrefix(line, cpuInfoModelName):
 			modelName = strings.TrimSpace(parts[1])
-		case strings.HasPrefix(line, "flags"):
+		case strings.HasPrefix(line, cpuInfoFlags):
 			flags = strings.TrimSpace(parts[1])
 		}
 	}
 
 	// Combine CPU information for unique identifier
-	return fmt.Sprintf("%s:%s:%s:%s", processor, vendorID, modelName, flags)
+	return fmt.Sprintf(cpuIDFormat, processor, vendorID, modelName, flags)
 }
 
 // getLinuxSystemUUID retrieves system UUID from DMI
 func getLinuxSystemUUID() (string, error) {
 	// Try multiple locations for system UUID
 	locations := []string{
-		"/sys/class/dmi/id/product_uuid",
-		"/sys/devices/virtual/dmi/id/product_uuid",
+		dmiProductUUIDPath,
+		virtualDMIProductUUIDPath,
 	}
 
 	return readFirstValidFromLocations(locations, isValidUUID)
@@ -131,8 +166,8 @@ func getLinuxSystemUUID() (string, error) {
 // getLinuxMotherboardSerial retrieves motherboard serial number from DMI
 func getLinuxMotherboardSerial() (string, error) {
 	locations := []string{
-		"/sys/class/dmi/id/board_serial",
-		"/sys/devices/virtual/dmi/id/board_serial",
+		dmiBoardSerialPath,
+		virtualDMIBoardSerialPath,
 	}
 
 	return readFirstValidFromLocations(locations, isValidSerial)
@@ -141,8 +176,8 @@ func getLinuxMotherboardSerial() (string, error) {
 // getLinuxMachineID retrieves systemd machine ID
 func getLinuxMachineID() (string, error) {
 	locations := []string{
-		"/etc/machine-id",
-		"/var/lib/dbus/machine-id",
+		machineIDPath,
+		dbusMachineIDPath,
 	}
 
 	return readFirstValidFromLocations(locations, isNonEmpty)
@@ -167,7 +202,7 @@ func readFirstValidFromLocations(locations []string, validator func(string) bool
 // isValidUUID checks if UUID is valid (not empty or null)
 func isValidUUID(uuid string) bool {
 	switch uuid {
-	case "", "00000000-0000-0000-0000-000000000000":
+	case "", nullUUID:
 		return false
 	default:
 		return true
@@ -177,7 +212,7 @@ func isValidUUID(uuid string) bool {
 // isValidSerial checks if serial is valid (not empty or placeholder)
 func isValidSerial(serial string) bool {
 	switch serial {
-	case "", "To be filled by O.E.M.":
+	case "", placeholderSerial:
 		return false
 	default:
 		return true
@@ -194,18 +229,18 @@ func getLinuxMACAddresses() ([]string, error) {
 	var macs []string
 
 	// Read from /sys/class/net
-	netDir := "/sys/class/net"
+	netDir := sysClassNetPath
 	entries, err := os.ReadDir(netDir)
 	if err != nil {
 		return nil, apperror.NewErrorf("reading %s failed", netDir).AddError(err)
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != "lo" { // Skip loopback
-			macFile := filepath.Join(netDir, entry.Name(), "address")
+		if entry.IsDir() && entry.Name() != loopbackInterface { // Skip loopback
+			macFile := filepath.Join(netDir, entry.Name(), macAddressFile)
 			if data, err := os.ReadFile(macFile); err == nil {
 				mac := strings.TrimSpace(string(data))
-				if mac != "" && mac != "00:00:00:00:00:00" {
+				if mac != "" && mac != zeroMAC {
 					macs = append(macs, mac)
 				}
 			}
@@ -234,14 +269,14 @@ func getLinuxDiskSerials() ([]string, error) {
 
 // getLinuxDiskSerialsLSBLK retrieves disk serials using lsblk command
 func getLinuxDiskSerialsLSBLK() ([]string, error) {
-	cmd := exec.Command("lsblk", "-d", "-n", "-o", "SERIAL")
+	cmd := exec.Command(lsblkCommand, lsblkNoPartitions, lsblkNoHeadings, lsblkOutputFlag, lsblkSerialColumn)
 	output, err := cmd.Output()
 	if err != nil {
 		return nil, apperror.NewError("running lsblk failed").AddError(err)
 	}
 
 	var serials []string
-	lines := strings.Split(string(output), "\n")
+	lines := strings.Split(string(output), lineSeparator)
 	for _, line := range lines {
 		serial := strings.TrimSpace(line)
 		if serial != "" {
@@ -256,15 +291,15 @@ func getLinuxDiskSerialsLSBLK() ([]string, error) {
 func getLinuxDiskSerialsSys() ([]string, error) {
 	var serials []string
 
-	blockDir := "/sys/block"
+	blockDir := sysBlockPath
 	entries, err := os.ReadDir(blockDir)
 	if err != nil {
 		return nil, apperror.NewErrorf("reading %s failed", blockDir).AddError(err)
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() && !strings.HasPrefix(entry.Name(), "loop") {
-			serialFile := filepath.Join(blockDir, entry.Name(), "device", "serial")
+		if entry.IsDir() && !strings.HasPrefix(entry.Name(), loopDevicePrefix) {
+			serialFile := filepath.Join(blockDir, entry.Name(), blockDeviceDir, blockSerialFile)
 			if data, err := os.ReadFile(serialFile); err == nil {
 				serial := strings.TrimSpace(string(data))
 				if serial != "" {
