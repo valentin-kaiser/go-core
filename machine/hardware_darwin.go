@@ -127,32 +127,26 @@ func getMacOSHardwareUUID() (string, error) {
 	case nil:
 		return extractMacOSValue(string(output), platformUUIDKey)
 	default:
-		// Fallback to ioreg
 		return getMacOSHardwareUUIDIOReg()
 	}
 }
 
 // extractMacOSValue extracts a value from macOS command output
 func extractMacOSValue(output, key string) (string, error) {
-	switch {
-	case strings.Contains(output, key):
-		lines := strings.Split(output, lineSeparator)
-		for _, line := range lines {
-			switch {
-			case strings.Contains(line, key):
-				parts := strings.Split(line, jsonSeparator)
-				switch {
-				case len(parts) >= minKeyValueParts:
-					value := strings.Trim(strings.TrimSpace(parts[1]), jsonTrimChars)
-					switch value {
-					case "":
-						continue
-					default:
-						return value, nil
-					}
-				}
-			}
+	lines := strings.Split(output, lineSeparator)
+	for _, line := range lines {
+		if !strings.Contains(line, key) {
+			continue
 		}
+		parts := strings.Split(line, jsonSeparator)
+		if len(parts) < minKeyValueParts {
+			continue
+		}
+		value := strings.Trim(strings.TrimSpace(parts[1]), jsonTrimChars)
+		if value == "" {
+			continue
+		}
+		return value, nil
 	}
 	return "", apperror.NewErrorf("%s not found in output", key)
 }
@@ -167,14 +161,16 @@ func getMacOSHardwareUUIDIOReg() (string, error) {
 
 	lines := strings.Split(string(output), lineSeparator)
 	for _, line := range lines {
-		if strings.Contains(line, ioPlatformUUIDKey) {
-			parts := strings.Split(line, assignSeparator)
-			if len(parts) >= minKeyValueParts {
-				uuid := strings.Trim(strings.TrimSpace(parts[1]), quoteTrimChars)
-				if uuid != "" {
-					return uuid, nil
-				}
-			}
+		if !strings.Contains(line, ioPlatformUUIDKey) {
+			continue
+		}
+		parts := strings.Split(line, assignSeparator)
+		if len(parts) < minKeyValueParts {
+			continue
+		}
+		uuid := strings.Trim(strings.TrimSpace(parts[1]), quoteTrimChars)
+		if uuid != "" {
+			return uuid, nil
 		}
 	}
 
@@ -189,7 +185,6 @@ func getMacOSSerialNumber() (string, error) {
 	case nil:
 		return extractMacOSValue(string(output), serialNumberKey)
 	default:
-		// Fallback to ioreg
 		return getMacOSSerialNumberIOReg()
 	}
 }
@@ -204,14 +199,16 @@ func getMacOSSerialNumberIOReg() (string, error) {
 
 	lines := strings.Split(string(output), lineSeparator)
 	for _, line := range lines {
-		if strings.Contains(line, ioPlatformSerialKey) {
-			parts := strings.Split(line, assignSeparator)
-			if len(parts) >= minKeyValueParts {
-				serial := strings.Trim(strings.TrimSpace(parts[1]), quoteTrimChars)
-				if serial != "" {
-					return serial, nil
-				}
-			}
+		if !strings.Contains(line, ioPlatformSerialKey) {
+			continue
+		}
+		parts := strings.Split(line, assignSeparator)
+		if len(parts) < minKeyValueParts {
+			continue
+		}
+		serial := strings.Trim(strings.TrimSpace(parts[1]), quoteTrimChars)
+		if serial != "" {
+			return serial, nil
 		}
 	}
 
@@ -228,7 +225,6 @@ func getMacOSCPUInfo() (string, error) {
 
 	cpuBrand := strings.TrimSpace(string(output))
 
-	// Get CPU features
 	cmd = exec.Command(sysctlCommand, sysctlValueFlag, cpuFeaturesKey)
 	output, err = cmd.Output()
 	if err == nil {
@@ -252,32 +248,35 @@ func getMacOSMACAddresses() ([]string, error) {
 
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
-		if strings.Contains(line, etherPrefix) {
-			parts := strings.Fields(line)
-			for i, part := range parts {
-				if part == etherKeyword && i+1 < len(parts) {
-					mac := parts[i+1]
-					if mac != "" && mac != zeroMAC {
-						macs = append(macs, mac)
-					}
-					break
-				}
-			}
+		if !strings.Contains(line, etherPrefix) {
+			continue
+		}
+		mac := macAfterEtherKeyword(line)
+		if mac != "" && mac != zeroMAC {
+			macs = append(macs, mac)
 		}
 	}
 
 	return macs, nil
 }
 
+func macAfterEtherKeyword(line string) string {
+	parts := strings.Fields(line)
+	for i, part := range parts {
+		if part == etherKeyword && i+1 < len(parts) {
+			return parts[i+1]
+		}
+	}
+	return ""
+}
+
 // getMacOSDiskInfo retrieves disk information
 func getMacOSDiskInfo() ([]string, error) {
 	var diskInfo []string
 
-	// Get disk information using diskutil
 	cmd := exec.Command(diskutilCommand, diskutilList, diskutilPlistFlag)
 	output, err := cmd.Output()
 	if err != nil {
-		// Fallback to system_profiler
 		return getMacOSDiskInfoSystemProfiler()
 	}
 
@@ -307,7 +306,6 @@ func getMacOSDiskInfoSystemProfiler() ([]string, error) {
 	var diskInfo []string
 	outputStr := string(output)
 
-	// Simple extraction of volume information
 	if strings.Contains(outputStr, physicalDriveKey) {
 		lines := strings.Split(outputStr, lineSeparator)
 		for _, line := range lines {

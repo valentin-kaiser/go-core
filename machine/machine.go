@@ -152,7 +152,6 @@ func hashIdentifiers(identifiers []string, salt string) string {
 		combined = salt + identifierSeparator + combined
 	}
 
-	// Generate SHA256 hash
 	hash := sha256.Sum256([]byte(combined))
 	return hex.EncodeToString(hash[:])
 }
