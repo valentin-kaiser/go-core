@@ -94,7 +94,6 @@ func NewMemoryCacheWithConfig(config Config) *MemoryCache {
 	}
 	mc.native, _ = mc.config.Serializer.(InMemorySerializer)
 
-	// Start cleanup goroutine if cleanup interval is set
 	if config.CleanupInterval > 0 {
 		mc.startCleanup()
 	}
@@ -188,7 +187,6 @@ func (mc *MemoryCache) Get(_ context.Context, key string, dest any) (bool, error
 	item := memItem.item
 	now := time.Now()
 
-	// Check if item has expired
 	if !item.ExpiresAt.IsZero() && now.After(item.ExpiresAt) {
 		sh.mutex.RUnlock()
 		mc.removeIfExpired(sh, formattedKey)
@@ -230,7 +228,6 @@ func (mc *MemoryCache) Set(_ context.Context, key string, value any, ttl time.Du
 	formattedKey := mc.formatKey(key)
 	effectiveTTL := mc.calculateTTL(ttl)
 
-	// Serialize the value
 	var stored any
 	var dataSize int64
 	var err error
@@ -258,7 +255,7 @@ func (mc *MemoryCache) Set(_ context.Context, key string, value any, ttl time.Du
 		TTL:       effectiveTTL,
 		Size:      dataSize,
 		Namespace: mc.config.Namespace,
-		ExpiresAt: time.Time{}, // Default to no expiration
+		ExpiresAt: time.Time{},
 	}
 
 	if effectiveTTL > 0 {
@@ -274,10 +271,8 @@ func (mc *MemoryCache) Set(_ context.Context, key string, value any, ttl time.Du
 	sh.mutex.Lock()
 	defer sh.mutex.Unlock()
 
-	// Check if key already exists
 	element, exists := sh.items[formattedKey]
 	if exists {
-		// Update existing item
 		oldMemItem, ok := element.Value.(*memoryItem)
 		if !ok {
 			return NewCacheError(opSet, key, apperror.NewError("invalid existing item type"))
@@ -286,18 +281,14 @@ func (mc *MemoryCache) Set(_ context.Context, key string, value any, ttl time.Du
 		if mc.config.EnableLRU {
 			sh.lruList.MoveToFront(element)
 		}
-
-		// Update memory usage and count the set
 		mc.updateStats(func(s *Stats) {
 			s.Memory = s.Memory - oldMemItem.dataSize + dataSize
 			s.Sets++
 		})
-
 		mc.emitEvent(EventSet, key, value, nil)
 		return nil
 	}
 
-	// Add new item
 	element = sh.lruList.PushFront(memItem)
 	sh.items[formattedKey] = element
 
@@ -307,7 +298,6 @@ func (mc *MemoryCache) Set(_ context.Context, key string, value any, ttl time.Du
 		s.Sets++
 	})
 
-	// Check if we need to evict items
 	if limit, bounded := mc.shardLimit(sh); bounded && int64(len(sh.items)) > limit {
 		mc.evictLRU(sh)
 	}
@@ -366,7 +356,6 @@ func (mc *MemoryCache) Exists(_ context.Context, key string) (bool, error) {
 	}
 	item := memItem.item
 
-	// Check if item has expired
 	if !item.IsExpired() {
 		sh.mutex.RUnlock()
 		return true, nil
@@ -471,7 +460,7 @@ func (mc *MemoryCache) GetTTL(_ context.Context, key string) (time.Duration, err
 	item := memItem.item
 
 	if item.ExpiresAt.IsZero() {
-		return 0, nil // No expiration
+		return 0, nil
 	}
 
 	if item.IsExpired() {
@@ -552,7 +541,7 @@ func (mc *MemoryCache) GetMemoryUsage() int64 {
 func (mc *MemoryCache) removeElement(sh *memShard, element *list.Element, key string) {
 	memItem, ok := element.Value.(*memoryItem)
 	if !ok {
-		return // Skip if invalid type
+		return
 	}
 	delete(sh.items, key)
 	sh.lruList.Remove(element)
@@ -577,7 +566,7 @@ func (mc *MemoryCache) evictLRU(sh *memShard) {
 		element = sh.lruList.Back()
 		candidate, ok := element.Value.(*memoryItem)
 		if !ok {
-			return // Skip if invalid type
+			return
 		}
 		memItem = candidate
 		accessed := memItem.accessed.Load()
@@ -611,7 +600,6 @@ func (mc *MemoryCache) startCleanup() {
 	mc.cleanupWg.Go(func() {
 		ticker := time.NewTicker(mc.config.CleanupInterval)
 		defer ticker.Stop()
-
 		for {
 			select {
 			case <-mc.stopChan:
@@ -637,28 +625,23 @@ func (mc *MemoryCache) cleanupShard(sh *memShard) {
 	now := time.Now()
 	var expiredKeys []string
 
-	// Find expired items
 	for key, element := range sh.items {
 		memItem, ok := element.Value.(*memoryItem)
 		if !ok {
 			continue
 		}
 		item := memItem.item
-
 		if item.ExpiresAt.IsZero() || !now.After(item.ExpiresAt) {
 			continue
 		}
-
 		expiredKeys = append(expiredKeys, key)
 	}
 
-	// Remove expired items
 	for _, key := range expiredKeys {
 		element, exists := sh.items[key]
 		if !exists {
 			continue
 		}
-
 		mc.removeElement(sh, element, key)
 		mc.emitEvent(EventExpire, key, nil, nil)
 	}

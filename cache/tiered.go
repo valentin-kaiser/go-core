@@ -59,7 +59,6 @@ func (tc *TieredCache) WithEventHandler(handler EventHandler) *TieredCache {
 
 // Get retrieves a value from the cache, checking L1 first, then L2
 func (tc *TieredCache) Get(ctx context.Context, key string, dest any) (bool, error) {
-	// Try L1 cache first
 	found, err := tc.l1Cache.Get(ctx, key, dest)
 	if err != nil {
 		tc.recordError(err)
@@ -73,7 +72,6 @@ func (tc *TieredCache) Get(ctx context.Context, key string, dest any) (bool, err
 		return true, nil
 	}
 
-	// Try L2 cache
 	found, err = tc.l2Cache.Get(ctx, key, dest)
 	if err != nil {
 		tc.recordError(err)
@@ -82,16 +80,13 @@ func (tc *TieredCache) Get(ctx context.Context, key string, dest any) (bool, err
 	}
 
 	if found {
-		// Backfill L1 cache with the value from L2
 		// Use a shorter TTL for L1 to avoid memory bloat
 		l1TTL := min(tc.config.DefaultTTL, maxL1TTL)
-
 		err = tc.l1Cache.Set(ctx, key, dest, l1TTL)
 		if err != nil {
 			// Log error but don't fail the operation
 			tc.recordError(err)
 		}
-
 		tc.recordHit()
 		tc.emitEvent(EventGet, key, dest, nil)
 		return true, nil
@@ -114,7 +109,6 @@ func (tc *TieredCache) Set(ctx context.Context, key string, value any, ttl time.
 		return apperror.NewErrorf("setting key %s in L2 cache failed", key).AddError(err)
 	}
 
-	// Set in L1 cache with potentially shorter TTL
 	l1TTL := min(effectiveTTL, maxL1TTL)
 
 	err = tc.l1Cache.Set(ctx, key, value, l1TTL)
@@ -130,13 +124,11 @@ func (tc *TieredCache) Set(ctx context.Context, key string, value any, ttl time.
 
 // Delete removes a value from both L1 and L2 caches
 func (tc *TieredCache) Delete(ctx context.Context, key string) error {
-	// Delete from both caches
 	var l1Err, l2Err error
 
 	l1Err = tc.l1Cache.Delete(ctx, key)
 	l2Err = tc.l2Cache.Delete(ctx, key)
 
-	// Return error if both failed
 	if l1Err != nil && l2Err != nil {
 		err := apperror.NewError("deleting from both L1 and L2 caches failed").AddErrors([]error{l1Err, l2Err})
 		tc.recordError(err)
@@ -151,7 +143,6 @@ func (tc *TieredCache) Delete(ctx context.Context, key string) error {
 
 // Exists checks if a key exists in either L1 or L2 cache
 func (tc *TieredCache) Exists(ctx context.Context, key string) (bool, error) {
-	// Check L1 first
 	exists, err := tc.l1Cache.Exists(ctx, key)
 	if err != nil {
 		tc.recordError(err)
@@ -162,7 +153,6 @@ func (tc *TieredCache) Exists(ctx context.Context, key string) (bool, error) {
 		return true, nil
 	}
 
-	// Check L2
 	exists, err = tc.l2Cache.Exists(ctx, key)
 	if err != nil {
 		tc.recordError(err)
@@ -179,7 +169,6 @@ func (tc *TieredCache) Clear(ctx context.Context) error {
 	l1Err = tc.l1Cache.Clear(ctx)
 	l2Err = tc.l2Cache.Clear(ctx)
 
-	// Return error if both failed
 	if l1Err != nil && l2Err != nil {
 		err := apperror.NewError("clearing both L1 and L2 caches failed").AddErrors([]error{l1Err, l2Err})
 		tc.recordError(err)
@@ -195,7 +184,6 @@ func (tc *TieredCache) Clear(ctx context.Context) error {
 func (tc *TieredCache) GetMulti(ctx context.Context, keys []string) (map[string]any, error) {
 	result := make(map[string]any)
 
-	// Try L1 cache first
 	l1Results, err := tc.l1Cache.GetMulti(ctx, keys)
 	if err != nil {
 		tc.recordError(err)
@@ -205,7 +193,6 @@ func (tc *TieredCache) GetMulti(ctx context.Context, keys []string) (map[string]
 		maps.Copy(result, l1Results)
 	}
 
-	// Find keys not found in L1
 	var missingKeys []string
 	for _, key := range keys {
 		if _, found := result[key]; !found {
@@ -213,25 +200,19 @@ func (tc *TieredCache) GetMulti(ctx context.Context, keys []string) (map[string]
 		}
 	}
 
-	// Try L2 cache for missing keys
 	if len(missingKeys) > 0 {
 		l2Results, err := tc.l2Cache.GetMulti(ctx, missingKeys)
 		if err != nil {
 			tc.recordError(err)
 			return result, apperror.NewError("getting keys from L2 cache failed").AddError(err)
 		}
-
-		// Backfill L1 cache with values from L2
 		backfillItems := make(map[string]any)
 		for key, value := range l2Results {
 			result[key] = value
 			backfillItems[key] = value
 		}
-
 		if len(backfillItems) > 0 {
-			// Use shorter TTL for L1 backfill
 			l1TTL := min(tc.config.DefaultTTL, maxL1TTL)
-
 			err = tc.l1Cache.SetMulti(ctx, backfillItems, l1TTL)
 			if err != nil {
 				tc.recordError(err)
@@ -246,14 +227,12 @@ func (tc *TieredCache) GetMulti(ctx context.Context, keys []string) (map[string]
 func (tc *TieredCache) SetMulti(ctx context.Context, items map[string]any, ttl time.Duration) error {
 	effectiveTTL := tc.calculateTTL(ttl)
 
-	// Set in L2 cache first
 	err := tc.l2Cache.SetMulti(ctx, items, effectiveTTL)
 	if err != nil {
 		tc.recordError(err)
 		return apperror.NewError("setting keys in L2 cache failed").AddError(err)
 	}
 
-	// Set in L1 cache with potentially shorter TTL
 	l1TTL := min(effectiveTTL, maxL1TTL)
 
 	err = tc.l1Cache.SetMulti(ctx, items, l1TTL)
@@ -272,7 +251,6 @@ func (tc *TieredCache) DeleteMulti(ctx context.Context, keys []string) error {
 	l1Err = tc.l1Cache.DeleteMulti(ctx, keys)
 	l2Err = tc.l2Cache.DeleteMulti(ctx, keys)
 
-	// Return error if both failed
 	if l1Err != nil && l2Err != nil {
 		err := apperror.NewError("deleting from both L1 and L2 caches failed").AddErrors([]error{l1Err, l2Err})
 		tc.recordError(err)
@@ -293,14 +271,11 @@ func (tc *TieredCache) GetTTL(ctx context.Context, key string) (time.Duration, e
 func (tc *TieredCache) SetTTL(ctx context.Context, key string, ttl time.Duration) error {
 	var l1Err, l2Err error
 
-	// Update TTL in L2 cache
 	l2Err = tc.l2Cache.SetTTL(ctx, key, ttl)
 
-	// Update TTL in L1 cache (use shorter TTL if necessary)
 	l1TTL := min(ttl, maxL1TTL)
 	l1Err = tc.l1Cache.SetTTL(ctx, key, l1TTL)
 
-	// Return error if both failed
 	if l1Err != nil && l2Err != nil {
 		err := apperror.NewError("setting TTL in both L1 and L2 caches failed").AddErrors([]error{l1Err, l2Err})
 		tc.recordError(err)
@@ -315,7 +290,6 @@ func (tc *TieredCache) GetStats() Stats {
 	l1Stats := tc.l1Cache.GetStats()
 	l2Stats := tc.l2Cache.GetStats()
 
-	// Combine stats from both levels
 	combined := Stats{
 		Hits:      l1Stats.Hits + l2Stats.Hits,
 		Misses:    l1Stats.Misses + l2Stats.Misses,
@@ -327,7 +301,6 @@ func (tc *TieredCache) GetStats() Stats {
 		Errors:    l1Stats.Errors + l2Stats.Errors,
 	}
 
-	// Calculate combined hit ratio
 	total := combined.Hits + combined.Misses
 	if total > 0 {
 		combined.HitRatio = float64(combined.Hits) / float64(total)
@@ -380,7 +353,6 @@ func (tc *TieredCache) WarmupL1(ctx context.Context, keys []string) error {
 		return nil
 	}
 
-	// Get values from L2
 	values, err := tc.l2Cache.GetMulti(ctx, keys)
 	if err != nil {
 		return apperror.NewError("getting keys from L2 cache failed").AddError(err)
@@ -390,7 +362,6 @@ func (tc *TieredCache) WarmupL1(ctx context.Context, keys []string) error {
 		return nil
 	}
 
-	// Set values in L1 with shorter TTL
 	l1TTL := min(tc.config.DefaultTTL, maxL1TTL)
 
 	err = tc.l1Cache.SetMulti(ctx, values, l1TTL)

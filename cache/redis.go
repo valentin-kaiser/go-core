@@ -167,7 +167,6 @@ func (rc *RedisCache) Get(ctx context.Context, key string, dest any) (bool, erro
 		return false, NewCacheError(opGet, key, err)
 	}
 
-	// Deserialize the value
 	err = rc.config.Serializer.Deserialize([]byte(data), dest)
 	if err != nil {
 		rc.recordError(err)
@@ -185,7 +184,6 @@ func (rc *RedisCache) Set(ctx context.Context, key string, value any, ttl time.D
 	formattedKey := rc.formatKey(key)
 	effectiveTTL := rc.calculateTTL(ttl)
 
-	// Serialize the value
 	data, err := rc.config.Serializer.Serialize(value)
 	if err != nil {
 		rc.recordError(err)
@@ -280,21 +278,22 @@ func (rc *RedisCache) GetMulti(ctx context.Context, keys []string) (map[string]a
 
 	result := make(map[string]any, len(values))
 	for i, value := range values {
-		if value != nil {
-			var dest any
-			if data, ok := value.(string); ok {
-				err := rc.config.Serializer.Deserialize([]byte(data), &dest)
-				if err != nil {
-					rc.recordError(err)
-					continue
-				}
-				result[keys[i]] = dest
-				rc.recordHit()
-				continue
-			}
-
-			rc.recordMiss()
+		if value == nil {
+			continue
 		}
+		data, ok := value.(string)
+		if !ok {
+			rc.recordMiss()
+			continue
+		}
+		var dest any
+		err := rc.config.Serializer.Deserialize([]byte(data), &dest)
+		if err != nil {
+			rc.recordError(err)
+			continue
+		}
+		result[keys[i]] = dest
+		rc.recordHit()
 	}
 
 	return result, nil
@@ -307,13 +306,11 @@ func (rc *RedisCache) SetMulti(ctx context.Context, items map[string]any, ttl ti
 	pipe := rc.client.Pipeline()
 	for key, value := range items {
 		formattedKey := rc.formatKey(key)
-
 		data, err := rc.config.Serializer.Serialize(value)
 		if err != nil {
 			rc.recordError(err)
 			continue
 		}
-
 		pipe.Set(ctx, formattedKey, data, effectiveTTL)
 	}
 
@@ -363,7 +360,7 @@ func (rc *RedisCache) GetTTL(ctx context.Context, key string) (time.Duration, er
 	}
 
 	if ttl == -1 {
-		return 0, nil // No expiration
+		return 0, nil
 	}
 
 	return ttl, nil
