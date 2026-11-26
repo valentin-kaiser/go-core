@@ -10,20 +10,27 @@ import (
 	"github.com/valentin-kaiser/go-core/queue"
 )
 
+const (
+	serverTestHost    = "localhost"
+	serverTestPort    = 2525
+	serverMaxHandlers = 5
+	serverLongTimeout = 10 * time.Second
+)
+
 func TestSMTPServer_Creation(t *testing.T) {
 	config := mail.ServerConfig{
 		Enabled:               true,
-		Host:                  "localhost",
-		Port:                  2525, // Use non-standard port for testing
-		Domain:                "test.local",
+		Host:                  serverTestHost,
+		Port:                  serverTestPort, // Use non-standard port for testing
+		Domain:                testServerDomain,
 		Auth:                  false,
 		TLS:                   false,
-		ReadTimeout:           time.Second * 10,
-		WriteTimeout:          time.Second * 10,
-		MaxMessageBytes:       1024 * 1024, // 1MB
-		MaxRecipients:         10,
+		ReadTimeout:           serverLongTimeout,
+		WriteTimeout:          serverLongTimeout,
+		MaxMessageBytes:       defaultMaxMessageBytes,
+		MaxRecipients:         smtpMaxRecipients,
 		AllowInsecureAuth:     true,
-		MaxConcurrentHandlers: 5,
+		MaxConcurrentHandlers: serverMaxHandlers,
 	}
 
 	// Create a mail manager first
@@ -45,10 +52,10 @@ func TestSMTPServer_Creation(t *testing.T) {
 func TestSMTPServer_AddHandler(t *testing.T) {
 	config := mail.ServerConfig{
 		Enabled:               true,
-		Host:                  "localhost",
-		Port:                  2525,
-		Domain:                "test.local",
-		MaxConcurrentHandlers: 5,
+		Host:                  serverTestHost,
+		Port:                  serverTestPort,
+		Domain:                testServerDomain,
+		MaxConcurrentHandlers: serverMaxHandlers,
 	}
 
 	mailConfig := mail.DefaultConfig()
@@ -79,17 +86,17 @@ func TestSMTPServer_StartStop(t *testing.T) {
 
 	config := mail.ServerConfig{
 		Enabled:               true,
-		Host:                  "localhost",
+		Host:                  serverTestHost,
 		Port:                  0, // Use port 0 to let OS assign available port
-		Domain:                "test.local",
+		Domain:                testServerDomain,
 		Auth:                  false,
 		TLS:                   false,
-		ReadTimeout:           time.Second * 5,
-		WriteTimeout:          time.Second * 5,
-		MaxMessageBytes:       1024 * 1024,
-		MaxRecipients:         10,
+		ReadTimeout:           smtpIOTimeout,
+		WriteTimeout:          smtpIOTimeout,
+		MaxMessageBytes:       defaultMaxMessageBytes,
+		MaxRecipients:         smtpMaxRecipients,
 		AllowInsecureAuth:     true,
-		MaxConcurrentHandlers: 5,
+		MaxConcurrentHandlers: serverMaxHandlers,
 	}
 
 	mailConfig := mail.DefaultConfig()
@@ -135,13 +142,13 @@ func TestSMTPServer_StartStop(t *testing.T) {
 func TestSMTPServer_TLSConfiguration(t *testing.T) {
 	config := mail.ServerConfig{
 		Enabled:               true,
-		Host:                  "localhost",
+		Host:                  serverTestHost,
 		Port:                  0,
-		Domain:                "test.local",
+		Domain:                testServerDomain,
 		TLS:                   true,
 		CertFile:              "", // Empty will trigger self-signed cert generation
 		KeyFile:               "",
-		MaxConcurrentHandlers: 5,
+		MaxConcurrentHandlers: serverMaxHandlers,
 	}
 
 	mailConfig := mail.DefaultConfig()
@@ -158,14 +165,14 @@ func TestSMTPServer_TLSConfiguration(t *testing.T) {
 func TestSMTPServer_AuthConfiguration(t *testing.T) {
 	config := mail.ServerConfig{
 		Enabled:               true,
-		Host:                  "localhost",
+		Host:                  serverTestHost,
 		Port:                  0,
-		Domain:                "test.local",
+		Domain:                testServerDomain,
 		Auth:                  true,
 		Username:              "testuser",
 		Password:              "testpass",
 		AllowInsecureAuth:     true, // Allow for testing
-		MaxConcurrentHandlers: 5,
+		MaxConcurrentHandlers: serverMaxHandlers,
 	}
 
 	mailConfig := mail.DefaultConfig()
@@ -182,10 +189,10 @@ func TestSMTPServer_AuthConfiguration(t *testing.T) {
 func TestSMTPServer_SecurityConfiguration(t *testing.T) {
 	config := mail.ServerConfig{
 		Enabled:               true,
-		Host:                  "localhost",
+		Host:                  serverTestHost,
 		Port:                  0,
-		Domain:                "test.local",
-		MaxConcurrentHandlers: 5,
+		Domain:                testServerDomain,
+		MaxConcurrentHandlers: serverMaxHandlers,
 		Security: mail.SecurityConfig{
 			HeloValidation:      true,
 			HeloRequireFQDN:     true,
@@ -212,9 +219,9 @@ func TestSMTPServer_SecurityConfiguration(t *testing.T) {
 func TestSMTPServer_MultipleHandlers(t *testing.T) {
 	config := mail.ServerConfig{
 		Enabled:               true,
-		Host:                  "localhost",
+		Host:                  serverTestHost,
 		Port:                  0,
-		Domain:                "test.local",
+		Domain:                testServerDomain,
 		MaxConcurrentHandlers: 10,
 	}
 
@@ -243,9 +250,9 @@ func TestSMTPServer_MultipleHandlers(t *testing.T) {
 func TestSMTPServer_ConcurrentHandlerLimit(t *testing.T) {
 	config := mail.ServerConfig{
 		Enabled:               true,
-		Host:                  "localhost",
+		Host:                  serverTestHost,
 		Port:                  0,
-		Domain:                "test.local",
+		Domain:                testServerDomain,
 		MaxConcurrentHandlers: 2, // Low limit for testing
 	}
 
@@ -263,9 +270,9 @@ func TestSMTPServer_DefaultMaxConcurrentHandlers(t *testing.T) {
 	// Test that default MaxConcurrentHandlers is set when not specified
 	config := mail.ServerConfig{
 		Enabled: true,
-		Host:    "localhost",
+		Host:    serverTestHost,
 		Port:    0,
-		Domain:  "test.local",
+		Domain:  testServerDomain,
 		// MaxConcurrentHandlers not set - should default to 50
 	}
 
@@ -282,10 +289,10 @@ func TestSMTPServer_DefaultMaxConcurrentHandlers(t *testing.T) {
 func TestSMTPServer_ContextCancellation(t *testing.T) {
 	config := mail.ServerConfig{
 		Enabled:               true,
-		Host:                  "localhost",
+		Host:                  serverTestHost,
 		Port:                  0,
-		Domain:                "test.local",
-		MaxConcurrentHandlers: 5,
+		Domain:                testServerDomain,
+		MaxConcurrentHandlers: serverMaxHandlers,
 	}
 
 	mailConfig := mail.DefaultConfig()
@@ -301,10 +308,10 @@ func TestSMTPServer_ContextCancellation(t *testing.T) {
 func TestSMTPServer_GracefulShutdown(t *testing.T) {
 	config := mail.ServerConfig{
 		Enabled:               true,
-		Host:                  "localhost",
+		Host:                  serverTestHost,
 		Port:                  0,
-		Domain:                "test.local",
-		MaxConcurrentHandlers: 5,
+		Domain:                testServerDomain,
+		MaxConcurrentHandlers: serverMaxHandlers,
 	}
 
 	mailConfig := mail.DefaultConfig()

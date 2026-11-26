@@ -3,6 +3,7 @@ package mail_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -12,9 +13,44 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/internal/await"
 	"github.com/valentin-kaiser/go-core/mail"
 )
+
+const (
+	loopbackHost            = "127.0.0.1"
+	loopbackAnyPortAddress  = loopbackHost + ":0"
+	testServerDomain        = "test.local"
+	testSenderAddress       = "sender@example.com"
+	testRcptAddress         = "rcpt@example.com"
+	smtpIOTimeout           = 5 * time.Second
+	defaultMaxMessageBytes  = 1 << 20
+	smtpMaxRecipients       = 10
+	smtpMaxHandlers         = 8
+	refusedMessageLimit     = 10 * 1024
+	oversizedLineCount      = 1000
+	oversizedLineLength     = 100
+	benchMaxMessageBytes    = 8 << 20
+	benchLineLength         = 76
+	smallBenchMessageBytes  = 2 << 10
+	mediumBenchMessageBytes = 200 << 10
+	messagesPerConnection   = 5
+	authTestUser            = "user"
+	authTestKey             = "secret"
+)
+
+// closeAfterTest closes c when the test ends and reports a failing Close.
+func closeAfterTest(tb testing.TB, c io.Closer) {
+	tb.Helper()
+
+	tb.Cleanup(func() {
+		err := c.Close()
+		// QUIT already closed the connection of some tests
+		if err != nil && !errors.Is(err, net.ErrClosed) {
+			tb.Errorf("closing connection failed: %v", err)
+		}
+	})
+}
 
 type received struct {
 	from string
@@ -26,31 +62,31 @@ type received struct {
 func startSMTP(tb testing.TB, mutate func(*mail.ServerConfig)) (string, func() []received) {
 	tb.Helper()
 
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := net.Listen("tcp", loopbackAnyPortAddress)
 	if err != nil {
 		tb.Skipf("cannot listen: %v", err)
 	}
 	tcpAddr, ok := l.Addr().(*net.TCPAddr)
 	if !ok {
-		tb.Skipf("unexpected listener address type %T", l.Addr())
+		tb.Fatalf("unexpected listener address type %T", l.Addr())
 	}
 	port := tcpAddr.Port
 	err = l.Close()
 	if err != nil {
-		tb.Skipf("cannot release the listener: %v", err)
+		tb.Fatalf("releasing the listener failed: %v", err)
 	}
 
 	cfg := mail.ServerConfig{
 		Enabled:               true,
-		Host:                  "127.0.0.1",
+		Host:                  loopbackHost,
 		Port:                  port,
-		Domain:                "test.local",
-		ReadTimeout:           5 * time.Second,
-		WriteTimeout:          5 * time.Second,
-		MaxMessageBytes:       1 << 20,
-		MaxRecipients:         10,
+		Domain:                testServerDomain,
+		ReadTimeout:           smtpIOTimeout,
+		WriteTimeout:          smtpIOTimeout,
+		MaxMessageBytes:       defaultMaxMessageBytes,
+		MaxRecipients:         smtpMaxRecipients,
 		AllowInsecureAuth:     true,
-		MaxConcurrentHandlers: 8,
+		MaxConcurrentHandlers: smtpMaxHandlers,
 	}
 	if mutate != nil {
 		mutate(&cfg)
@@ -68,10 +104,10 @@ func startSMTP(tb testing.TB, mutate func(*mail.ServerConfig)) (string, func() [
 	})
 	err = server.Start(context.Background())
 	if err != nil {
-		tb.Skipf("cannot start the SMTP server: %v", err)
+		tb.Fatalf("starting the SMTP server failed: %v", err)
 	}
 	tb.Cleanup(func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), smtpIOTimeout)
 		defer cancel()
 		err := server.Stop(ctx)
 		if err != nil {
@@ -79,23 +115,11 @@ func startSMTP(tb testing.TB, mutate func(*mail.ServerConfig)) (string, func() [
 		}
 	})
 
-	return fmt.Sprintf("127.0.0.1:%d", port), func() []received {
+	return fmt.Sprintf("%s:%d", loopbackHost, port), func() []received {
 		mu.Lock()
 		defer mu.Unlock()
 		return append([]received(nil), got...)
 	}
-}
-
-func waitFor(tb testing.TB, cond func() bool) {
-	tb.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	tb.Fatal("condition not met in time")
 }
 
 func TestSMTPServerReceivesMessages(t *testing.T) {
@@ -103,14 +127,14 @@ func TestSMTPServerReceivesMessages(t *testing.T) {
 
 	// Lines that start with a dot are dot-stuffed on the wire and must come out unchanged
 	body := "Subject: hello\r\n\r\nfirst line\r\n.starts with a dot\r\nlast line\r\n"
-	err := smtp.SendMail(addr, nil, "sender@example.com", []string{"a@example.com", "b@example.com"}, []byte(body))
+	err := smtp.SendMail(addr, nil, testSenderAddress, []string{"a@example.com", "b@example.com"}, []byte(body))
 	if err != nil {
 		t.Fatalf("SendMail: %v", err)
 	}
 
-	waitFor(t, func() bool { return len(messages()) == 1 })
+	await.Until(t, smtpIOTimeout, func() bool { return len(messages()) == 1 }, "the message to arrive")
 	m := messages()[0]
-	if m.from != "sender@example.com" || len(m.to) != 2 || m.to[1] != "b@example.com" {
+	if m.from != testSenderAddress || len(m.to) != 2 || m.to[1] != "b@example.com" {
 		t.Errorf("envelope: from=%q to=%v", m.from, m.to)
 	}
 	if string(m.body) != body {
@@ -125,14 +149,14 @@ func TestSMTPServerSeveralMessagesOnOneConnection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer apperror.Catch(c.Close, "closing connection failed")
+	closeAfterTest(t, c)
 
-	for i := range 5 {
-		err := c.Mail("sender@example.com")
+	for i := range messagesPerConnection {
+		err := c.Mail(testSenderAddress)
 		if err != nil {
 			t.Fatalf("message %d MAIL: %v", i, err)
 		}
-		err = c.Rcpt("rcpt@example.com")
+		err = c.Rcpt(testRcptAddress)
 		if err != nil {
 			t.Fatalf("message %d RCPT: %v", i, err)
 		}
@@ -154,25 +178,25 @@ func TestSMTPServerSeveralMessagesOnOneConnection(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	waitFor(t, func() bool { return len(messages()) == 5 })
+	await.Until(t, smtpIOTimeout, func() bool { return len(messages()) == messagesPerConnection }, "all messages to arrive")
 }
 
 // MaxMessageBytes is advertised in the EHLO response; a message above it has to be refused
 // and must not be held in memory.
 func TestSMTPServerRefusesOversizedMessage(t *testing.T) {
-	addr, messages := startSMTP(t, func(c *mail.ServerConfig) { c.MaxMessageBytes = 10 * 1024 })
+	addr, messages := startSMTP(t, func(c *mail.ServerConfig) { c.MaxMessageBytes = refusedMessageLimit })
 
 	c, err := smtp.Dial(addr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer apperror.Catch(c.Close, "closing connection failed")
+	closeAfterTest(t, c)
 
-	err = c.Mail("sender@example.com")
+	err = c.Mail(testSenderAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = c.Rcpt("rcpt@example.com")
+	err = c.Rcpt(testRcptAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,8 +204,8 @@ func TestSMTPServerRefusesOversizedMessage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	line := strings.Repeat("x", 100) + "\r\n"
-	for range 1000 { // about 100 KB
+	line := strings.Repeat("x", oversizedLineLength) + "\r\n"
+	for range oversizedLineCount { // about 100 KB
 		_, err := io.WriteString(w, line)
 		if err != nil {
 			break
@@ -197,11 +221,11 @@ func TestSMTPServerRefusesOversizedMessage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RSET after the refused message: %v", err)
 	}
-	err = c.Mail("sender@example.com")
+	err = c.Mail(testSenderAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = c.Rcpt("rcpt@example.com")
+	err = c.Rcpt(testRcptAddress)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +242,7 @@ func TestSMTPServerRefusesOversizedMessage(t *testing.T) {
 		t.Fatalf("small message after the refused one: %v", err)
 	}
 
-	waitFor(t, func() bool { return len(messages()) == 1 })
+	await.Until(t, smtpIOTimeout, func() bool { return len(messages()) == 1 }, "the message to arrive")
 	if !bytes.Contains(messages()[0].body, []byte("small")) {
 		t.Fatalf("the delivered message is %q", messages()[0].body)
 	}
@@ -227,11 +251,11 @@ func TestSMTPServerRefusesOversizedMessage(t *testing.T) {
 func benchSMTP(b *testing.B, size int) {
 	b.Helper()
 
-	addr, messages := startSMTP(b, func(c *mail.ServerConfig) { c.MaxMessageBytes = 8 << 20 })
+	addr, messages := startSMTP(b, func(c *mail.ServerConfig) { c.MaxMessageBytes = benchMaxMessageBytes })
 
 	var body bytes.Buffer
 	body.WriteString("Subject: bench\r\n\r\n")
-	line := strings.Repeat("x", 76) + "\r\n"
+	line := strings.Repeat("x", benchLineLength) + "\r\n"
 	for body.Len() < size {
 		body.WriteString(line)
 	}
@@ -240,17 +264,17 @@ func benchSMTP(b *testing.B, size int) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	defer apperror.Catch(c.Close, "closing connection failed")
+	closeAfterTest(b, c)
 
 	b.SetBytes(int64(body.Len()))
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		err := c.Mail("sender@example.com")
+		err := c.Mail(testSenderAddress)
 		if err != nil {
 			b.Fatal(err)
 		}
-		err = c.Rcpt("rcpt@example.com")
+		err = c.Rcpt(testRcptAddress)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -268,27 +292,27 @@ func benchSMTP(b *testing.B, size int) {
 		}
 	}
 	b.StopTimer()
-	waitFor(b, func() bool { return len(messages()) >= b.N })
+	await.Until(b, smtpIOTimeout, func() bool { return len(messages()) >= b.N }, "all benchmark messages to arrive")
 }
 
 // Messages over one SMTP connection to the server, with a handler that reads them
-func BenchmarkSMTPServerSmall(b *testing.B)  { benchSMTP(b, 2<<10) }
-func BenchmarkSMTPServerMedium(b *testing.B) { benchSMTP(b, 200<<10) }
+func BenchmarkSMTPServerSmall(b *testing.B)  { benchSMTP(b, smallBenchMessageBytes) }
+func BenchmarkSMTPServerMedium(b *testing.B) { benchSMTP(b, mediumBenchMessageBytes) }
 
 // A server that requires authentication must still refuse a message from an unauthenticated client.
 func TestSMTPServerAuthRequiredForData(t *testing.T) {
 	addr, messages := startSMTP(t, func(c *mail.ServerConfig) {
 		c.Auth = true
-		c.Username = "user"
-		c.Password = "secret"
+		c.Username = authTestUser
+		c.Password = authTestKey
 	})
 
 	conn, err := net.Dial("tcp", addr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer apperror.Catch(conn.Close, "closing connection failed")
-	err = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	closeAfterTest(t, conn)
+	err = conn.SetDeadline(time.Now().Add(smtpIOTimeout))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,7 +352,6 @@ func TestSMTPServerAuthRequiredForData(t *testing.T) {
 	if !strings.HasPrefix(reply, "530") {
 		t.Fatalf("unauthenticated message got the reply %q, want 530", reply)
 	}
-	time.Sleep(50 * time.Millisecond)
 	if n := len(messages()); n != 0 {
 		t.Fatalf("%d messages were delivered without authentication", n)
 	}
