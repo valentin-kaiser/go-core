@@ -125,6 +125,31 @@ type CronExpression struct {
 	DayOfWeek CronField  // Day of week field (0-6, 0 = Sunday)
 }
 
+// cronPosition is the point in the calendar the search for the next run has reached.
+type cronPosition struct {
+	year, month, day, hour, minute int
+}
+
+func (p cronPosition) isInMonthOf(t time.Time) bool {
+	return p.year == t.Year() && p.month == int(t.Month())
+}
+
+func (p cronPosition) isOnDayOf(t time.Time) bool {
+	return p.isInMonthOf(t) && p.day == t.Day()
+}
+
+func (p cronPosition) isInHourOf(t time.Time) bool {
+	return p.isOnDayOf(t) && p.hour == t.Hour()
+}
+
+func (p cronPosition) isInMinuteOf(t time.Time) bool {
+	return p.isInHourOf(t) && p.minute == t.Minute()
+}
+
+func (p cronPosition) at(location *time.Location, second int) time.Time {
+	return time.Date(p.year, time.Month(p.month), p.day, p.hour, p.minute, second, 0, location)
+}
+
 // ValidateCronSpec validates a cron specification.
 //
 // Purpose:
@@ -199,7 +224,6 @@ func (s *TaskScheduler) ParseCronSpec(cronSpec string) (*CronExpression, error) 
 		return nil, apperror.NewError("parsing day-of-week field failed").AddError(err)
 	}
 
-	// Sort all field values for efficient searching
 	s.sort(&expr.Minute)
 	s.sort(&expr.Hour)
 	s.sort(&expr.Day)
@@ -386,7 +410,7 @@ func (s *TaskScheduler) parseSingleField(field string, low, high int, cronField 
 	return cronField, nil
 }
 
-// calculateNextCronRunOptimized efficiently calculates the next run time
+// calculateNextCronRun calculates the next run time
 //
 // Algorithm Overview:
 // 1. Works from largest time unit (year/month) down to smallest (second)
@@ -403,202 +427,111 @@ func (s *TaskScheduler) calculateNextCronRun(cronSpec string, after time.Time) (
 		return time.Time{}, apperror.NewErrorf("parsing cron specification %q failed", cronSpec).AddError(err)
 	}
 
-	// Start with the time after the given time
-	var t time.Time
+	var from time.Time
 	if expr.Second != nil {
-		t = after.Truncate(time.Second).Add(time.Second)
+		from = after.Truncate(time.Second).Add(time.Second)
+	} else {
+		from = after.Truncate(time.Minute).Add(time.Minute)
 	}
-	if expr.Second == nil {
-		t = after.Truncate(time.Minute).Add(time.Minute)
-	}
 
-	// Limit search to prevent infinite loops (max 4 years)
-	maxYear := t.Year() + cronSearchYears
-
-	for year := t.Year(); year <= maxYear; year++ {
-		startMonth := 1
-		if year == t.Year() {
-			startMonth = int(t.Month())
-		}
-		if year != t.Year() {
-			// For new years, start with the first valid month
-			startMonth = s.findFirstValidValue(expr.Month)
-		}
-
-		// Find next valid month
-		nextMonth, foundMonth := s.findNextValidValue(expr.Month, startMonth)
-		if !foundMonth {
-			continue
-		}
-
-		for month := nextMonth; month <= cronMonthMax; {
-			if !s.fieldMatches(expr.Month, month) {
-				nextValidMonth, found := s.findNextValidValue(expr.Month, month+1)
-				if !found {
-					break
-				}
-				month = nextValidMonth
-				continue
-			}
-
-			startDay := 1
-			if year == t.Year() && month == int(t.Month()) {
-				startDay = t.Day()
-			}
-			if year != t.Year() || month != int(t.Month()) {
-				// For new months, start with the first valid day
-				startDay = s.findFirstValidValue(expr.Day)
-			}
-
-			// Get the number of days in this month
-			daysInMonth := time.Date(year, time.Month(month)+1, 0, 0, 0, 0, 0, time.UTC).Day()
-
-			nextDay, foundDay := s.findNextValidValue(expr.Day, startDay)
-			if !foundDay || nextDay > daysInMonth {
-				// No valid day this month, try next month
-				nextValidMonth, found := s.findNextValidValue(expr.Month, month+1)
-				if !found {
-					break
-				}
-				month = nextValidMonth
-				continue
-			}
-
-			for day := nextDay; day <= daysInMonth; {
-				if !s.fieldMatches(expr.Day, day) {
-					nextValidDay, found := s.findNextValidValue(expr.Day, day+1)
-					if !found || nextValidDay > daysInMonth {
-						break
-					}
-					day = nextValidDay
-					continue
-				}
-
-				// Check if this date matches the day of week constraint
-				testDate := time.Date(year, time.Month(month), day, 0, 0, 0, 0, t.Location())
-				if !s.fieldMatches(expr.DayOfWeek, int(testDate.Weekday())) {
-					day++
-					continue
-				}
-
-				startHour := 0
-				if year == t.Year() && month == int(t.Month()) && day == t.Day() {
-					startHour = t.Hour()
-				}
-				if year != t.Year() || month != int(t.Month()) || day != t.Day() {
-					// For new days, start with the first valid hour
-					startHour = s.findFirstValidValue(expr.Hour)
-				}
-
-				nextHour, foundHour := s.findNextValidValue(expr.Hour, startHour)
-				if !foundHour {
-					nextValidDay, found := s.findNextValidValue(expr.Day, day+1)
-					if !found || nextValidDay > daysInMonth {
-						break
-					}
-					day = nextValidDay
-					continue
-				}
-
-				for hour := nextHour; hour <= cronHourMax; {
-					if !s.fieldMatches(expr.Hour, hour) {
-						nextValidHour, found := s.findNextValidValue(expr.Hour, hour+1)
-						if !found {
-							break
-						}
-						hour = nextValidHour
-						continue
-					}
-
-					startMinute := s.findFirstValidValue(expr.Minute)
-					if year == t.Year() && month == int(t.Month()) && day == t.Day() && hour == t.Hour() {
-						startMinute = t.Minute()
-					}
-
-					nextMinute, foundMinute := s.findNextValidValue(expr.Minute, startMinute)
-					if !foundMinute {
-						nextValidHour, found := s.findNextValidValue(expr.Hour, hour+1)
-						if !found {
-							break
-						}
-						hour = nextValidHour
-						continue
-					}
-
-					for minute := nextMinute; minute <= cronMinuteMax; {
-						if !s.fieldMatches(expr.Minute, minute) {
-							nextValidMinute, found := s.findNextValidValue(expr.Minute, minute+1)
-							if !found {
-								break
-							}
-							minute = nextValidMinute
-							continue
-						}
-
-						if expr.Second != nil {
-							startSecond := s.findFirstValidValue(*expr.Second)
-							if year == t.Year() && month == int(t.Month()) && day == t.Day() &&
-								hour == t.Hour() && minute == t.Minute() {
-								startSecond = t.Second()
-							}
-
-							nextSecond, foundSecond := s.findNextValidValue(*expr.Second, startSecond)
-							if !foundSecond {
-								nextValidMinute, found := s.findNextValidValue(expr.Minute, minute+1)
-								if !found {
-									break
-								}
-								minute = nextValidMinute
-								continue
-							}
-
-							for second := nextSecond; second <= cronSecondMax; {
-								if !s.fieldMatches(*expr.Second, second) {
-									nextValidSecond, found := s.findNextValidValue(*expr.Second, second+1)
-									if !found {
-										break
-									}
-									second = nextValidSecond
-									continue
-								}
-								return time.Date(year, time.Month(month), day, hour, minute, second, 0, t.Location()), nil
-							}
-						}
-
-						if expr.Second == nil {
-							return time.Date(year, time.Month(month), day, hour, minute, 0, 0, t.Location()), nil
-						}
-
-						nextValidMinute, found := s.findNextValidValue(expr.Minute, minute+1)
-						if !found {
-							break
-						}
-						minute = nextValidMinute
-					}
-
-					nextValidHour, found := s.findNextValidValue(expr.Hour, hour+1)
-					if !found {
-						break
-					}
-					hour = nextValidHour
-				}
-
-				nextValidDay, found := s.findNextValidValue(expr.Day, day+1)
-				if !found || nextValidDay > daysInMonth {
-					break
-				}
-				day = nextValidDay
-			}
-
-			nextValidMonth, found := s.findNextValidValue(expr.Month, month+1)
-			if !found {
-				break
-			}
-			month = nextValidMonth
+	maxYear := from.Year() + cronSearchYears
+	for year := from.Year(); year <= maxYear; year++ {
+		next, found := s.nextRunInYear(expr, from, year)
+		if found {
+			return next, nil
 		}
 	}
 
 	return time.Time{}, apperror.NewError("finding next run time within reasonable limits failed")
+}
+
+func (s *TaskScheduler) nextRunInYear(expr *CronExpression, from time.Time, year int) (time.Time, bool) {
+	startMonth := s.findFirstValidValue(expr.Month)
+	if year == from.Year() {
+		startMonth = int(from.Month())
+	}
+
+	month, ok := s.findNextValidValue(expr.Month, startMonth)
+	for ; ok; month, ok = s.findNextValidValue(expr.Month, month+1) {
+		next, found := s.nextRunInMonth(expr, from, cronPosition{year: year, month: month})
+		if found {
+			return next, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func (s *TaskScheduler) nextRunInMonth(expr *CronExpression, from time.Time, pos cronPosition) (time.Time, bool) {
+	startDay := s.findFirstValidValue(expr.Day)
+	if pos.isInMonthOf(from) {
+		startDay = from.Day()
+	}
+	daysInMonth := time.Date(pos.year, time.Month(pos.month)+1, 0, 0, 0, 0, 0, time.UTC).Day()
+
+	day, ok := s.findNextValidValue(expr.Day, startDay)
+	for ; ok && day <= daysInMonth; day, ok = s.findNextValidValue(expr.Day, day+1) {
+		pos.day = day
+		weekday := int(time.Date(pos.year, time.Month(pos.month), day, 0, 0, 0, 0, from.Location()).Weekday())
+		if !s.fieldMatches(expr.DayOfWeek, weekday) {
+			continue
+		}
+		next, found := s.nextRunInDay(expr, from, pos)
+		if found {
+			return next, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func (s *TaskScheduler) nextRunInDay(expr *CronExpression, from time.Time, pos cronPosition) (time.Time, bool) {
+	startHour := s.findFirstValidValue(expr.Hour)
+	if pos.isOnDayOf(from) {
+		startHour = from.Hour()
+	}
+
+	hour, ok := s.findNextValidValue(expr.Hour, startHour)
+	for ; ok; hour, ok = s.findNextValidValue(expr.Hour, hour+1) {
+		pos.hour = hour
+		next, found := s.nextRunInHour(expr, from, pos)
+		if found {
+			return next, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func (s *TaskScheduler) nextRunInHour(expr *CronExpression, from time.Time, pos cronPosition) (time.Time, bool) {
+	startMinute := s.findFirstValidValue(expr.Minute)
+	if pos.isInHourOf(from) {
+		startMinute = from.Minute()
+	}
+
+	minute, ok := s.findNextValidValue(expr.Minute, startMinute)
+	for ; ok; minute, ok = s.findNextValidValue(expr.Minute, minute+1) {
+		pos.minute = minute
+		next, found := s.nextRunInMinute(expr, from, pos)
+		if found {
+			return next, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func (s *TaskScheduler) nextRunInMinute(expr *CronExpression, from time.Time, pos cronPosition) (time.Time, bool) {
+	if expr.Second == nil {
+		return pos.at(from.Location(), 0), true
+	}
+
+	startSecond := s.findFirstValidValue(*expr.Second)
+	if pos.isInMinuteOf(from) {
+		startSecond = from.Second()
+	}
+
+	second, found := s.findNextValidValue(*expr.Second, startSecond)
+	if !found {
+		return time.Time{}, false
+	}
+	return pos.at(from.Location(), second), true
 }
 
 // fieldMatches checks if a value matches a cron field

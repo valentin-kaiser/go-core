@@ -24,16 +24,13 @@ func MiddlewareChain(handler JobHandler, middlewares ...Middleware) JobHandler {
 func LoggingMiddleware(next JobHandler) JobHandler {
 	return func(ctx context.Context, job *Job) error {
 		start := time.Now()
-
 		logger.Debug().
 			Field("job_id", job.ID).
 			Field("job_type", job.Type).
 			Field("priority", job.Priority.String()).
 			Msg("job started")
-
 		err := next(ctx, job)
 		duration := time.Since(start)
-
 		if err != nil {
 			logger.Error().
 				Err(err).
@@ -43,7 +40,6 @@ func LoggingMiddleware(next JobHandler) JobHandler {
 				Msg("job failed")
 			return err
 		}
-
 		logger.Debug().
 			Field("job_id", job.ID).
 			Field("job_type", job.Type).
@@ -59,12 +55,10 @@ func TimeoutMiddleware(timeout time.Duration) Middleware {
 		return func(ctx context.Context, job *Job) error {
 			ctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
-
 			done := make(chan error, 1)
 			go func() {
 				done <- next(ctx, job)
 			}()
-
 			select {
 			case err := <-done:
 				return err
@@ -79,15 +73,12 @@ func TimeoutMiddleware(timeout time.Duration) Middleware {
 func MetricsMiddleware(next JobHandler) JobHandler {
 	return func(ctx context.Context, job *Job) error {
 		start := time.Now()
-
 		logger.Trace().
 			Field("job_id", job.ID).
 			Field("job_type", job.Type).
 			Msg("job metrics: started")
-
 		err := next(ctx, job)
 		duration := time.Since(start)
-
 		if err != nil {
 			logger.Trace().
 				Field("job_id", job.ID).
@@ -96,7 +87,6 @@ func MetricsMiddleware(next JobHandler) JobHandler {
 				Msg("job metrics: failed")
 			return err
 		}
-
 		logger.Trace().
 			Field("job_id", job.ID).
 			Field("job_type", job.Type).
@@ -119,7 +109,6 @@ func RecoveryMiddleware(next JobHandler) JobHandler {
 					Msg("job panic recovered")
 			}
 		}()
-
 		return next(ctx, job)
 	}
 }
