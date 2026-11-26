@@ -12,20 +12,66 @@ import (
 	"github.com/valentin-kaiser/go-core/version"
 )
 
+const (
+	headerETag               = "ETag"
+	headerCacheControl       = "Cache-Control"
+	headerHSTS               = "Strict-Transport-Security"
+	headerContentTypeOptions = "X-Content-Type-Options"
+	headerFrameOptions       = "X-Frame-Options"
+	headerXSSProtection      = "X-XSS-Protection"
+	headerReferrerPolicy     = "Referrer-Policy"
+	headerIfNoneMatch        = "If-None-Match"
+	headerVary               = "Vary"
+	headerTrailer            = "Trailer"
+	headerOrigin             = "Origin"
+	headerAllowOrigin        = "Access-Control-Allow-Origin"
+	headerAllowMethods       = "Access-Control-Allow-Methods"
+	headerAllowHeaders       = "Access-Control-Allow-Headers"
+	headerAllowCredentials   = "Access-Control-Allow-Credentials"
+	headerMaxAge             = "Access-Control-Max-Age"
+	headerExposeHeaders      = "Access-Control-Expose-Headers"
+	headerForwardedFor       = "X-Forwarded-For"
+	headerForwardedHost      = "X-Forwarded-Host"
+	headerForwardedProto     = "X-Forwarded-Proto"
+	// canonicalHeaderRealIP is the canonical form of X-Real-IP, used to index the header map directly.
+	canonicalHeaderRealIP = "X-Real-Ip"
+
+	cacheControlDefault     = "public, must-revalidate, max-age=86400, stale-while-revalidate=3600, stale-if-error=86400"
+	cacheControlDebug       = "no-store, no-cache, must-revalidate, max-age=0"
+	hstsValue               = "max-age=31536000; includeSubDomains; preload"
+	contentTypeOptionsValue = "nosniff"
+	frameOptionsValue       = "DENY"
+	xssProtectionValue      = "1; mode=block"
+	referrerPolicyValue     = "no-referrer-when-downgrade"
+	allowCredentialsValue   = "true"
+
+	corsAllowMethodsDefault = "GET, POST, PUT, DELETE, OPTIONS"
+	corsAllowHeadersDefault = "Content-Type, Authorization, X-Real-IP"
+	wildcardOrigin          = "*"
+
+	headerValueSeparator = ", "
+	commaSeparator       = ","
+	hostPortSeparator    = ":"
+	schemeSeparator      = "://"
+	splitPartsCount      = 2
+	ipv4PrefixSuffix     = "/32"
+	ipv6PrefixSuffix     = "/128"
+)
+
 var (
 	securityHeaders = map[string]string{
-		"ETag":                      version.GitCommit,
-		"Cache-Control":             "public, must-revalidate, max-age=86400, stale-while-revalidate=3600, stale-if-error=86400",
-		"Strict-Transport-Security": "max-age=31536000; includeSubDomains; preload",
-		"X-Content-Type-Options":    "nosniff",
-		"X-Frame-Options":           "DENY",
-		"X-XSS-Protection":          "1; mode=block",
-		"Referrer-Policy":           "no-referrer-when-downgrade",
+		headerETag:               version.GitCommit,
+		headerCacheControl:       cacheControlDefault,
+		headerHSTS:               hstsValue,
+		headerContentTypeOptions: contentTypeOptionsValue,
+		headerFrameOptions:       frameOptionsValue,
+		headerXSSProtection:      xssProtectionValue,
+		headerReferrerPolicy:     referrerPolicyValue,
 	}
 	corsHeaders = map[string]string{
-		"Access-Control-Allow-Origin":  "*",
-		"Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
-		"Access-Control-Allow-Headers": "Content-Type, Authorization, X-Real-IP",
+		headerAllowOrigin:  "*",
+		headerAllowMethods: corsAllowMethodsDefault,
+		headerAllowHeaders: corsAllowHeadersDefault,
 	}
 )
 
@@ -63,7 +109,7 @@ func securityHeaderMiddlewareWithServer(server *Server) func(http.Handler) http.
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// Check If-None-Match header for ETag validation
-			if inm := r.Header.Get("If-None-Match"); inm != "" {
+			if inm := r.Header.Get(headerIfNoneMatch); inm != "" {
 				// Compare with current ETag (version.GitCommit)
 				if inm == version.GitCommit || inm == `"`+version.GitCommit+`"` {
 					// ETag matches, return 304 Not Modified
@@ -79,7 +125,7 @@ func securityHeaderMiddlewareWithServer(server *Server) func(http.Handler) http.
 
 			for key, value := range securityHeaders {
 				// Skip Cache-Control if a custom one is set
-				if key == "Cache-Control" && cacheControl != "" {
+				if key == headerCacheControl && cacheControl != "" {
 					continue
 				}
 				w.Header().Set(key, value)
@@ -87,11 +133,11 @@ func securityHeaderMiddlewareWithServer(server *Server) func(http.Handler) http.
 
 			// Set custom cache control if specified
 			if cacheControl != "" {
-				w.Header().Set("Cache-Control", cacheControl)
+				w.Header().Set(headerCacheControl, cacheControl)
 			}
 
 			if flag.Debug {
-				w.Header().Set("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
+				w.Header().Set(headerCacheControl, cacheControlDebug)
 			}
 			next.ServeHTTP(w, r)
 		})
@@ -167,30 +213,30 @@ func buildCORSApplier(config *CORSConfig) func(http.ResponseWriter, *http.Reques
 	}
 
 	allowedOrigins := resolveAllowedOrigins(config)
-	wildcard := len(allowedOrigins) == 1 && allowedOrigins[0] == "*"
+	wildcard := len(allowedOrigins) == 1 && allowedOrigins[0] == wildcardOrigin
 
-	allowMethods := strings.Join(config.AllowMethods, ", ")
+	allowMethods := strings.Join(config.AllowMethods, headerValueSeparator)
 	if allowMethods == "" {
-		allowMethods = "GET, POST, PUT, DELETE, OPTIONS"
+		allowMethods = corsAllowMethodsDefault
 	}
 
-	allowHeaders := strings.Join(config.AllowHeaders, ", ")
+	allowHeaders := strings.Join(config.AllowHeaders, headerValueSeparator)
 	if allowHeaders == "" {
-		allowHeaders = "Content-Type, Authorization, X-Real-IP"
+		allowHeaders = corsAllowHeadersDefault
 	}
 
 	// Build static headers
 	headers := map[string]string{
-		"Access-Control-Allow-Methods": allowMethods,
-		"Access-Control-Allow-Headers": allowHeaders,
+		headerAllowMethods: allowMethods,
+		headerAllowHeaders: allowHeaders,
 	}
 
 	if config.MaxAge > 0 {
-		headers["Access-Control-Max-Age"] = strconv.Itoa(config.MaxAge)
+		headers[headerMaxAge] = strconv.Itoa(config.MaxAge)
 	}
 
 	if len(config.ExposeHeaders) > 0 {
-		headers["Access-Control-Expose-Headers"] = strings.Join(config.ExposeHeaders, ", ")
+		headers[headerExposeHeaders] = strings.Join(config.ExposeHeaders, headerValueSeparator)
 	}
 
 	// Credentialed requests always go through Origin validation, even with a wildcard
@@ -202,12 +248,12 @@ func buildCORSApplier(config *CORSConfig) func(http.ResponseWriter, *http.Reques
 				w.Header().Set(key, value)
 			}
 
-			origin := r.Header.Get("Origin")
+			origin := r.Header.Get(headerOrigin)
 			if origin != "" && originAllowed(origin, allowedOrigins) {
-				w.Header().Set("Access-Control-Allow-Origin", origin)
-				w.Header().Set("Access-Control-Allow-Credentials", "true")
+				w.Header().Set(headerAllowOrigin, origin)
+				w.Header().Set(headerAllowCredentials, allowCredentialsValue)
 			}
-			addVaryHeader(w, "Origin")
+			addVaryHeader(w, headerOrigin)
 		}
 	}
 
@@ -215,7 +261,7 @@ func buildCORSApplier(config *CORSConfig) func(http.ResponseWriter, *http.Reques
 	// static header. Multiple explicit origins still need the request's Origin to
 	// pick which value to reflect.
 	if wildcard {
-		headers["Access-Control-Allow-Origin"] = "*"
+		headers[headerAllowOrigin] = wildcardOrigin
 		return func(w http.ResponseWriter, _ *http.Request) {
 			for key, value := range headers {
 				w.Header().Set(key, value)
@@ -224,7 +270,7 @@ func buildCORSApplier(config *CORSConfig) func(http.ResponseWriter, *http.Reques
 	}
 
 	if len(allowedOrigins) == 1 {
-		headers["Access-Control-Allow-Origin"] = allowedOrigins[0]
+		headers[headerAllowOrigin] = allowedOrigins[0]
 		return func(w http.ResponseWriter, _ *http.Request) {
 			for key, value := range headers {
 				w.Header().Set(key, value)
@@ -237,11 +283,11 @@ func buildCORSApplier(config *CORSConfig) func(http.ResponseWriter, *http.Reques
 			w.Header().Set(key, value)
 		}
 
-		origin := r.Header.Get("Origin")
+		origin := r.Header.Get(headerOrigin)
 		if origin != "" && originAllowed(origin, allowedOrigins) {
-			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set(headerAllowOrigin, origin)
 		}
-		addVaryHeader(w, "Origin")
+		addVaryHeader(w, headerOrigin)
 	}
 }
 
@@ -252,7 +298,7 @@ func resolveAllowedOrigins(config *CORSConfig) []string {
 		return config.AllowOrigins
 	}
 	if config.AllowOrigin == "" {
-		return []string{"*"}
+		return []string{wildcardOrigin}
 	}
 	return []string{config.AllowOrigin}
 }
@@ -262,7 +308,7 @@ func resolveAllowedOrigins(config *CORSConfig) []string {
 // always be validated against an explicit origin per the CORS spec.
 func originAllowed(origin string, allowed []string) bool {
 	for _, candidate := range allowed {
-		if candidate != "*" && candidate == origin {
+		if candidate != wildcardOrigin && candidate == origin {
 			return true
 		}
 	}
@@ -304,12 +350,12 @@ func routeHeaderMiddlewareWithServer(server *Server) Middleware {
 
 // addVaryHeader appends a value to the Vary response header, avoiding duplicates.
 func addVaryHeader(w http.ResponseWriter, value string) {
-	for _, existing := range w.Header().Values("Vary") {
+	for _, existing := range w.Header().Values(headerVary) {
 		if strings.EqualFold(existing, value) {
 			return
 		}
 	}
-	w.Header().Add("Vary", value)
+	w.Header().Add(headerVary, value)
 }
 
 // varyHeaderMiddleware creates a middleware that adds Vary headers to the response
@@ -321,7 +367,7 @@ func varyHeaderMiddleware(headers ...string) func(http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 
 			// Get existing Vary header after the handler has run
-			existing := w.Header().Get("Vary")
+			existing := w.Header().Get(headerVary)
 
 			// If we have headers to add
 			if len(headers) > 0 {
@@ -333,9 +379,9 @@ func varyHeaderMiddleware(headers ...string) func(http.Handler) http.Handler {
 				allHeaders = append(allHeaders, headers...)
 
 				// Set the combined Vary header
-				w.Header().Set("Vary", allHeaders[0])
+				w.Header().Set(headerVary, allHeaders[0])
 				for _, header := range allHeaders[1:] {
-					w.Header().Add("Vary", header)
+					w.Header().Add(headerVary, header)
 				}
 			}
 		})
@@ -355,9 +401,9 @@ func logMiddleware(next http.Handler) http.Handler {
 		// Pick the level from the status first, so nothing is built for events that are dropped
 		level := logging.DebugLevel
 		switch {
-		case rw.status >= 500:
+		case rw.status >= http.StatusInternalServerError:
 			level = logging.ErrorLevel
-		case rw.status >= 400:
+		case rw.status >= http.StatusBadRequest:
 			level = logging.WarnLevel
 		}
 		if !logging.IsEnabled(logger, level) {
