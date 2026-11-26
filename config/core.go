@@ -195,7 +195,7 @@ func (m *manager) Register(c Config) error {
 
 	err := m.parseStructTags(reflect.ValueOf(c), "")
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("parsing struct tags of %T failed", c).AddError(err)
 	}
 
 	m.set(c)
@@ -234,7 +234,7 @@ type configBox struct {
 func Read() error {
 	err := cm.ensureBase()
 	if err != nil {
-		return err
+		return apperror.NewError("preparing configuration source failed").AddError(err)
 	}
 
 	return cm.reload(context.Background())
@@ -250,17 +250,17 @@ func Write(change Config) error {
 
 	err := cm.ensureBase()
 	if err != nil {
-		return err
+		return apperror.NewError("preparing configuration source failed").AddError(err)
 	}
 
 	err = change.Validate()
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("validating configuration failed").AddError(err)
 	}
 
 	err = cm.base.Save(context.Background(), change)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("saving configuration failed").AddError(err)
 	}
 
 	o := Get()
@@ -268,7 +268,7 @@ func Write(change Config) error {
 	for _, f := range cm.onChange {
 		err = f(o, change)
 		if err != nil {
-			return apperror.Wrap(err)
+			return apperror.NewError("running configuration change handler failed").AddError(err)
 		}
 	}
 
@@ -432,7 +432,7 @@ func (m *manager) loadSources(ctx context.Context) error {
 func (m *manager) reload(ctx context.Context) error {
 	err := m.loadSources(ctx)
 	if err != nil {
-		return err
+		return apperror.NewError("loading configuration sources failed").AddError(err)
 	}
 
 	if m.config == nil {
@@ -451,7 +451,7 @@ func (m *manager) reload(ctx context.Context) error {
 
 	err = change.Validate()
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("validating configuration failed").AddError(err)
 	}
 
 	o := Get()
@@ -462,7 +462,7 @@ func (m *manager) reload(ctx context.Context) error {
 	for _, f := range handlers {
 		err := f(o, change)
 		if err != nil {
-			return apperror.Wrap(err)
+			return apperror.NewError("running configuration change handler failed").AddError(err)
 		}
 	}
 	return nil
@@ -476,7 +476,7 @@ func (m *manager) startWatch(ctx context.Context) error {
 
 	err := m.ensureBase()
 	if err != nil {
-		return err
+		return apperror.NewError("preparing configuration source failed").AddError(err)
 	}
 
 	watchCtx, cancel := context.WithCancel(ctx)
@@ -488,13 +488,8 @@ func (m *manager) startWatch(ctx context.Context) error {
 	mutex.Unlock()
 
 	callback := func(_ map[string]any) {
-		err := m.reload(watchCtx)
-		if err != nil {
-			// Reload errors during watch are non-fatal; swallow to keep the
-			// watch loop alive. Users wanting visibility should register an
-			// OnChange handler that logs.
-			_ = err
-		}
+		// A failed reload must not stop the watch loop, so it is only reported.
+		apperror.Catch(func() error { return m.reload(watchCtx) }, "reloading configuration after source change failed")
 	}
 
 	cancels := make([]func(), 0, len(sources))
