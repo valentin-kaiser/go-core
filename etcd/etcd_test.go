@@ -4,10 +4,8 @@ import (
 	"context"
 	"net"
 	"net/url"
-	"os"
 	"path/filepath"
 	"strconv"
-	"sync"
 	"testing"
 	"time"
 
@@ -18,56 +16,47 @@ import (
 	"github.com/valentin-kaiser/go-core/etcd"
 )
 
-// testEtcd holds a singleton embedded etcd instance shared by every test in
-// this package to keep CI fast and avoid port pressure.
-type testEtcd struct {
-	endpoints []string
-	dir       string
-	server    *embed.Etcd
-}
-
-var (
-	sharedOnce   sync.Once
-	sharedServer *testEtcd
-	errShared    error
+const (
+	loopbackHost        = "127.0.0.1"
+	anyPortAddress      = loopbackHost + ":0"
+	urlScheme           = "http://"
+	dataDirName         = "data"
+	serverReadyTimeout  = 30 * time.Second
+	requestTimeout      = 5 * time.Second
+	leaseTTL            = 5 * time.Second
+	keyPrefixRoot       = "/test/"
+	embeddedLogLevel    = "error"
+	embeddedLoggerKind  = "zap"
+	embeddedUnavailable = "embedded etcd unavailable: %v"
 )
 
-func sharedEtcd(tb testing.TB) []string {
+// startEmbedded starts a single node etcd server that is stopped and removed when the test ends.
+func startEmbedded(tb testing.TB) []string {
 	tb.Helper()
-	sharedOnce.Do(func() {
-		sharedServer, errShared = startEmbedded()
-	})
-	if errShared != nil {
-		tb.Skipf("embedded etcd unavailable: %v", errShared)
-	}
-	return sharedServer.endpoints
-}
-
-func startEmbedded() (*testEtcd, error) {
-	dir, err := os.MkdirTemp("", "go-core-etcd-*")
-	if err != nil {
-		return nil, err
-	}
 
 	cfg := embed.NewConfig()
-	cfg.Dir = filepath.Join(dir, "data")
-	cfg.LogLevel = "error"
-	cfg.Logger = "zap"
+	cfg.Dir = filepath.Join(tb.TempDir(), dataDirName)
+	cfg.LogLevel = embeddedLogLevel
+	cfg.Logger = embeddedLoggerKind
 	cfg.ZapLoggerBuilder = embed.NewZapLoggerBuilder(zap.NewNop())
 
 	clientPort, err := freePort()
 	if err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, err
+		tb.Skipf(embeddedUnavailable, err)
 	}
 	peerPort, err := freePort()
 	if err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, err
+		tb.Skipf(embeddedUnavailable, err)
 	}
 
-	clientURL, _ := url.Parse("http://127.0.0.1:" + strconv.Itoa(clientPort))
-	peerURL, _ := url.Parse("http://127.0.0.1:" + strconv.Itoa(peerPort))
+	clientURL, err := url.Parse(urlScheme + loopbackHost + ":" + strconv.Itoa(clientPort))
+	if err != nil {
+		tb.Fatalf("parsing client url failed: %v", err)
+	}
+	peerURL, err := url.Parse(urlScheme + loopbackHost + ":" + strconv.Itoa(peerPort))
+	if err != nil {
+		tb.Fatalf("parsing peer url failed: %v", err)
+	}
 
 	cfg.ListenClientUrls = []url.URL{*clientURL}
 	cfg.AdvertiseClientUrls = []url.URL{*clientURL}
@@ -77,50 +66,55 @@ func startEmbedded() (*testEtcd, error) {
 
 	server, err := embed.StartEtcd(cfg)
 	if err != nil {
-		_ = os.RemoveAll(dir)
-		return nil, err
+		tb.Skipf(embeddedUnavailable, err)
 	}
+	tb.Cleanup(server.Close)
 
 	select {
 	case <-server.Server.ReadyNotify():
-	case <-time.After(30 * time.Second):
-		server.Close()
-		_ = os.RemoveAll(dir)
-		return nil, context.DeadlineExceeded
+	case <-time.After(serverReadyTimeout):
+		tb.Skipf(embeddedUnavailable, context.DeadlineExceeded)
 	}
 
-	return &testEtcd{
-		endpoints: []string{clientURL.String()},
-		dir:       dir,
-		server:    server,
-	}, nil
+	return []string{clientURL.String()}
 }
 
 func freePort() (int, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:0")
+	l, err := net.Listen("tcp", anyPortAddress)
 	if err != nil {
 		return 0, err
 	}
-	defer func() { _ = l.Close() }()
 	addr, ok := l.Addr().(*net.TCPAddr)
 	if !ok {
 		return 0, apperror.NewError("listener address is not a TCP address")
+	}
+	err = l.Close()
+	if err != nil {
+		return 0, err
 	}
 	return addr.Port, nil
 }
 
 func newTestClient(tb testing.TB) *etcd.Client {
 	tb.Helper()
-	endpoints := sharedEtcd(tb)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+	endpoints := startEmbedded(tb)
+
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
+
 	cli, err := etcd.New(ctx, etcd.Config{
 		Endpoints: endpoints,
-		Prefix:    "/test/" + tb.Name(),
+		Prefix:    keyPrefixRoot + tb.Name(),
 	})
 	if err != nil {
 		tb.Fatalf("etcd.New: %v", err)
 	}
-	tb.Cleanup(func() { _ = cli.Close() })
+	tb.Cleanup(func() {
+		err := cli.Close()
+		if err != nil {
+			tb.Errorf("closing client failed: %v", err)
+		}
+	})
 	return cli
 }
