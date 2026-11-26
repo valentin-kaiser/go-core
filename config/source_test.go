@@ -3,6 +3,7 @@ package config_test
 import (
 	"context"
 	"errors"
+	"maps"
 	"sync"
 	"testing"
 	"time"
@@ -16,31 +17,29 @@ type mockSource struct {
 	name string
 
 	mu        sync.Mutex
-	values    map[string]interface{}
+	values    map[string]any
 	notFound  bool
 	readOnly  bool
 	saveCount int
 	loadCount int
-	listeners []func(map[string]interface{})
+	listeners []func(map[string]any)
 }
 
 func newMockSource(name string) *mockSource {
-	return &mockSource{name: name, values: map[string]interface{}{}}
+	return &mockSource{name: name, values: map[string]any{}}
 }
 
 func (m *mockSource) Name() string { return m.name }
 
-func (m *mockSource) Load(_ context.Context) (map[string]interface{}, error) {
+func (m *mockSource) Load(_ context.Context) (map[string]any, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.loadCount++
 	if m.notFound {
 		return nil, config.ErrNotFound
 	}
-	out := make(map[string]interface{}, len(m.values))
-	for k, v := range m.values {
-		out[k] = v
-	}
+	out := make(map[string]any, len(m.values))
+	maps.Copy(out, m.values)
 	return out, nil
 }
 
@@ -57,7 +56,7 @@ func (m *mockSource) Save(_ context.Context, c config.Config) error {
 	return nil
 }
 
-func (m *mockSource) Watch(_ context.Context, onChange func(map[string]interface{})) (func(), error) {
+func (m *mockSource) Watch(_ context.Context, onChange func(map[string]any)) (func(), error) {
 	m.mu.Lock()
 	m.listeners = append(m.listeners, onChange)
 	idx := len(m.listeners) - 1
@@ -71,14 +70,12 @@ func (m *mockSource) Watch(_ context.Context, onChange func(map[string]interface
 	}, nil
 }
 
-func (m *mockSource) setValue(k string, v interface{}) {
+func (m *mockSource) setValue(k string, v any) {
 	m.mu.Lock()
 	m.values[k] = v
-	listeners := append([]func(map[string]interface{}){}, m.listeners...)
-	snap := make(map[string]interface{}, len(m.values))
-	for kk, vv := range m.values {
-		snap[kk] = vv
-	}
+	listeners := append([]func(map[string]any){}, m.listeners...)
+	snap := make(map[string]any, len(m.values))
+	maps.Copy(snap, m.values)
 	m.mu.Unlock()
 	for _, l := range listeners {
 		if l != nil {
@@ -108,10 +105,12 @@ func TestWithSourceLoadsFromSource(t *testing.T) {
 	src.setValue("port", 9000)
 
 	cfg := &sourceTestConfig{Name: "default", Port: 1}
-	if err := config.Manager().WithName("src-test-1").WithSource(src).Register(cfg); err != nil {
+	err := config.Manager().WithName("src-test-1").WithSource(src).Register(cfg)
+	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if err := config.Read(); err != nil {
+	err = config.Read()
+	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
 
@@ -132,10 +131,12 @@ func TestWithSourceBootstrapsOnNotFound(t *testing.T) {
 	src.notFound = true
 
 	cfg := &sourceTestConfig{Name: "default", Port: 1}
-	if err := config.Manager().WithName("src-test-2").WithSource(src).Register(cfg); err != nil {
+	err := config.Manager().WithName("src-test-2").WithSource(src).Register(cfg)
+	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if err := config.Read(); err != nil {
+	err = config.Read()
+	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
 	if src.saveCount != 1 {
@@ -157,14 +158,16 @@ func TestWithOverlayMergesOnTopOfBase(t *testing.T) {
 	overlay.setValue("port", 7777)
 
 	cfg := &sourceTestConfig{Name: "default", Port: 0}
-	if err := config.Manager().
+	err := config.Manager().
 		WithName("src-test-3").
 		WithSource(base).
 		WithOverlay(overlay).
-		Register(cfg); err != nil {
+		Register(cfg)
+	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if err := config.Read(); err != nil {
+	err = config.Read()
+	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
 
@@ -186,10 +189,12 @@ func TestStartWatchTriggersReload(t *testing.T) {
 	src.setValue("port", 1)
 
 	cfg := &sourceTestConfig{Name: "default", Port: 1}
-	if err := config.Manager().WithName("src-test-4").WithSource(src).Register(cfg); err != nil {
+	err := config.Manager().WithName("src-test-4").WithSource(src).Register(cfg)
+	if err != nil {
 		t.Fatalf("Register: %v", err)
 	}
-	if err := config.Read(); err != nil {
+	err = config.Read()
+	if err != nil {
 		t.Fatalf("Read: %v", err)
 	}
 
@@ -204,7 +209,8 @@ func TestStartWatchTriggersReload(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	if err := config.StartWatch(ctx); err != nil {
+	err = config.StartWatch(ctx)
+	if err != nil {
 		t.Fatalf("StartWatch: %v", err)
 	}
 	defer config.StopWatch()

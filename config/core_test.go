@@ -134,7 +134,8 @@ func TestFileOperations(t *testing.T) {
 	flag.Path = tempDir
 
 	// Test that the temp directory exists
-	if _, err := os.Stat(tempDir); os.IsNotExist(err) {
+	_, err := os.Stat(tempDir)
+	if os.IsNotExist(err) {
 		t.Errorf("Temp directory %s does not exist", tempDir)
 	}
 
@@ -145,7 +146,7 @@ func TestFileOperations(t *testing.T) {
 
 	// Test creating directory structure
 	subDir := filepath.Join(tempDir, "subdir")
-	err := os.MkdirAll(subDir, 0750)
+	err = os.MkdirAll(subDir, 0750)
 	if err != nil {
 		t.Errorf("Failed to create subdirectory: %v", err)
 	}
@@ -192,7 +193,7 @@ func TestConcurrentAccess(_ *testing.T) {
 	done := make(chan bool, 10)
 
 	// Test concurrent Get operations
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		go func() {
 			defer func() { done <- true }()
 			config := config.Get()
@@ -201,7 +202,7 @@ func TestConcurrentAccess(_ *testing.T) {
 	}
 
 	// Wait for all goroutines to complete
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		<-done
 	}
 }
@@ -262,7 +263,8 @@ type NestedConfig struct {
 }
 
 func (c *NestedConfig) Validate() error {
-	if err := c.Server.Validate(); err != nil {
+	err := c.Server.Validate()
+	if err != nil {
 		return err
 	}
 	return c.Database.Validate()
@@ -303,7 +305,8 @@ type PointerConfig struct {
 
 func (c *PointerConfig) Validate() error {
 	if c.Server != nil {
-		if err := c.Server.Validate(); err != nil {
+		err := c.Server.Validate()
+		if err != nil {
 			return err
 		}
 	}
@@ -321,7 +324,8 @@ type UniquePointerConfig struct {
 
 func (c *UniquePointerConfig) Validate() error {
 	if c.AppServer != nil {
-		if err := c.AppServer.Validate(); err != nil {
+		err := c.AppServer.Validate()
+		if err != nil {
 			return err
 		}
 	}
@@ -379,7 +383,7 @@ func TestRegisterWithNonPointer(t *testing.T) {
 	_ = cfg // Just to use the variable
 
 	// Instead, test with an interface value that's not a pointer to struct
-	var iface interface{} = "not a struct"
+	var iface any = "not a struct"
 	if c, ok := iface.(config.Config); ok {
 		err := config.Manager().WithName("non-pointer").Register(c)
 		if err == nil {
@@ -414,7 +418,8 @@ type PointerFieldsTestConfig struct {
 
 func (c *PointerFieldsTestConfig) Validate() error {
 	if c.PtrServer != nil {
-		if err := c.PtrServer.Validate(); err != nil {
+		err := c.PtrServer.Validate()
+		if err != nil {
 			return err
 		}
 	}
@@ -450,7 +455,8 @@ type NilPointerTestConfig struct {
 
 func (c *NilPointerTestConfig) Validate() error {
 	if c.NilServer != nil {
-		if err := c.NilServer.Validate(); err != nil {
+		err := c.NilServer.Validate()
+		if err != nil {
 			return err
 		}
 	}
@@ -523,7 +529,8 @@ func TestReadConfigFileOperations(t *testing.T) {
 
 	// Verify config file was created
 	configPath := filepath.Join(tempDir, "read-test.yaml")
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+	_, err = os.Stat(configPath)
+	if os.IsNotExist(err) {
 		t.Error("Config file should have been created")
 	}
 
@@ -578,7 +585,8 @@ func TestWriteConfig(t *testing.T) {
 
 	// Verify the file was written correctly
 	configFile := filepath.Join(tempDir, "write-test.yaml")
-	if _, err := os.Stat(configFile); os.IsNotExist(err) {
+	_, err = os.Stat(configFile)
+	if os.IsNotExist(err) {
 		t.Error("Write() should have created the config file")
 	}
 }
@@ -663,7 +671,10 @@ func TestOnChangeCallbacks(t *testing.T) {
 	}
 
 	// Verify that the in-memory config was updated
-	current := config.Get().(*TestConfig)
+	current, ok := config.Get().(*TestConfig)
+	if !ok {
+		t.Fatalf("config has type %T, want *TestConfig", config.Get())
+	}
 	if current.ApplicationName != "updated-app" {
 		t.Error("In-memory config should have been updated by Write()")
 	}
@@ -756,29 +767,28 @@ func TestConcurrentConfigOperations(t *testing.T) {
 	errs := make(chan error, 10)
 
 	// Test concurrent reads - this should be safe
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			config := config.Get()
 			if config == nil {
 				errs <- errors.New("Get() returned nil")
 			}
-		}()
+		})
 	}
 
 	wg.Wait()
 
 	// Test sequential writes to avoid file conflicts
 	// (concurrent writes to the same config file can cause issues)
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		newCfg := &TestConfig{
 			ApplicationName: fmt.Sprintf("concurrent-app-%d", i),
 			ServerPort:      8080 + i,
 			EnableVerbose:   true,
 			DatabaseURL:     "sqlite:///test.db",
 		}
-		if err := config.Write(newCfg); err != nil {
+		err := config.Write(newCfg)
+		if err != nil {
 			errs <- err
 		}
 	}
@@ -857,13 +867,15 @@ func TestConfigDirectoryCreation(t *testing.T) {
 	}
 
 	// Verify directory was created
-	if _, err := os.Stat(subDir); os.IsNotExist(err) {
+	_, err = os.Stat(subDir)
+	if os.IsNotExist(err) {
 		t.Error("Config directory should have been created")
 	}
 
 	// Verify config file was created
 	configPath := filepath.Join(subDir, "directory-test.yaml")
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+	_, err = os.Stat(configPath)
+	if os.IsNotExist(err) {
 		t.Error("Config file should have been created in subdirectory")
 	}
 }
@@ -877,7 +889,8 @@ func BenchmarkRegister(b *testing.B) {
 			EnableVerbose:   false,
 			DatabaseURL:     "sqlite:///test.db",
 		}
-		if err := config.Manager().WithName(fmt.Sprintf("benchmark-%d", i)).Register(cfg); err != nil {
+		err := config.Manager().WithName(fmt.Sprintf("benchmark-%d", i)).Register(cfg)
+		if err != nil {
 			b.Logf("Failed to register config: %v", err)
 		}
 	}
@@ -909,7 +922,8 @@ func BenchmarkWrite(b *testing.B) {
 			EnableVerbose:   i%2 == 0,
 			DatabaseURL:     "sqlite:///test.db",
 		}
-		if err := config.Write(newCfg); err != nil {
+		err := config.Write(newCfg)
+		if err != nil {
 			b.Logf("Failed to write config: %v", err)
 		}
 	}
@@ -941,7 +955,8 @@ func BenchmarkRead(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := config.Read(); err != nil {
+		err := config.Read()
+		if err != nil {
 			b.Logf("Failed to read config: %v", err)
 		}
 	}
@@ -974,7 +989,10 @@ func TestReadAlwaysLoadsFromDisk(t *testing.T) {
 	}
 
 	// Verify initial state
-	current := config.Get().(*TestConfig)
+	current, ok := config.Get().(*TestConfig)
+	if !ok {
+		t.Fatalf("config has type %T, want *TestConfig", config.Get())
+	}
 	if current.ApplicationName != "initial-app" {
 		t.Errorf("Expected initial state to be 'initial-app', got %s", current.ApplicationName)
 	}
@@ -998,7 +1016,10 @@ database_url: "modified://disk"`
 	}
 
 	// Verify that Read() loaded the changes from disk
-	current = config.Get().(*TestConfig)
+	current, ok = config.Get().(*TestConfig)
+	if !ok {
+		t.Fatalf("config has type %T, want *TestConfig", config.Get())
+	}
 	if current.ApplicationName != "disk-modified" {
 		t.Errorf("Read() should load from disk, expected 'disk-modified', got %s", current.ApplicationName)
 	}
@@ -1063,7 +1084,10 @@ func TestWriteTriggersOnChange(t *testing.T) {
 	if receivedOldConfig == nil {
 		t.Error("onChange handler should receive old config")
 	} else {
-		oldTyped := receivedOldConfig.(*TestConfig)
+		oldTyped, ok := receivedOldConfig.(*TestConfig)
+		if !ok {
+			t.Fatalf("config has type %T, want *TestConfig", receivedOldConfig)
+		}
 		if oldTyped.ApplicationName != "initial-app" {
 			t.Errorf("onChange old config should be 'initial-app', got %s", oldTyped.ApplicationName)
 		}
@@ -1072,14 +1096,20 @@ func TestWriteTriggersOnChange(t *testing.T) {
 	if receivedNewConfig == nil {
 		t.Error("onChange handler should receive new config")
 	} else {
-		newTyped := receivedNewConfig.(*TestConfig)
+		newTyped, ok := receivedNewConfig.(*TestConfig)
+		if !ok {
+			t.Fatalf("config has type %T, want *TestConfig", receivedNewConfig)
+		}
 		if newTyped.ApplicationName != "updated-by-write" {
 			t.Errorf("onChange new config should be 'updated-by-write', got %s", newTyped.ApplicationName)
 		}
 	}
 
 	// Verify in-memory config was updated
-	current := config.Get().(*TestConfig)
+	current, ok := config.Get().(*TestConfig)
+	if !ok {
+		t.Fatalf("config has type %T, want *TestConfig", config.Get())
+	}
 	if current.ApplicationName != "updated-by-write" {
 		t.Errorf("In-memory config should be updated by Write(), got %s", current.ApplicationName)
 	}

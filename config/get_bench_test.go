@@ -17,10 +17,12 @@ func setupGet(b *testing.B) {
 	b.Cleanup(func() { flag.Path = originalPath })
 
 	cfg := &TestConfig{ApplicationName: "bench-get", ServerPort: 8080, DatabaseURL: "sqlite:///test.db"}
-	if err := config.Manager().WithPath(tempDir).WithName("bench-get").Register(cfg); err != nil {
+	err := config.Manager().WithPath(tempDir).WithName("bench-get").Register(cfg)
+	if err != nil {
 		b.Fatalf("Register failed: %v", err)
 	}
-	if err := config.Read(); err != nil {
+	err = config.Read()
+	if err != nil {
 		b.Fatalf("Read failed: %v", err)
 	}
 }

@@ -11,7 +11,7 @@ import (
 	"github.com/valentin-kaiser/go-core/flag"
 )
 
-func (m *manager) setDefault(key string, value interface{}) {
+func (m *manager) setDefault(key string, value any) {
 	mutex.Lock()
 	defer mutex.Unlock()
 	lowerKey := strings.ToLower(key)
@@ -36,7 +36,7 @@ func (m *manager) getFlagKey(key string) string {
 	return m.prefix + "_" + key
 }
 
-func (m *manager) getFlagValue(flag *pflag.Flag) interface{} {
+func (m *manager) getFlagValue(flag *pflag.Flag) any {
 	switch flag.Value.Type() {
 	case "string":
 		return flag.Value.String()
@@ -126,7 +126,7 @@ func (m *manager) getFlagValue(flag *pflag.Flag) interface{} {
 
 // declareFlag declares a flag with the given label, usage and default value
 // It also binds the flag to the configuration
-func (m *manager) declareFlag(label string, usage string, defaultValue interface{}) error {
+func (m *manager) declareFlag(label string, usage string, defaultValue any) error {
 	m.setDefault(label, defaultValue)
 	pflagLabel := kebabCase(label)
 	label = strings.ToLower(label)
@@ -180,7 +180,7 @@ func (m *manager) declareFlag(label string, usage string, defaultValue interface
 // It also sets the default values of the flags to the values of the struct fields
 func (m *manager) parseStructTags(v reflect.Value, labelBase string) error {
 	// If the config is a pointer, we need to get the type of the element
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 
@@ -195,7 +195,7 @@ func (m *manager) parseStructTags(v reflect.Value, labelBase string) error {
 		fieldName := getFieldName(field)
 
 		// If the field is a pointer, we need to dereference it
-		if v.Field(i).Kind() == reflect.Ptr {
+		if v.Field(i).Kind() == reflect.Pointer {
 			if v.Field(i).IsNil() {
 				v.Field(i).Set(reflect.New(field.Type.Elem()))
 			}
@@ -210,7 +210,7 @@ func (m *manager) parseStructTags(v reflect.Value, labelBase string) error {
 		// If the field is a struct, we need to iterate over its fields
 		if field.Type.Kind() == reflect.Struct {
 			subv := v.Field(i)
-			if subv.Kind() == reflect.Ptr {
+			if subv.Kind() == reflect.Pointer {
 				subv = subv.Elem()
 			}
 
@@ -253,7 +253,7 @@ func kebabCase(s string) string {
 	runes := []rune(s)
 	var result strings.Builder
 
-	for i := 0; i < len(runes); i++ {
+	for i := range runes {
 		r := runes[i]
 
 		// Check if current character is uppercase
@@ -286,8 +286,8 @@ func getFieldName(field reflect.StructField) string {
 		return field.Name
 	}
 
-	if idx := strings.Index(yamlTag, ","); idx != -1 {
-		return yamlTag[:idx]
+	if before, _, ok := strings.Cut(yamlTag, ","); ok {
+		return before
 	}
 	return yamlTag
 }
