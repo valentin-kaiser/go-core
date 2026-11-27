@@ -25,7 +25,10 @@ func newBenchRedis(b *testing.B, keys int) *cache.RedisCache {
 	client := redis.NewClient(opt)
 	err = client.Ping(context.Background()).Err()
 	if err != nil {
-		_ = client.Close()
+		err := client.Close()
+		if err != nil {
+			b.Error(err)
+		}
 		b.Skipf("Redis not available: %v", err)
 	}
 
@@ -33,8 +36,14 @@ func newBenchRedis(b *testing.B, keys int) *cache.RedisCache {
 	cfg.Namespace = "bench:" + strconv.FormatInt(time.Now().UnixNano(), 36)
 	rc := cache.NewRedisCacheWithConfig(client, cfg)
 	b.Cleanup(func() {
-		_ = rc.Clear(context.Background())
-		_ = rc.Close()
+		err := rc.Clear(context.Background())
+		if err != nil {
+			b.Error(err)
+		}
+		err = rc.Close()
+		if err != nil {
+			b.Error(err)
+		}
 	})
 
 	ctx := context.Background()

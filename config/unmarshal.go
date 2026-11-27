@@ -1,12 +1,13 @@
 package config
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"reflect"
 	"strconv"
 	"strings"
+
+	"github.com/valentin-kaiser/go-core/apperror"
 )
 
 func (m *manager) getValue(key string) any {
@@ -87,7 +88,7 @@ func (m *manager) unmarshalStruct(v reflect.Value, prefix string) error {
 		if fieldValue.Kind() == reflect.Struct {
 			err := m.unmarshalStruct(fieldValue, key)
 			if err != nil {
-				return err
+				return apperror.NewErrorf("unmarshalling struct %s failed", key).AddError(err)
 			}
 			continue
 		}
@@ -98,7 +99,7 @@ func (m *manager) unmarshalStruct(v reflect.Value, prefix string) error {
 			}
 			err := m.unmarshalStruct(fieldValue, key)
 			if err != nil {
-				return err
+				return apperror.NewErrorf("unmarshalling struct %s failed", key).AddError(err)
 			}
 			continue
 		}
@@ -110,7 +111,7 @@ func (m *manager) unmarshalStruct(v reflect.Value, prefix string) error {
 
 		err := m.setFieldValue(fieldValue, value)
 		if err != nil {
-			return err
+			return apperror.NewErrorf("setting field %s failed", key).AddError(err)
 		}
 	}
 
@@ -170,35 +171,35 @@ func (m *manager) setFieldValue(field reflect.Value, value any) error {
 		// Handle signed integers from YAML (convert to unsigned if non-negative)
 		if i, ok := value.(int); ok {
 			if i < 0 {
-				return fmt.Errorf("negative integer %d cannot be converted to unsigned", i)
+				return apperror.NewErrorf("negative integer %d cannot be converted to unsigned", i)
 			}
 			field.SetUint(uint64(i))
 			return nil
 		}
 		if i, ok := value.(int64); ok {
 			if i < 0 {
-				return fmt.Errorf("negative integer %d cannot be converted to unsigned", i)
+				return apperror.NewErrorf("negative integer %d cannot be converted to unsigned", i)
 			}
 			field.SetUint(uint64(i))
 			return nil
 		}
 		if i, ok := value.(int32); ok {
 			if i < 0 {
-				return fmt.Errorf("negative integer %d cannot be converted to unsigned", i)
+				return apperror.NewErrorf("negative integer %d cannot be converted to unsigned", i)
 			}
 			field.SetUint(uint64(i))
 			return nil
 		}
 		if i, ok := value.(int16); ok {
 			if i < 0 {
-				return fmt.Errorf("negative integer %d cannot be converted to unsigned", i)
+				return apperror.NewErrorf("negative integer %d cannot be converted to unsigned", i)
 			}
 			field.SetUint(uint64(i))
 			return nil
 		}
 		if i, ok := value.(int8); ok {
 			if i < 0 {
-				return fmt.Errorf("negative integer %d cannot be converted to unsigned", i)
+				return apperror.NewErrorf("negative integer %d cannot be converted to unsigned", i)
 			}
 			field.SetUint(uint64(i))
 			return nil
@@ -321,12 +322,12 @@ func (m *manager) setSliceValue(field reflect.Value, value any) error {
 				}
 				err := m.unmarshalMapToStruct(elemValue, stringMap)
 				if err != nil {
-					return err
+					return apperror.NewErrorf("unmarshalling slice element %d failed", i).AddError(err)
 				}
 			} else if itemMap, ok := item.(map[string]any); ok {
 				err := m.unmarshalMapToStruct(elemValue, itemMap)
 				if err != nil {
-					return err
+					return apperror.NewErrorf("unmarshalling slice element %d failed", i).AddError(err)
 				}
 			}
 
@@ -343,12 +344,12 @@ func (m *manager) setSliceValue(field reflect.Value, value any) error {
 					}
 					err := m.unmarshalMapToStruct(elemValue, stringMap)
 					if err != nil {
-						return err
+						return apperror.NewErrorf("unmarshalling slice element %d failed", i).AddError(err)
 					}
 				} else if itemMap, ok := item.(map[string]any); ok {
 					err := m.unmarshalMapToStruct(elemValue, itemMap)
 					if err != nil {
-						return err
+						return apperror.NewErrorf("unmarshalling slice element %d failed", i).AddError(err)
 					}
 				}
 			} else {
@@ -356,7 +357,7 @@ func (m *manager) setSliceValue(field reflect.Value, value any) error {
 				newElem := reflect.New(elemType.Elem())
 				err := m.setFieldValue(newElem.Elem(), item)
 				if err != nil {
-					return err
+					return apperror.NewErrorf("unmarshalling slice element %d failed", i).AddError(err)
 				}
 				elemValue.Set(newElem)
 			}
@@ -365,7 +366,7 @@ func (m *manager) setSliceValue(field reflect.Value, value any) error {
 			// Handle primitive types
 			err := m.setFieldValue(elemValue, item)
 			if err != nil {
-				return err
+				return apperror.NewErrorf("unmarshalling slice element %d failed", i).AddError(err)
 			}
 		}
 	}
@@ -416,7 +417,7 @@ func (m *manager) unmarshalMapToStruct(v reflect.Value, data map[string]any) err
 			if nestedMap, ok := value.(map[string]any); ok {
 				err := m.unmarshalMapToStruct(fieldValue, nestedMap)
 				if err != nil {
-					return err
+					return apperror.NewErrorf("unmarshalling field %s failed", fieldName).AddError(err)
 				}
 			} else if nestedMap, ok := value.(map[any]any); ok {
 				stringMap := make(map[string]any)
@@ -427,7 +428,7 @@ func (m *manager) unmarshalMapToStruct(v reflect.Value, data map[string]any) err
 				}
 				err := m.unmarshalMapToStruct(fieldValue, stringMap)
 				if err != nil {
-					return err
+					return apperror.NewErrorf("unmarshalling field %s failed", fieldName).AddError(err)
 				}
 			}
 			continue
@@ -440,7 +441,7 @@ func (m *manager) unmarshalMapToStruct(v reflect.Value, data map[string]any) err
 			if nestedMap, ok := value.(map[string]any); ok {
 				err := m.unmarshalMapToStruct(fieldValue, nestedMap)
 				if err != nil {
-					return err
+					return apperror.NewErrorf("unmarshalling field %s failed", fieldName).AddError(err)
 				}
 			} else if nestedMap, ok := value.(map[any]any); ok {
 				stringMap := make(map[string]any)
@@ -451,7 +452,7 @@ func (m *manager) unmarshalMapToStruct(v reflect.Value, data map[string]any) err
 				}
 				err := m.unmarshalMapToStruct(fieldValue, stringMap)
 				if err != nil {
-					return err
+					return apperror.NewErrorf("unmarshalling field %s failed", fieldName).AddError(err)
 				}
 			}
 			continue
@@ -460,14 +461,14 @@ func (m *manager) unmarshalMapToStruct(v reflect.Value, data map[string]any) err
 		if fieldValue.Kind() == reflect.Slice {
 			err := m.setSliceValue(fieldValue, value)
 			if err != nil {
-				return err
+				return apperror.NewErrorf("unmarshalling field %s failed", fieldName).AddError(err)
 			}
 			continue
 		}
 
 		err := m.setFieldValue(fieldValue, value)
 		if err != nil {
-			return err
+			return apperror.NewErrorf("unmarshalling field %s failed", fieldName).AddError(err)
 		}
 	}
 
@@ -505,7 +506,7 @@ func (m *manager) setMapValue(field reflect.Value, value any) error {
 		keyValue := reflect.New(keyType).Elem()
 		err := m.setFieldValue(keyValue, k)
 		if err != nil {
-			return err
+			return apperror.NewErrorf("setting map key %v failed", k).AddError(err)
 		}
 
 		mapValue := reflect.New(valueType).Elem()
@@ -518,23 +519,23 @@ func (m *manager) setMapValue(field reflect.Value, value any) error {
 			if valueType.Elem().Kind() == reflect.Struct {
 				err := m.setStructValue(mapValue, v)
 				if err != nil {
-					return err
+					return apperror.NewErrorf("setting map value of key %v failed", k).AddError(err)
 				}
 			} else {
 				err := m.setFieldValue(mapValue.Elem(), v)
 				if err != nil {
-					return err
+					return apperror.NewErrorf("setting map value of key %v failed", k).AddError(err)
 				}
 			}
 		case valueType.Kind() == reflect.Struct:
 			err := m.setStructValue(mapValue.Addr(), v)
 			if err != nil {
-				return err
+				return apperror.NewErrorf("setting map value of key %v failed", k).AddError(err)
 			}
 		default:
 			err := m.setFieldValue(mapValue, v)
 			if err != nil {
-				return err
+				return apperror.NewErrorf("setting map value of key %v failed", k).AddError(err)
 			}
 		}
 
@@ -547,7 +548,7 @@ func (m *manager) setMapValue(field reflect.Value, value any) error {
 
 func (m *manager) setStructValue(field reflect.Value, value any) error {
 	if field.Kind() != reflect.Pointer {
-		return errors.New("setStructValue requires pointer to struct")
+		return apperror.NewError("setStructValue requires pointer to struct")
 	}
 
 	if field.IsNil() {
@@ -556,7 +557,7 @@ func (m *manager) setStructValue(field reflect.Value, value any) error {
 
 	structValue := field.Elem()
 	if structValue.Kind() != reflect.Struct {
-		return fmt.Errorf("expected struct, got %v", structValue.Kind())
+		return apperror.NewErrorf("expected struct, got %v", structValue.Kind())
 	}
 
 	inputMap, ok := value.(map[string]any)
@@ -607,17 +608,17 @@ func (m *manager) setStructValue(field reflect.Value, value any) error {
 		case fieldValue.Kind() == reflect.Struct:
 			err := m.setStructValue(fieldValue.Addr(), fieldVal)
 			if err != nil {
-				return err
+				return apperror.NewErrorf("setting field %s failed", fieldName).AddError(err)
 			}
 		case fieldValue.Kind() == reflect.Pointer && fieldValue.Type().Elem().Kind() == reflect.Struct:
 			err := m.setStructValue(fieldValue, fieldVal)
 			if err != nil {
-				return err
+				return apperror.NewErrorf("setting field %s failed", fieldName).AddError(err)
 			}
 		default:
 			err := m.setFieldValue(fieldValue, fieldVal)
 			if err != nil {
-				return err
+				return apperror.NewErrorf("setting field %s failed", fieldName).AddError(err)
 			}
 		}
 	}

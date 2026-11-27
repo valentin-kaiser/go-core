@@ -14,7 +14,10 @@ func BenchmarkStreamWriterWrite(b *testing.B) {
 	line := []byte(`{"level":"info","time":"2026-01-01T00:00:00Z","message":"hello world"}` + "\n")
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, _ = sw.Write(line)
+		_, err := sw.Write(line)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -31,7 +34,11 @@ func BenchmarkStreamWriterWriteParallel(b *testing.B) {
 	b.ReportAllocs()
 	b.RunParallel(func(pb *testing.PB) {
 		for pb.Next() {
-			_, _ = sw.Write(line)
+			_, err := sw.Write(line)
+			if err != nil {
+				b.Error(err)
+				return
+			}
 		}
 	})
 }

@@ -1,7 +1,6 @@
 package queue
 
 import (
-	"fmt"
 	"slices"
 	"sort"
 	"strconv"
@@ -66,7 +65,11 @@ type CronExpression struct {
 // - Delegates parsing and validation to the parseCronSpec function.
 func (s *TaskScheduler) ValidateCronSpec(spec string) error {
 	_, err := s.ParseCronSpec(spec)
-	return err
+	if err != nil {
+		return apperror.NewErrorf("validating cron specification %q failed", spec).AddError(err)
+	}
+
+	return nil
 }
 
 // ParseCronSpec parses a cron specification
@@ -88,7 +91,7 @@ func (s *TaskScheduler) ParseCronSpec(cronSpec string) (*CronExpression, error) 
 	if len(fields) == 6 {
 		secondField, err := s.parseCronField(fields[0], 0, 59)
 		if err != nil {
-			return nil, fmt.Errorf("invalid second field: %v", err)
+			return nil, apperror.NewError("parsing second field failed").AddError(err)
 		}
 		expr.Second = &secondField
 		fieldOffset = 1
@@ -96,27 +99,27 @@ func (s *TaskScheduler) ParseCronSpec(cronSpec string) (*CronExpression, error) 
 
 	expr.Minute, err = s.parseCronField(fields[fieldOffset], 0, 59)
 	if err != nil {
-		return nil, fmt.Errorf("invalid minute field: %v", err)
+		return nil, apperror.NewError("parsing minute field failed").AddError(err)
 	}
 
 	expr.Hour, err = s.parseCronField(fields[fieldOffset+1], 0, 23)
 	if err != nil {
-		return nil, fmt.Errorf("invalid hour field: %v", err)
+		return nil, apperror.NewError("parsing hour field failed").AddError(err)
 	}
 
 	expr.Day, err = s.parseCronFieldWithNames(fields[fieldOffset+2], 1, 31, nil)
 	if err != nil {
-		return nil, fmt.Errorf("invalid day field: %v", err)
+		return nil, apperror.NewError("parsing day field failed").AddError(err)
 	}
 
 	expr.Month, err = s.parseCronFieldWithNames(fields[fieldOffset+3], 1, 12, Months)
 	if err != nil {
-		return nil, fmt.Errorf("invalid month field: %v", err)
+		return nil, apperror.NewError("parsing month field failed").AddError(err)
 	}
 
 	expr.DayOfWeek, err = s.parseCronFieldWithNames(fields[fieldOffset+4], 0, 6, Days)
 	if err != nil {
-		return nil, fmt.Errorf("invalid day-of-week field: %v", err)
+		return nil, apperror.NewError("parsing day-of-week field failed").AddError(err)
 	}
 
 	// Sort all field values for efficient searching
@@ -320,7 +323,7 @@ func (s *TaskScheduler) parseSingleField(field string, low, high int, cronField 
 func (s *TaskScheduler) calculateNextCronRun(cronSpec string, after time.Time) (time.Time, error) {
 	expr, err := s.ParseCronSpec(cronSpec)
 	if err != nil {
-		return time.Time{}, err
+		return time.Time{}, apperror.NewErrorf("parsing cron specification %q failed", cronSpec).AddError(err)
 	}
 
 	// Start with the time after the given time
@@ -518,7 +521,7 @@ func (s *TaskScheduler) calculateNextCronRun(cronSpec string, after time.Time) (
 		}
 	}
 
-	return time.Time{}, apperror.NewError("could not find next run time within reasonable limits")
+	return time.Time{}, apperror.NewError("finding next run time within reasonable limits failed")
 }
 
 // fieldMatches checks if a value matches a cron field

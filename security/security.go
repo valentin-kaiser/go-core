@@ -45,7 +45,7 @@ func GetRandomBytes(size uint) ([]byte, error) {
 	bytes := make([]byte, size)
 	_, err := rand.Read(bytes)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("reading random bytes failed").AddError(err)
 	}
 	return bytes, nil
 }
@@ -83,7 +83,7 @@ func StringToKey32(inp string) string {
 func GetRandomBytesBase64(size uint) (string, error) {
 	bytes, err := GetRandomBytes(size)
 	if err != nil {
-		return "", apperror.Wrap(err)
+		return "", apperror.NewError("generating random bytes failed").AddError(err)
 	}
 	return base64.StdEncoding.EncodeToString(bytes), nil
 }
@@ -103,7 +103,7 @@ func GenerateRandomPassword(length int) (string, error) {
 	for i := range gen {
 		num, err := rand.Int(rand.Reader, big.NewInt(int64(len(letters))))
 		if err != nil {
-			return "", apperror.Wrap(err)
+			return "", apperror.NewError("generating random number failed").AddError(err)
 		}
 		gen[i] = letters[num.Int64()]
 	}
@@ -117,21 +117,21 @@ func ReadOrSavePassphrase(file string, length int) ([]byte, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		passphrase, err := GenerateRandomPassword(length)
 		if err != nil {
-			return nil, apperror.Wrap(err)
+			return nil, apperror.NewError("generating passphrase failed").AddError(err)
 		}
 		err = os.WriteFile(file, []byte(passphrase), 0600)
 		if err != nil {
-			return nil, apperror.Wrap(err)
+			return nil, apperror.NewErrorf("writing passphrase file %s failed", file).AddError(err)
 		}
 		return []byte(passphrase), nil
 	}
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewErrorf("checking passphrase file %s failed", file).AddError(err)
 	}
 
 	passphrase, err := os.ReadFile(filepath.Clean(file))
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewErrorf("reading passphrase file %s failed", file).AddError(err)
 	}
 
 	if len(passphrase) < length {

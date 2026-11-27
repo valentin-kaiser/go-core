@@ -112,7 +112,8 @@ func TestCopyFile(t *testing.T) {
 	if err == nil {
 		t.Fatal("copying a missing file did not fail")
 	}
-	if after, _ := os.ReadFile(filepath.Clean(dst)); string(after) != string(payload) {
+	after, err := os.ReadFile(filepath.Clean(dst))
+	if err != nil || string(after) != string(payload) {
 		t.Fatal("a failed copy destroyed the target")
 	}
 }
@@ -141,7 +142,10 @@ func BenchmarkForEachStatement(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		n := 0
-		_ = forEachStatement(strings.NewReader(dump), func(string) error { n++; return nil })
+		err := forEachStatement(strings.NewReader(dump), func(string) error { n++; return nil })
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

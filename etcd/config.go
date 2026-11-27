@@ -72,7 +72,7 @@ func (s *source) Load(ctx context.Context) (map[string]any, error) {
 func (s *source) Save(ctx context.Context, c config.Config) error {
 	flat, err := flattenConfig(c)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("flattening configuration failed").AddError(err)
 	}
 
 	// Wipe any keys that no longer exist before writing the new set so the

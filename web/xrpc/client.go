@@ -132,12 +132,12 @@ func (c *Client) Call(ctx context.Context, method string, in, out proto.Message)
 	id := numericID(c.nextID.Add(1))
 	body, err := w.encodeRequest(id, method, in)
 	if err != nil {
-		return apperror.NewError("failed to encode request").AddError(err)
+		return apperror.NewError("encoding request failed").AddError(err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint.String(), bytes.NewReader(body))
 	if err != nil {
-		return err
+		return apperror.NewError("creating HTTP request failed").AddError(err)
 	}
 	for k, vs := range c.header {
 		for _, v := range vs {
@@ -152,13 +152,13 @@ func (c *Client) Call(ctx context.Context, method string, in, out proto.Message)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return apperror.NewError("request failed").AddError(err)
+		return apperror.NewError("sending HTTP request failed").AddError(err)
 	}
 	defer apperror.Catch(func() error { return resp.Body.Close() }, "closing response body failed")
 
 	data, err := io.ReadAll(io.LimitReader(resp.Body, defaultMaxBody))
 	if err != nil {
-		return apperror.NewError("failed to read response").AddError(err)
+		return apperror.NewError("reading response failed").AddError(err)
 	}
 
 	envs, _, perr := w.parse(data)
@@ -213,17 +213,17 @@ func (c *Client) streamGRPC(ctx context.Context, method string, k kind, first pr
 	}
 	cs, err := c.conn.NewStream(ctx, desc, grpcPath(method))
 	if err != nil {
-		return err
+		return apperror.NewError("opening grpc stream failed").AddError(err)
 	}
 
 	if first != nil {
 		err := cs.SendMsg(first)
 		if err != nil {
-			return err
+			return apperror.NewError("sending grpc message failed").AddError(err)
 		}
 		err = cs.CloseSend()
 		if err != nil {
-			return err
+			return apperror.NewError("closing grpc send side failed").AddError(err)
 		}
 	}
 	if next != nil {
@@ -236,7 +236,8 @@ func (c *Client) streamGRPC(ctx context.Context, method string, k kind, first pr
 				}
 				err := cs.SendMsg(msg)
 				if err != nil {
-					return // the error surfaces on RecvMsg
+					logger.Trace().Err(err).Msg("sending grpc message failed")
+					return
 				}
 			}
 		}()
@@ -256,7 +257,7 @@ func (c *Client) streamGRPC(ctx context.Context, method string, k kind, first pr
 		}
 		err = deliver(msg)
 		if err != nil {
-			return err
+			return apperror.NewError("delivering grpc message failed").AddError(err)
 		}
 	}
 }
@@ -308,7 +309,7 @@ func (c *Client) dial(ctx context.Context) (*websocket.Conn, wire, error) {
 func (c *Client) streamWS(ctx context.Context, method string, first proto.Message, next nextFunc, newOut func() proto.Message, deliver func(proto.Message) error, result proto.Message) error {
 	conn, w, err := c.dial(ctx)
 	if err != nil {
-		return err
+		return apperror.NewError("connecting websocket stream failed").AddError(err)
 	}
 	closeConn := closeOnce(conn)
 	defer apperror.Catch(closeConn, "closing websocket connection failed")
@@ -327,11 +328,11 @@ func (c *Client) streamWS(ctx context.Context, method string, first proto.Messag
 	id := numericID(c.nextID.Add(1))
 	req, err := w.encodeRequest(id, method, first)
 	if err != nil {
-		return apperror.NewError("failed to encode request").AddError(err)
+		return apperror.NewError("encoding request failed").AddError(err)
 	}
 	err = write(req)
 	if err != nil {
-		return err
+		return apperror.NewError("sending request failed").AddError(err)
 	}
 
 	sendErr := make(chan error, 1)
@@ -343,24 +344,27 @@ func (c *Client) streamWS(ctx context.Context, method string, first proto.Messag
 					if ctx.Err() == nil {
 						data, err := w.encodeEvent(methodClose, id, nil)
 						if err != nil {
+							logger.Trace().Err(err).Msg("encoding close event failed")
 							return
 						}
 						err = write(data)
 						if err != nil {
-							return // the error surfaces on read
+							logger.Trace().Err(err).Msg("writing stream message failed")
+							return
 						}
 					}
 					return
 				}
 				data, err := w.encodeEvent(methodMessage, id, msg)
 				if err != nil {
-					sendErr <- apperror.NewError("failed to encode message").AddError(err)
+					sendErr <- apperror.NewError("encoding message failed").AddError(err)
 					cancel()
 					return
 				}
 				err = write(data)
 				if err != nil {
-					return // the error surfaces on read
+					logger.Trace().Err(err).Msg("writing stream message failed")
+					return
 				}
 			}
 		}()
@@ -377,7 +381,7 @@ func (c *Client) streamWS(ctx context.Context, method string, first proto.Messag
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return err
+			return apperror.NewError("reading websocket message failed").AddError(err)
 		}
 
 		envs, _, perr := w.parse(data)
@@ -397,16 +401,16 @@ func (c *Client) streamWS(ctx context.Context, method string, first proto.Messag
 		case e.method == methodMessage && e.ctrl != nil:
 			_, bindData, err := e.ctrl()
 			if err != nil {
-				return err
+				return apperror.NewError("reading stream message failed").AddError(err)
 			}
 			msg := newOut()
 			err = bindData(msg)
 			if err != nil {
-				return err
+				return apperror.NewError("decoding stream message failed").AddError(err)
 			}
 			err = deliver(msg)
 			if err != nil {
-				return err
+				return apperror.NewError("delivering stream message failed").AddError(err)
 			}
 		}
 	}

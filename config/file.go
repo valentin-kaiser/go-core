@@ -78,13 +78,13 @@ func (s *fileSource) Save(_ context.Context, c Config) error {
 
 	data, err := yaml.Marshal(c)
 	if err != nil {
-		_ = file.Close()
+		apperror.Catch(file.Close, "closing configuration file failed")
 		return apperror.NewError("marshalling configuration data failed").AddError(err)
 	}
 
 	_, err = file.Write(data)
 	if err != nil {
-		_ = file.Close()
+		apperror.Catch(file.Close, "closing configuration file failed")
 		return apperror.NewError("writing configuration data to file failed").AddError(err)
 	}
 
@@ -115,7 +115,7 @@ func (s *fileSource) Watch(ctx context.Context, onChange func(map[string]any)) (
 	dir := filepath.Dir(s.configFile())
 	err = watcher.Add(dir)
 	if err != nil {
-		_ = watcher.Close()
+		apperror.Catch(watcher.Close, "closing configuration file watcher failed")
 		return nil, apperror.NewErrorf("watching configuration directory %q failed", dir).AddError(err)
 	}
 
@@ -123,7 +123,7 @@ func (s *fileSource) Watch(ctx context.Context, onChange func(map[string]any)) (
 	target := filepath.Clean(s.configFile())
 
 	go func() {
-		defer func() { _ = watcher.Close() }()
+		defer apperror.Catch(watcher.Close, "closing configuration file watcher failed")
 
 		// Debounce bursts of events from a single save (e.g. a truncate
 		// followed by a write, or a rename-based atomic save that fires a
@@ -138,10 +138,11 @@ func (s *fileSource) Watch(ctx context.Context, onChange func(map[string]any)) (
 			select {
 			case <-watchCtx.Done():
 				return
-			case _, ok := <-watcher.Errors:
+			case watchErr, ok := <-watcher.Errors:
 				if !ok {
 					return
 				}
+				apperror.Catch(func() error { return watchErr }, "watching configuration file failed")
 			case event, ok := <-watcher.Events:
 				if !ok {
 					return
@@ -156,6 +157,7 @@ func (s *fileSource) Watch(ctx context.Context, onChange func(map[string]any)) (
 			case <-debounce.C:
 				values, err := s.Load(watchCtx)
 				if err != nil {
+					apperror.Catch(func() error { return err }, "loading changed configuration file failed")
 					continue
 				}
 				onChange(values)

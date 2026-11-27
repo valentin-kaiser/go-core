@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/database"
 )
 
@@ -14,7 +15,7 @@ func TestReconnectClosesReplacedPool(t *testing.T) {
 	db := database.New[TestQueries](database.DriverSQLite, "reconnect-close")
 	db.RegisterQueries(NewTestQueries)
 	db.Connect(20*time.Millisecond, ":memory:")
-	t.Cleanup(func() { _ = db.Disconnect() })
+	t.Cleanup(func() { apperror.Catch(db.Disconnect, "disconnecting database failed") })
 	db.AwaitConnection()
 
 	old := db.Get()

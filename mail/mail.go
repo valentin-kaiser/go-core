@@ -177,7 +177,7 @@ func (m *Manager) Start() error {
 		err := m.queueManager.Start(m.ctx)
 		if err != nil {
 			m.running.Store(0)
-			return apperror.Wrap(err)
+			return apperror.NewError("starting queue manager failed").AddError(err)
 		}
 		m.queueManager.RegisterHandler("mail", m.handleMailJob)
 	}
@@ -253,7 +253,7 @@ func (m *Manager) Send(ctx context.Context, message *Message) error {
 	err := m.sender.Send(ctx, message)
 	if err != nil {
 		m.incrementFailedCount()
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("sending message %s failed", message.ID).AddError(err)
 	}
 
 	m.incrementSentCount()
@@ -324,7 +324,7 @@ func (m *Manager) SendAsync(ctx context.Context, message *Message) error {
 	// Enqueue the job
 	err := m.queueManager.Enqueue(ctx, job.Build())
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("enqueuing message %s failed", message.ID).AddError(err)
 	}
 
 	m.incrementQueuedCount()
@@ -341,7 +341,7 @@ func (m *Manager) SendAsync(ctx context.Context, message *Message) error {
 // AddNotificationHandler adds a notification handler to the SMTP server
 func (m *Manager) AddNotificationHandler(handler NotificationHandler) error {
 	if m.server == nil {
-		return apperror.NewError("SMTP server is not configured")
+		return apperror.NewError("smtp server is not configured")
 	}
 
 	m.server.AddHandler(handler)
@@ -400,20 +400,20 @@ func (m *Manager) handleMailJob(ctx context.Context, job *queue.Job) error {
 	var jobData map[string]any
 	err := json.Unmarshal(job.Payload, &jobData)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("unmarshaling job payload failed").AddError(err)
 	}
 
 	// Convert job data back to message
 	message, err := m.jobDataToMessage(jobData)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("converting job data to message failed").AddError(err)
 	}
 
 	// Send the message
 	err = m.sender.Send(ctx, message)
 	if err != nil {
 		m.incrementFailedCount()
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("sending message %s failed", message.ID).AddError(err)
 	}
 
 	m.incrementSentCount()
@@ -590,7 +590,7 @@ func (m *Manager) jobDataToMessage(jobData map[string]any) (*Message, error) {
 				if ok {
 					decoded, err := base64.StdEncoding.DecodeString(content)
 					if err != nil {
-						return nil, apperror.NewError("failed to decode attachment content").AddError(err)
+						return nil, apperror.NewError("decoding attachment content failed").AddError(err)
 					}
 					attachment.Content = decoded
 				}

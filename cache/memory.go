@@ -3,7 +3,6 @@ package cache
 import (
 	"container/list"
 	"context"
-	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -178,7 +177,7 @@ func (mc *MemoryCache) Get(_ context.Context, key string, dest any) (bool, error
 		sh.mutex.RUnlock()
 		mc.recordMiss()
 		mc.emitEvent(EventGet, key, nil, nil)
-		return false, NewCacheError("get", key, errors.New("invalid cache item type"))
+		return false, NewCacheError("get", key, apperror.NewError("invalid cache item type"))
 	}
 	item := memItem.item
 	now := time.Now()
@@ -205,7 +204,7 @@ func (mc *MemoryCache) Get(_ context.Context, key string, dest any) (bool, error
 		data, isBytes := stored.([]byte)
 		if !isBytes {
 			mc.recordMiss()
-			return false, NewCacheError("get", key, errors.New("invalid item value type"))
+			return false, NewCacheError("get", key, apperror.NewError("invalid item value type"))
 		}
 		err = mc.config.Serializer.Deserialize(data, dest)
 	}
@@ -275,7 +274,7 @@ func (mc *MemoryCache) Set(_ context.Context, key string, value any, ttl time.Du
 		// Update existing item
 		oldMemItem, ok := element.Value.(*memoryItem)
 		if !ok {
-			return NewCacheError("set", key, errors.New("invalid existing item type"))
+			return NewCacheError("set", key, apperror.NewError("invalid existing item type"))
 		}
 		element.Value = memItem
 		if mc.config.EnableLRU {
@@ -357,7 +356,7 @@ func (mc *MemoryCache) Exists(_ context.Context, key string) (bool, error) {
 	memItem, ok := element.Value.(*memoryItem)
 	if !ok {
 		sh.mutex.RUnlock()
-		return false, NewCacheError("exists", key, errors.New("invalid item type"))
+		return false, NewCacheError("exists", key, apperror.NewError("invalid item type"))
 	}
 	item := memItem.item
 
@@ -379,7 +378,7 @@ func (mc *MemoryCache) Exists(_ context.Context, key string) (bool, error) {
 	}
 	currentItem, ok := current.Value.(*memoryItem)
 	if !ok {
-		return false, NewCacheError("exists", key, errors.New("invalid item type"))
+		return false, NewCacheError("exists", key, apperror.NewError("invalid item type"))
 	}
 	if !currentItem.item.IsExpired() {
 		return true, nil
@@ -414,7 +413,7 @@ func (mc *MemoryCache) GetMulti(ctx context.Context, keys []string) (map[string]
 		var value any
 		found, err := mc.Get(ctx, key, &value)
 		if err != nil {
-			return nil, err
+			return nil, apperror.NewErrorf("getting key %s failed", key).AddError(err)
 		}
 		if found {
 			result[key] = value
@@ -429,7 +428,7 @@ func (mc *MemoryCache) SetMulti(ctx context.Context, items map[string]any, ttl t
 	for key, value := range items {
 		err := mc.Set(ctx, key, value, ttl)
 		if err != nil {
-			return err
+			return apperror.NewErrorf("setting key %s failed", key).AddError(err)
 		}
 	}
 	return nil
@@ -440,7 +439,7 @@ func (mc *MemoryCache) DeleteMulti(ctx context.Context, keys []string) error {
 	for _, key := range keys {
 		err := mc.Delete(ctx, key)
 		if err != nil {
-			return err
+			return apperror.NewErrorf("deleting key %s failed", key).AddError(err)
 		}
 	}
 	return nil
@@ -461,7 +460,7 @@ func (mc *MemoryCache) GetTTL(_ context.Context, key string) (time.Duration, err
 
 	memItem, ok := element.Value.(*memoryItem)
 	if !ok {
-		return 0, NewCacheError("gettl", key, errors.New("invalid item type"))
+		return 0, NewCacheError("gettl", key, apperror.NewError("invalid item type"))
 	}
 	item := memItem.item
 
@@ -491,7 +490,7 @@ func (mc *MemoryCache) SetTTL(_ context.Context, key string, ttl time.Duration) 
 
 	memItem, ok := element.Value.(*memoryItem)
 	if !ok {
-		return NewCacheError("setttl", key, errors.New("invalid item type"))
+		return NewCacheError("setttl", key, apperror.NewError("invalid item type"))
 	}
 	item := memItem.item
 	item.ExpiresAt = time.Time{}

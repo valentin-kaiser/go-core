@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/database"
 )
 
@@ -37,8 +38,7 @@ func fillDumpTable(b *testing.B, db *database.Database[TestQueries], create stri
 		for i := range dumpBenchRows {
 			_, err := stmt.Exec(i, fmt.Sprintf("%s%d", text, i), []byte{1, 2, 3, byte(i)}, float64(i)/7, when)
 			if err != nil {
-				_ = tx.Rollback()
-				return err
+				return apperror.NewError("inserting rows failed").AddError(err).AddError(tx.Rollback())
 			}
 		}
 		return tx.Commit()
@@ -47,7 +47,9 @@ func fillDumpTable(b *testing.B, db *database.Database[TestQueries], create stri
 		b.Fatal(err)
 	}
 	b.Cleanup(func() {
-		_ = db.Execute(func(c *sql.DB) error { _, err := c.Exec("DROP TABLE IF EXISTS dump_bench"); return err })
+		apperror.Catch(func() error {
+			return db.Execute(func(c *sql.DB) error { _, err := c.Exec("DROP TABLE IF EXISTS dump_bench"); return err })
+		}, "dropping benchmark table failed")
 	})
 }
 

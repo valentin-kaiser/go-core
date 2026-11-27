@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -15,6 +16,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"mime/quotedprintable"
+	"net"
 	"net/mail"
 	"net/smtp"
 	"net/textproto"
@@ -82,7 +84,7 @@ func NewFromReader(r io.Reader) (*Email, error) {
 
 	headers, err := tp.ReadMIMEHeader()
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("reading MIME headers failed").AddError(err)
 	}
 
 	for h, v := range headers {
@@ -120,7 +122,7 @@ func NewFromReader(r io.Reader) (*Email, error) {
 
 	parts, err := parseMIMEParts(msg.Headers, body)
 	if err != nil {
-		return msg, apperror.Wrap(err)
+		return msg, apperror.NewError("parsing MIME parts failed").AddError(err)
 	}
 
 	for _, p := range parts {
@@ -131,19 +133,19 @@ func NewFromReader(r io.Reader) (*Email, error) {
 
 		contentType, _, err = mime.ParseMediaType(p.header.Get("Content-Type"))
 		if err != nil {
-			return msg, apperror.NewErrorf("could not parse Content-Type header with value %q", p.header.Get("Content-Type")).AddError(err)
+			return msg, apperror.NewErrorf("parsing Content-Type header with value %q failed", p.header.Get("Content-Type")).AddError(err)
 		}
 
 		if cd := p.header.Get("Content-Disposition"); cd != "" {
 			cd, params, err := mime.ParseMediaType(p.header.Get("Content-Disposition"))
 			if err != nil {
-				return msg, apperror.NewErrorf("could not parse Content-Disposition header with value %q", p.header.Get("Content-Disposition")).AddError(err)
+				return msg, apperror.NewErrorf("parsing Content-Disposition header with value %q failed", p.header.Get("Content-Disposition")).AddError(err)
 			}
 			filename, filenameDefined := params["filename"]
 			if cd == "attachment" || (cd == "inline" && filenameDefined) {
 				_, err = msg.Attach(bytes.NewReader(p.body), filename, contentType)
 				if err != nil {
-					return msg, apperror.Wrap(err)
+					return msg, apperror.NewErrorf("attaching MIME part %s failed", filename).AddError(err)
 				}
 				continue
 			}
@@ -163,7 +165,7 @@ func (e *Email) Attach(r io.Reader, filename string, contentType string) (*Attac
 	var buffer bytes.Buffer
 	_, err := io.Copy(&buffer, r)
 	if err != nil {
-		return nil, apperror.NewError("could not read attachment content").AddError(err)
+		return nil, apperror.NewError("reading attachment content failed").AddError(err)
 	}
 	at := &Attachment{
 		Filename:    filename,
@@ -180,15 +182,15 @@ func (e *Email) Attach(r io.Reader, filename string, contentType string) (*Attac
 func (e *Email) AttachFile(filename string) (*Attachment, error) {
 	f, err := os.Open(filepath.Clean(filename))
 	if err != nil {
-		return nil, apperror.NewError("could not open attachment file").AddError(err)
+		return nil, apperror.NewError("opening attachment file failed").AddError(err)
 	}
-	defer apperror.Catch(f.Close, "could not close attachment file")
+	defer apperror.Catch(f.Close, "closing attachment file failed")
 
 	ct := mime.TypeByExtension(filepath.Ext(filename))
 	basename := filepath.Base(filename)
 	attachment, err := e.Attach(f, basename, ct)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewErrorf("attaching file %s failed", basename).AddError(err)
 	}
 	return attachment, nil
 }
@@ -201,7 +203,7 @@ func (e *Email) Bytes() ([]byte, error) {
 
 	headers, err := e.msgHeaders()
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("building message headers failed").AddError(err)
 	}
 
 	htmlAttachments, otherAttachments := e.categorizeAttachments()
@@ -236,12 +238,12 @@ func (e *Email) Bytes() ([]byte, error) {
 
 	err = headerToBytes(buf, headers)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("converting headers to bytes failed").AddError(err)
 	}
 
 	_, err = io.WriteString(buf, "\r\n")
 	if err != nil {
-		return nil, apperror.NewError("could not write headers").AddError(err)
+		return nil, apperror.NewError("writing headers failed").AddError(err)
 	}
 
 	if len(e.Text) > 0 || len(e.HTML) > 0 {
@@ -255,14 +257,14 @@ func (e *Email) Bytes() ([]byte, error) {
 			}
 			_, err := w.CreatePart(header)
 			if err != nil {
-				return nil, apperror.NewError("could not create multipart/alternative part").AddError(err)
+				return nil, apperror.NewError("creating multipart/alternative part failed").AddError(err)
 			}
 		}
 
 		if len(e.Text) > 0 {
 			err := writeMessage(buf, e.Text, isMixed || isAlternative, "text/plain", subWriter)
 			if err != nil {
-				return nil, apperror.Wrap(err)
+				return nil, apperror.NewError("writing text part failed").AddError(err)
 			}
 		}
 
@@ -276,7 +278,7 @@ func (e *Email) Bytes() ([]byte, error) {
 				}
 				_, err := subWriter.CreatePart(header)
 				if err != nil {
-					return nil, apperror.NewError("could not create multipart/related part").AddError(err)
+					return nil, apperror.NewError("creating multipart/related part failed").AddError(err)
 				}
 
 				messageWriter = relatedWriter
@@ -288,7 +290,7 @@ func (e *Email) Bytes() ([]byte, error) {
 
 			err := writeMessage(buf, e.HTML, isMixed || isAlternative || isRelated, "text/html", messageWriter)
 			if err != nil {
-				return nil, apperror.Wrap(err)
+				return nil, apperror.NewError("writing HTML part failed").AddError(err)
 			}
 
 			if len(htmlAttachments) > 0 {
@@ -296,18 +298,18 @@ func (e *Email) Bytes() ([]byte, error) {
 					a.setDefaultHeaders()
 					ap, err := relatedWriter.CreatePart(a.Header)
 					if err != nil {
-						return nil, apperror.NewError("could not create HTML attachment part").AddError(err)
+						return nil, apperror.NewError("creating HTML attachment part failed").AddError(err)
 					}
 					err = base64Wrap(ap, a.Content)
 					if err != nil {
-						return nil, apperror.Wrap(err)
+						return nil, apperror.NewError("writing HTML attachment content failed").AddError(err)
 					}
 				}
 
 				if isMixed || isAlternative {
 					err = relatedWriter.Close()
 					if err != nil {
-						return nil, apperror.NewError("could not close multipart/related part").AddError(err)
+						return nil, apperror.NewError("closing multipart/related part failed").AddError(err)
 					}
 				}
 			}
@@ -315,7 +317,7 @@ func (e *Email) Bytes() ([]byte, error) {
 		if isMixed && isAlternative {
 			err := subWriter.Close()
 			if err != nil {
-				return nil, apperror.NewError("could not close multipart/alternative part").AddError(err)
+				return nil, apperror.NewError("closing multipart/alternative part failed").AddError(err)
 			}
 		}
 	}
@@ -324,17 +326,17 @@ func (e *Email) Bytes() ([]byte, error) {
 		a.setDefaultHeaders()
 		ap, err := w.CreatePart(a.Header)
 		if err != nil {
-			return nil, apperror.NewError("could not create attachment part").AddError(err)
+			return nil, apperror.NewError("creating attachment part failed").AddError(err)
 		}
 		err = base64Wrap(ap, a.Content)
 		if err != nil {
-			return nil, apperror.Wrap(err)
+			return nil, apperror.NewError("writing attachment content failed").AddError(err)
 		}
 	}
 	if isMixed || isAlternative || isRelated {
 		err := w.Close()
 		if err != nil {
-			return nil, apperror.NewError("could not close multipart/writer").AddError(err)
+			return nil, apperror.NewError("closing multipart/writer failed").AddError(err)
 		}
 	}
 	return buf.Bytes(), nil
@@ -348,7 +350,7 @@ func (e *Email) Send(address string, auth smtp.Auth, helo string) error {
 	for i := 0; i < len(to); i++ {
 		addr, err := mail.ParseAddress(to[i])
 		if err != nil {
-			return err
+			return apperror.NewErrorf("parsing To address %q failed", to[i]).AddError(err)
 		}
 		to[i] = addr.Address
 	}
@@ -357,17 +359,17 @@ func (e *Email) Send(address string, auth smtp.Auth, helo string) error {
 	}
 	sender, err := e.parseSender()
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("parsing sender failed").AddError(err)
 	}
 	raw, err := e.Bytes()
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("building message bytes failed").AddError(err)
 	}
 
 	if helo == "" {
 		err = smtp.SendMail(address, auth, sender, to, raw)
 		if err != nil {
-			return apperror.Wrap(err)
+			return apperror.NewError("sending mail failed").AddError(err)
 		}
 		return nil
 	}
@@ -375,52 +377,52 @@ func (e *Email) Send(address string, auth smtp.Auth, helo string) error {
 	// Use custom HELO with lower-level SMTP client
 	conn, err := smtp.Dial(address)
 	if err != nil {
-		return apperror.NewError("could not dial SMTP connection").AddError(err)
+		return apperror.NewError("dialing SMTP connection failed").AddError(err)
 	}
 
 	// Send custom HELO
 	err = conn.Hello(helo)
 	if err != nil {
-		return apperror.NewError("could not send HELO command").AddError(err)
+		return apperror.NewError("sending HELO command failed").AddError(err)
 	}
 
 	if auth != nil {
 		err = conn.Auth(auth)
 		if err != nil {
-			return apperror.NewError("could not authenticate SMTP client").AddError(err)
+			return apperror.NewError("authenticating SMTP client failed").AddError(err)
 		}
 	}
 
 	err = conn.Mail(sender)
 	if err != nil {
-		return apperror.NewError("could not set SMTP sender").AddError(err)
+		return apperror.NewError("setting SMTP sender failed").AddError(err)
 	}
 
 	for _, addr := range to {
 		err = conn.Rcpt(addr)
 		if err != nil {
-			return apperror.NewError("could not add SMTP recipient").AddError(err)
+			return apperror.NewError("adding SMTP recipient failed").AddError(err)
 		}
 	}
 
 	w, err := conn.Data()
 	if err != nil {
-		return apperror.NewError("could not create SMTP data writer").AddError(err)
+		return apperror.NewError("creating SMTP data writer failed").AddError(err)
 	}
 
 	_, err = w.Write(raw)
 	if err != nil {
-		return apperror.NewError("could not write SMTP data").AddError(err)
+		return apperror.NewError("writing SMTP data failed").AddError(err)
 	}
 
 	err = w.Close()
 	if err != nil {
-		return apperror.NewError("could not close SMTP data writer").AddError(err)
+		return apperror.NewError("closing SMTP data writer failed").AddError(err)
 	}
 
 	err = conn.Quit()
 	if err != nil {
-		return apperror.NewError("could not quit SMTP session").AddError(err)
+		return apperror.NewError("quitting SMTP session failed").AddError(err)
 	}
 
 	return nil
@@ -433,7 +435,7 @@ func (e *Email) SendWithTLS(address string, auth smtp.Auth, config *tls.Config, 
 	for i := 0; i < len(to); i++ {
 		addr, err := mail.ParseAddress(to[i])
 		if err != nil {
-			return apperror.NewError("could not parse To address").AddError(err)
+			return apperror.NewError("parsing To address failed").AddError(err)
 		}
 		to[i] = addr.Address
 	}
@@ -442,67 +444,73 @@ func (e *Email) SendWithTLS(address string, auth smtp.Auth, config *tls.Config, 
 	}
 	sender, err := e.parseSender()
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("parsing sender failed").AddError(err)
 	}
 	raw, err := e.Bytes()
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("building message bytes failed").AddError(err)
 	}
 
 	conn, err := tls.Dial("tcp", address, config)
 	if err != nil {
-		return apperror.NewError("could not dial TLS connection").AddError(err)
+		return apperror.NewError("dialing TLS connection failed").AddError(err)
 	}
 	c, err := smtp.NewClient(conn, strings.Split(address, ":")[0])
 	if err != nil {
 		// smtp.NewClient did not take ownership of conn on failure.
-		_ = conn.Close()
-		return apperror.NewError("could not create SMTP client").AddError(err)
+		apperror.Catch(conn.Close, "closing connection failed")
+		return apperror.NewError("creating SMTP client failed").AddError(err)
 	}
 	// Quit closes the underlying connection. Close is retained only as a
 	// best-effort fallback for early returns; its error must not hide the
 	// operation error or panic when Quit has already closed the connection.
-	defer func() { _ = c.Close() }()
+	defer apperror.Catch(func() error {
+		err := c.Close()
+		if errors.Is(err, net.ErrClosed) {
+			return nil
+		}
+		return err
+	}, "closing SMTP client failed")
 
 	// Send custom HELO if provided (after connection but before auth)
 	if helo != "" {
 		err = c.Hello(helo)
 		if err != nil {
-			return apperror.NewError("could not send HELO command").AddError(err)
+			return apperror.NewError("sending HELO command failed").AddError(err)
 		}
 	}
 
 	if auth != nil {
 		err = c.Auth(auth)
 		if err != nil {
-			return apperror.NewError("could not authenticate SMTP client").AddError(err)
+			return apperror.NewError("authenticating SMTP client failed").AddError(err)
 		}
 	}
 	err = c.Mail(sender)
 	if err != nil {
-		return apperror.NewError("could not set SMTP sender").AddError(err)
+		return apperror.NewError("setting SMTP sender failed").AddError(err)
 	}
 	for _, addr := range to {
 		err = c.Rcpt(addr)
 		if err != nil {
-			return apperror.NewError("could not add SMTP recipient").AddError(err)
+			return apperror.NewError("adding SMTP recipient failed").AddError(err)
 		}
 	}
 	w, err := c.Data()
 	if err != nil {
-		return apperror.NewError("could not create SMTP data writer").AddError(err)
+		return apperror.NewError("creating SMTP data writer failed").AddError(err)
 	}
 	_, err = w.Write(raw)
 	if err != nil {
-		return apperror.NewError("could not write SMTP data").AddError(err)
+		return apperror.NewError("writing SMTP data failed").AddError(err)
 	}
 	err = w.Close()
 	if err != nil {
-		return apperror.NewError("could not close SMTP data writer").AddError(err)
+		return apperror.NewError("closing SMTP data writer failed").AddError(err)
 	}
 	err = c.Quit()
 	if err != nil {
-		return apperror.NewError("could not quit SMTP session").AddError(err)
+		return apperror.NewError("quitting SMTP session failed").AddError(err)
 	}
 	return nil
 }
@@ -514,7 +522,7 @@ func (e *Email) SendWithStartTLS(address string, auth smtp.Auth, config *tls.Con
 	for i := 0; i < len(to); i++ {
 		addr, err := mail.ParseAddress(to[i])
 		if err != nil {
-			return apperror.NewError("could not parse To address").AddError(err)
+			return apperror.NewError("parsing To address failed").AddError(err)
 		}
 		to[i] = addr.Address
 	}
@@ -523,61 +531,61 @@ func (e *Email) SendWithStartTLS(address string, auth smtp.Auth, config *tls.Con
 	}
 	sender, err := e.parseSender()
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("parsing sender failed").AddError(err)
 	}
 	raw, err := e.Bytes()
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("building message bytes failed").AddError(err)
 	}
 
 	conn, err := smtp.Dial(address)
 	if err != nil {
-		return apperror.NewError("could not dial SMTP connection").AddError(err)
+		return apperror.NewError("dialing SMTP connection failed").AddError(err)
 	}
 
 	// Send custom HELO if provided (before STARTTLS)
 	if helo != "" {
 		err = conn.Hello(helo)
 		if err != nil {
-			return apperror.NewError("could not send HELO command").AddError(err)
+			return apperror.NewError("sending HELO command failed").AddError(err)
 		}
 	}
 
 	err = conn.StartTLS(config)
 	if err != nil {
-		return apperror.NewError("could not start TLS").AddError(err)
+		return apperror.NewError("starting TLS failed").AddError(err)
 	}
 	if auth != nil {
 		err = conn.Auth(auth)
 		if err != nil {
-			return apperror.NewError("could not authenticate SMTP client").AddError(err)
+			return apperror.NewError("authenticating SMTP client failed").AddError(err)
 		}
 	}
 	err = conn.Mail(sender)
 	if err != nil {
-		return apperror.NewError("could not set SMTP sender").AddError(err)
+		return apperror.NewError("setting SMTP sender failed").AddError(err)
 	}
 	for _, addr := range to {
 		err = conn.Rcpt(addr)
 		if err != nil {
-			return apperror.NewError("could not add SMTP recipient").AddError(err)
+			return apperror.NewError("adding SMTP recipient failed").AddError(err)
 		}
 	}
 	w, err := conn.Data()
 	if err != nil {
-		return apperror.NewError("could not create SMTP data writer").AddError(err)
+		return apperror.NewError("creating SMTP data writer failed").AddError(err)
 	}
 	_, err = w.Write(raw)
 	if err != nil {
-		return apperror.NewError("could not write SMTP data").AddError(err)
+		return apperror.NewError("writing SMTP data failed").AddError(err)
 	}
 	err = w.Close()
 	if err != nil {
-		return apperror.NewError("could not close SMTP data writer").AddError(err)
+		return apperror.NewError("closing SMTP data writer failed").AddError(err)
 	}
 	err = conn.Quit()
 	if err != nil {
-		return apperror.NewError("could not quit SMTP session").AddError(err)
+		return apperror.NewError("quitting SMTP session failed").AddError(err)
 	}
 	return nil
 }
@@ -612,7 +620,7 @@ func (e *Email) msgHeaders() (textproto.MIMEHeader, error) {
 	if _, ok := res["Message-Id"]; !ok {
 		id, err := generateMessageID()
 		if err != nil {
-			return nil, apperror.Wrap(err)
+			return nil, apperror.NewError("generating message ID failed").AddError(err)
 		}
 		res.Set("Message-Id", id)
 	}
@@ -650,7 +658,7 @@ func (e *Email) parseSender() (string, error) {
 	if e.Sender != "" {
 		sender, err := mail.ParseAddress(e.Sender)
 		if err != nil {
-			return "", apperror.NewError("could not parse sender address").AddError(err)
+			return "", apperror.NewError("parsing sender address failed").AddError(err)
 		}
 		return sender.Address, nil
 	}
@@ -661,7 +669,7 @@ func (e *Email) parseSender() (string, error) {
 
 	from, err := mail.ParseAddress(e.From)
 	if err != nil {
-		return "", apperror.NewError("could not parse From address").AddError(err)
+		return "", apperror.NewError("parsing From address failed").AddError(err)
 	}
 	return from.Address, nil
 }
@@ -718,18 +726,18 @@ func writeMessage(buf io.Writer, msg []byte, multipart bool, mediaType string, w
 		}
 		_, err := w.CreatePart(header)
 		if err != nil {
-			return apperror.Wrap(err)
+			return apperror.NewError("creating message part failed").AddError(err)
 		}
 	}
 
 	qp := quotedprintable.NewWriter(buf)
 	_, err := qp.Write(msg)
 	if err != nil {
-		return apperror.NewError("could not write message").AddError(err)
+		return apperror.NewError("writing message failed").AddError(err)
 	}
 	err = qp.Close()
 	if err != nil {
-		return apperror.NewError("could not close quoted-printable writer").AddError(err)
+		return apperror.NewError("closing quoted-printable writer failed").AddError(err)
 	}
 	return nil
 }
@@ -743,7 +751,7 @@ func parseMIMEParts(hs textproto.MIMEHeader, b io.Reader) ([]*part, error) {
 	}
 	ct, params, err := mime.ParseMediaType(hs.Get("Content-Type"))
 	if err != nil {
-		return ps, apperror.NewErrorf("could not parse Content-Type header with value %q", hs.Get("Content-Type")).AddError(err)
+		return ps, apperror.NewErrorf("parsing Content-Type header with value %q failed", hs.Get("Content-Type")).AddError(err)
 	}
 	if strings.HasPrefix(ct, "multipart/") {
 		if _, ok := params["boundary"]; !ok {
@@ -757,19 +765,19 @@ func parseMIMEParts(hs textproto.MIMEHeader, b io.Reader) ([]*part, error) {
 				break
 			}
 			if err != nil {
-				return ps, apperror.NewError("could not read multipart part").AddError(err)
+				return ps, apperror.NewError("reading multipart part failed").AddError(err)
 			}
 			if _, ok := p.Header["Content-Type"]; !ok {
 				p.Header.Set("Content-Type", DefaultContentType)
 			}
 			subct, _, err := mime.ParseMediaType(p.Header.Get("Content-Type"))
 			if err != nil {
-				return ps, apperror.NewErrorf("could not parse Content-Type header with value %q", p.Header.Get("Content-Type")).AddError(err)
+				return ps, apperror.NewErrorf("parsing Content-Type header with value %q failed", p.Header.Get("Content-Type")).AddError(err)
 			}
 			if strings.HasPrefix(subct, "multipart/") {
 				sps, err := parseMIMEParts(p.Header, p)
 				if err != nil {
-					return ps, apperror.NewError("could not parse multipart parts").AddError(err)
+					return ps, apperror.NewError("parsing multipart parts failed").AddError(err)
 				}
 				ps = append(ps, sps...)
 				continue
@@ -783,7 +791,7 @@ func parseMIMEParts(hs textproto.MIMEHeader, b io.Reader) ([]*part, error) {
 			}
 			_, err = io.Copy(&buf, reader)
 			if err != nil {
-				return ps, apperror.NewError("could not copy part data").AddError(err)
+				return ps, apperror.NewError("copying part data failed").AddError(err)
 			}
 			ps = append(ps, &part{body: buf.Bytes(), header: p.Header})
 		}
@@ -799,7 +807,7 @@ func parseMIMEParts(hs textproto.MIMEHeader, b io.Reader) ([]*part, error) {
 	var buf bytes.Buffer
 	_, err = io.Copy(&buf, b)
 	if err != nil {
-		return ps, apperror.NewError("could not copy part data").AddError(err)
+		return ps, apperror.NewError("copying part data failed").AddError(err)
 	}
 	ps = append(ps, &part{body: buf.Bytes(), header: hs})
 
@@ -819,7 +827,7 @@ func base64Wrap(w io.Writer, b []byte) error {
 		base64.StdEncoding.Encode(buf, b[:maxRaw])
 		_, err := w.Write(buf)
 		if err != nil {
-			return apperror.NewError("could not write base64 wrapped data").AddError(err)
+			return apperror.NewError("writing base64 wrapped data failed").AddError(err)
 		}
 		b = b[maxRaw:]
 	}
@@ -830,7 +838,7 @@ func base64Wrap(w io.Writer, b []byte) error {
 		out = append(out, "\r\n"...)
 		_, err := w.Write(out)
 		if err != nil {
-			return apperror.NewError("could not write base64 wrapped data").AddError(err)
+			return apperror.NewError("writing base64 wrapped data failed").AddError(err)
 		}
 	}
 
@@ -844,32 +852,32 @@ func headerToBytes(buff io.Writer, header textproto.MIMEHeader) error {
 		for _, subval := range vals {
 			_, err := io.WriteString(buff, field)
 			if err != nil {
-				return apperror.NewError("could not write header field").AddError(err)
+				return apperror.NewError("writing header field failed").AddError(err)
 			}
 			_, err = io.WriteString(buff, ": ")
 			if err != nil {
-				return apperror.NewError("could not write header field separator").AddError(err)
+				return apperror.NewError("writing header field separator failed").AddError(err)
 			}
 			switch field {
 			case "Content-Type", "Content-Disposition":
 				_, err := buff.Write([]byte(subval))
 				if err != nil {
-					return apperror.NewError("could not write header field value").AddError(err)
+					return apperror.NewError("writing header field value failed").AddError(err)
 				}
 			case "From", "To", "Cc", "Bcc":
 				_, err := buff.Write([]byte(subval))
 				if err != nil {
-					return apperror.NewError("could not write header field value").AddError(err)
+					return apperror.NewError("writing header field value failed").AddError(err)
 				}
 			default:
 				_, err := buff.Write([]byte(mime.QEncoding.Encode("UTF-8", subval)))
 				if err != nil {
-					return apperror.NewError("could not write header field value").AddError(err)
+					return apperror.NewError("writing header field value failed").AddError(err)
 				}
 			}
 			_, err = io.WriteString(buff, "\r\n")
 			if err != nil {
-				return apperror.NewError("could not write header field terminator").AddError(err)
+				return apperror.NewError("writing header field terminator failed").AddError(err)
 			}
 		}
 	}
@@ -882,7 +890,7 @@ func generateMessageID() (string, error) {
 	pid := os.Getpid()
 	rint, err := rand.Int(rand.Reader, maxBigInt)
 	if err != nil {
-		return "", apperror.NewError("could not generate random integer").AddError(err)
+		return "", apperror.NewError("generating random integer failed").AddError(err)
 	}
 	h, err := os.Hostname()
 	if err != nil {

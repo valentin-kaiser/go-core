@@ -191,14 +191,17 @@ func (z *ZerologAdapter) Flush() {
 	z.config.Unlock()
 	for _, output := range outputs {
 		if flusher, ok := output.(interface{ Flush() error }); ok {
-			_ = flusher.Flush()
+			apperror.Catch(flusher.Flush, "flushing log output failed")
 		}
 		if syncer, ok := output.(interface{ Sync() error }); ok {
-			_ = syncer.Sync()
+			apperror.Catch(syncer.Sync, "syncing log output failed")
 		}
 	}
 	if file := z.fileLogger(); file != nil {
-		_, _ = file.Write([]byte{})
+		apperror.Catch(func() error {
+			_, err := file.Write([]byte{})
+			return err
+		}, "writing log file failed")
 	}
 }
 
@@ -210,10 +213,7 @@ func (z *ZerologAdapter) Stop() {
 		return
 	}
 
-	err := file.Close()
-	if err != nil {
-		log.Error().Err(err).Msgf("failed to close log file")
-	}
+	apperror.Catch(file.Close, "closing log file failed")
 }
 
 // Rotate rotates the log file manually.
@@ -225,7 +225,7 @@ func (z *ZerologAdapter) Rotate() error {
 	}
 	err := file.Rotate()
 	if err != nil {
-		return apperror.NewError("failed to rotate log file").AddError(err)
+		return apperror.NewError("rotating log file failed").AddError(err)
 	}
 	return nil
 }

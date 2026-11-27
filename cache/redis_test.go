@@ -40,7 +40,10 @@ func setupRedisTest(t *testing.T) *cache.RedisCache {
 	c := cache.NewRedisCacheWithConfig(client, config)
 
 	// Clean up any existing test data
-	_ = c.Clear(ctx)
+	err = c.Clear(ctx)
+	if err != nil {
+		t.Error(err)
+	}
 
 	return c
 }

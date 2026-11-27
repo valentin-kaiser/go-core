@@ -81,9 +81,13 @@ func (c *wsConn) send(data []byte) error {
 	defer c.wmu.Unlock()
 	err := c.conn.SetWriteDeadline(time.Now().Add(writeTimeout))
 	if err != nil {
-		return err
+		return apperror.NewError("setting websocket write deadline failed").AddError(err)
 	}
-	return c.conn.WriteMessage(websocket.TextMessage, data)
+	err = c.conn.WriteMessage(websocket.TextMessage, data)
+	if err != nil {
+		return apperror.NewError("writing websocket message failed").AddError(err)
+	}
+	return nil
 }
 
 func (c *wsConn) sendReplies(replies []*reply, batch bool) {
@@ -259,7 +263,7 @@ func (c *wsConn) startStream(parent context.Context, m *method, e *envelope) {
 		send := func(msg proto.Message) error {
 			data, err := c.wire.encodeEvent(methodMessage, e.id, msg)
 			if err != nil {
-				return err
+				return apperror.NewError("encoding stream event failed").AddError(err)
 			}
 			return c.send(data)
 		}

@@ -3,6 +3,7 @@ package i18n_test
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/valentin-kaiser/go-core/i18n"
@@ -48,7 +49,7 @@ func TestLanguageFromContext_Empty(t *testing.T) {
 }
 
 func TestWithRequestRoundTrip(t *testing.T) {
-	r, _ := http.NewRequest(http.MethodGet, "/", nil)
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	ctx := i18n.WithRequest(context.Background(), r)
 	got, ok := i18n.RequestFromContext(ctx)
 	if !ok {
@@ -78,7 +79,7 @@ func TestTCTX_DirectLanguage(t *testing.T) {
 
 func TestTCTX_FromRequest(t *testing.T) {
 	b := newTestBundle(t)
-	r, _ := http.NewRequest(http.MethodGet, "/", nil)
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.Header.Set("Accept-Language", "de-DE,de;q=0.9,en;q=0.8")
 	ctx := i18n.WithRequest(context.Background(), r)
 
@@ -92,7 +93,7 @@ func TestTCTX_Priority_LanguageOverRequest(t *testing.T) {
 	b := newTestBundle(t)
 
 	// Request says German, but direct language says English.
-	r, _ := http.NewRequest(http.MethodGet, "/", nil)
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.Header.Set("Accept-Language", "de")
 	ctx := i18n.WithRequest(context.Background(), r)
 	ctx = i18n.WithLanguage(ctx, i18n.English)
@@ -115,7 +116,7 @@ func TestTCTX_Fallback(t *testing.T) {
 func TestTCTX_UnsupportedLanguage(t *testing.T) {
 	b := newTestBundle(t)
 	// Accept-Language for a language not in the bundle.
-	r, _ := http.NewRequest(http.MethodGet, "/", nil)
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	r.Header.Set("Accept-Language", "ja")
 	ctx := i18n.WithRequest(context.Background(), r)
 
@@ -186,7 +187,7 @@ func TestTCTX_DirectLanguageNotInBundle(t *testing.T) {
 
 func TestTCTX_EmptyAcceptLanguage(t *testing.T) {
 	b := newTestBundle(t)
-	r, _ := http.NewRequest(http.MethodGet, "/", nil)
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
 	// No Accept-Language header set.
 	ctx := i18n.WithRequest(context.Background(), r)
 

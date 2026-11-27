@@ -384,15 +384,18 @@ func TestManagerSendNotRunning(t *testing.T) {
 	queueManager := queue.NewManager()
 	manager := mail.NewManager(config, queueManager)
 
-	message, _ := mail.NewMessage().
+	message, err := mail.NewMessage().
 		From("sender@example.com").
 		To("recipient@example.com").
 		Subject("Test").
 		TextBody("Test message").
 		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Test send when not running
-	err := manager.Send(t.Context(), message)
+	err = manager.Send(t.Context(), message)
 	if err == nil {
 		t.Error("Expected error when sending email with manager not running")
 	}
@@ -418,12 +421,15 @@ func TestManagerSendAsync(t *testing.T) {
 		}
 	})
 
-	message, _ := mail.NewMessage().
+	message, err := mail.NewMessage().
 		From("sender@example.com").
 		To("recipient@example.com").
 		Subject("Test Async").
 		TextBody("Test message").
 		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Test async send
 	err = manager.SendAsync(context.Background(), message)
@@ -453,12 +459,15 @@ func TestManagerSendAsyncQueueDisabled(t *testing.T) {
 		}
 	})
 
-	message, _ := mail.NewMessage().
+	message, err := mail.NewMessage().
 		From("sender@example.com").
 		To("recipient@example.com").
 		Subject("Test").
 		TextBody("Test message").
 		Build()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Test async send with queue disabled
 	err = manager.SendAsync(t.Context(), message)
@@ -731,7 +740,10 @@ func BenchmarkTemplateRendering(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = tm.RenderTemplate("default.html", data)
+		_, err := tm.RenderTemplate("default.html", data)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 
@@ -913,7 +925,7 @@ func TestSMTPSenderWithPerMessageTemplateFuncs(t *testing.T) {
 	err = sender.Send(ctx, message)
 	// We just want to ensure no template processing errors occur
 	// Network errors are expected in tests
-	_ = err
+	t.Logf("send returned the expected network error: %v", err)
 
 	// Verify that the HTML body was generated from template
 	if message.HTMLBody == "" {

@@ -3,7 +3,6 @@
 package machine
 
 import (
-	"fmt"
 	"net"
 	"os/exec"
 	"strings"
@@ -94,7 +93,7 @@ func parseWmicValue(output, prefix string) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("value with prefix %s not found", prefix)
+	return "", apperror.NewErrorf("value with prefix %s not found", prefix)
 }
 
 // parseWmicMultipleValues extracts all values from wmic output with given prefix
@@ -126,7 +125,7 @@ func runPowerShellSingle(query string) (string, error) {
 	value := strings.TrimSpace(string(output))
 	switch value {
 	case "", "To be filled by O.E.M.":
-		return "", fmt.Errorf("powershell returned empty or placeholder value for query: %s", query)
+		return "", apperror.NewErrorf("powershell returned empty or placeholder value for query: %s", query)
 	default:
 		return value, nil
 	}
@@ -138,11 +137,11 @@ func runPowerShellMultiple(query string) ([]string, error) {
 	cmd := exec.Command("powershell", "-NoProfile", "-NonInteractive", "-Command", query) //nolint:gosec // query is always a constant literal from this package
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, err
+		return nil, apperror.NewError("running powershell failed").AddError(err)
 	}
 	raw := strings.TrimSpace(string(output))
 	if raw == "" {
-		return nil, fmt.Errorf("powershell returned no values for query: %s", query)
+		return nil, apperror.NewErrorf("powershell returned no values for query: %s", query)
 	}
 	var values []string
 	for v := range strings.SplitSeq(raw, ",") {
@@ -197,7 +196,7 @@ func getWindowsSystemUUID() (string, error) {
 func getWindowsMACAddresses() ([]string, error) {
 	ifaces, err := net.Interfaces()
 	if err != nil {
-		return nil, err
+		return nil, apperror.NewError("listing network interfaces failed").AddError(err)
 	}
 	var macs []string
 	for _, iface := range ifaces {

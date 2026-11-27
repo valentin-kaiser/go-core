@@ -43,7 +43,7 @@ func (r *RSACipher) GenerateKeyPair(bits int) *RSACipher {
 
 	privateKey, err := rsa.GenerateKey(rand.Reader, bits)
 	if err != nil {
-		r.Error = apperror.NewError("failed to generate RSA key pair").AddError(err)
+		r.Error = apperror.NewError("generating RSA key pair failed").AddError(err)
 		return r
 	}
 
@@ -61,7 +61,7 @@ func (r *RSACipher) LoadPrivateKey(pemData []byte, passphrase []byte) *RSACipher
 
 	block, _ := pem.Decode(pemData)
 	if block == nil {
-		r.Error = apperror.NewError("failed to decode PEM block containing private key")
+		r.Error = apperror.NewError("decoding PEM block containing private key failed")
 		return r
 	}
 
@@ -77,13 +77,13 @@ func (r *RSACipher) LoadPrivateKey(pemData []byte, passphrase []byte) *RSACipher
 		// Decrypt PKCS#8 encrypted private key
 		decryptedBytes, err := decryptPKCS8PrivateKey(block.Bytes, passphrase)
 		if err != nil {
-			r.Error = apperror.NewError("failed to decrypt PKCS#8 private key").AddError(err)
+			r.Error = apperror.NewError("decrypting PKCS#8 private key failed").AddError(err)
 			return r
 		}
 
 		keyInterface, err := x509.ParsePKCS8PrivateKey(decryptedBytes)
 		if err != nil {
-			r.Error = apperror.NewError("failed to parse decrypted PKCS#8 private key").AddError(err)
+			r.Error = apperror.NewError("parsing decrypted PKCS#8 private key failed").AddError(err)
 			return r
 		}
 
@@ -97,7 +97,7 @@ func (r *RSACipher) LoadPrivateKey(pemData []byte, passphrase []byte) *RSACipher
 		// Unencrypted PKCS#8
 		keyInterface, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 		if err != nil {
-			r.Error = apperror.NewError("failed to parse PKCS#8 private key").AddError(err)
+			r.Error = apperror.NewError("parsing PKCS#8 private key failed").AddError(err)
 			return r
 		}
 
@@ -111,7 +111,7 @@ func (r *RSACipher) LoadPrivateKey(pemData []byte, passphrase []byte) *RSACipher
 		// Try PKCS#1 format
 		privateKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
 		if err != nil {
-			r.Error = apperror.NewError("failed to parse PKCS#1 private key").AddError(err)
+			r.Error = apperror.NewError("parsing PKCS#1 private key failed").AddError(err)
 			return r
 		}
 	}
@@ -129,7 +129,7 @@ func (r *RSACipher) LoadPrivateKeyFromFile(path string, passphrase []byte) *RSAC
 
 	data, err := os.ReadFile(path) //nolint:gosec // path is supplied by the caller by design
 	if err != nil {
-		r.Error = apperror.NewError("failed to read private key file").AddError(err)
+		r.Error = apperror.NewError("reading private key file failed").AddError(err)
 		return r
 	}
 
@@ -144,7 +144,7 @@ func (r *RSACipher) LoadPublicKey(pemData []byte) *RSACipher {
 
 	block, _ := pem.Decode(pemData)
 	if block == nil {
-		r.Error = apperror.NewError("failed to decode PEM block containing public key")
+		r.Error = apperror.NewError("decoding PEM block containing public key failed")
 		return r
 	}
 
@@ -153,7 +153,7 @@ func (r *RSACipher) LoadPublicKey(pemData []byte) *RSACipher {
 		// Try ParsePKIXPublicKey as fallback
 		pubKeyInterface, err := x509.ParsePKIXPublicKey(block.Bytes)
 		if err != nil {
-			r.Error = apperror.NewError("failed to parse public key").AddError(err)
+			r.Error = apperror.NewError("parsing public key failed").AddError(err)
 			return r
 		}
 		var ok bool
@@ -176,7 +176,7 @@ func (r *RSACipher) LoadPublicKeyFromFile(path string) *RSACipher {
 
 	data, err := os.ReadFile(path) //nolint:gosec // path is supplied by the caller by design
 	if err != nil {
-		r.Error = apperror.NewError("failed to read public key file").AddError(err)
+		r.Error = apperror.NewError("reading public key file failed").AddError(err)
 		return r
 	}
 
@@ -199,13 +199,13 @@ func (r *RSACipher) ExportPrivateKey(passphrase []byte) ([]byte, error) {
 		// Marshal to PKCS#8 first
 		pkcs8Bytes, err := x509.MarshalPKCS8PrivateKey(r.privateKey)
 		if err != nil {
-			return nil, apperror.NewError("failed to marshal private key").AddError(err)
+			return nil, apperror.NewError("marshaling private key failed").AddError(err)
 		}
 
 		// Encrypt using AES-256-CBC with PBKDF2
 		encryptedBytes, err := encryptPKCS8PrivateKey(pkcs8Bytes, passphrase)
 		if err != nil {
-			return nil, apperror.NewError("failed to encrypt private key").AddError(err)
+			return nil, apperror.NewError("encrypting private key failed").AddError(err)
 		}
 
 		block = &pem.Block{
@@ -216,7 +216,7 @@ func (r *RSACipher) ExportPrivateKey(passphrase []byte) ([]byte, error) {
 		// Export as unencrypted PKCS#8
 		privateKeyBytes, err := x509.MarshalPKCS8PrivateKey(r.privateKey)
 		if err != nil {
-			return nil, apperror.NewError("failed to marshal private key").AddError(err)
+			return nil, apperror.NewError("marshaling private key failed").AddError(err)
 		}
 		block = &pem.Block{
 			Type:  "PRIVATE KEY",
@@ -260,7 +260,7 @@ func (r *RSACipher) SavePrivateKey(path string, passphrase []byte) *RSACipher {
 
 	err = os.WriteFile(path, pemData, 0600)
 	if err != nil {
-		r.Error = apperror.NewError("failed to write private key file").AddError(err)
+		r.Error = apperror.NewError("writing private key file failed").AddError(err)
 		return r
 	}
 
@@ -281,7 +281,7 @@ func (r *RSACipher) SavePublicKey(path string) *RSACipher {
 
 	err = os.WriteFile(path, pemData, 0644) //nolint:gosec // public keys are meant to be world-readable
 	if err != nil {
-		r.Error = apperror.NewError("failed to write public key file").AddError(err)
+		r.Error = apperror.NewError("writing public key file failed").AddError(err)
 		return r
 	}
 
@@ -302,7 +302,7 @@ func (r *RSACipher) Sign(data []byte) ([]byte, error) {
 	hashed := sha256.Sum256(data)
 	signature, err := rsa.SignPKCS1v15(rand.Reader, r.privateKey, crypto.SHA256, hashed[:])
 	if err != nil {
-		return nil, apperror.NewError("failed to sign data").AddError(err)
+		return nil, apperror.NewError("signing data failed").AddError(err)
 	}
 
 	return signature, nil
@@ -342,7 +342,7 @@ func (r *RSACipher) Encrypt(plaintext []byte) ([]byte, error) {
 
 	ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, r.publicKey, plaintext, nil)
 	if err != nil {
-		return nil, apperror.NewError("failed to encrypt data").AddError(err)
+		return nil, apperror.NewError("encrypting data failed").AddError(err)
 	}
 
 	return ciphertext, nil
@@ -360,7 +360,7 @@ func (r *RSACipher) Decrypt(ciphertext []byte) ([]byte, error) {
 
 	plaintext, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, r.privateKey, ciphertext, nil)
 	if err != nil {
-		return nil, apperror.NewError("failed to decrypt data").AddError(err)
+		return nil, apperror.NewError("decrypting data failed").AddError(err)
 	}
 
 	return plaintext, nil
@@ -426,14 +426,14 @@ func encryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 	salt := make([]byte, 16)
 	_, err := rand.Read(salt)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("generating salt failed").AddError(err)
 	}
 
 	// Generate IV for AES-CBC
 	iv := make([]byte, aes.BlockSize)
 	_, err = rand.Read(iv)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("generating initialization vector failed").AddError(err)
 	}
 
 	// Derive key using PBKDF2 with SHA-256 and 100,000 iterations (NIST recommendation)
@@ -442,7 +442,7 @@ func encryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 	// Encrypt using AES-256-CBC
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("creating AES cipher failed").AddError(err)
 	}
 
 	// Pad the data to block size (PKCS#7 padding)
@@ -467,13 +467,13 @@ func encryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 		},
 	})
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("encoding PBKDF2 parameters failed").AddError(err)
 	}
 
 	// Encode AES-256-CBC parameters (just the IV)
 	aesParamsBytes, err := asn1.Marshal(iv)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("encoding AES-256-CBC parameters failed").AddError(err)
 	}
 
 	// Encode PBES2 parameters
@@ -488,7 +488,7 @@ func encryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 		},
 	})
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("encoding PBES2 parameters failed").AddError(err)
 	}
 
 	// Create the EncryptedPrivateKeyInfo structure
@@ -510,7 +510,7 @@ func decryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 	var encryptedPKI encryptedPrivateKeyInfo
 	_, err := asn1.Unmarshal(data, &encryptedPKI)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("parsing encrypted private key info failed").AddError(err)
 	}
 
 	// Verify it's PBES2
@@ -522,7 +522,7 @@ func decryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 	var pbes2Params pbes2Params
 	_, err = asn1.Unmarshal(encryptedPKI.EncryptionAlgorithm.Parameters.FullBytes, &pbes2Params)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("parsing PBES2 parameters failed").AddError(err)
 	}
 
 	// Verify it's PBKDF2
@@ -534,7 +534,7 @@ func decryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 	var pbkdf2Params pbkdf2Params
 	_, err = asn1.Unmarshal(pbes2Params.KeyDerivationFunc.Parameters.FullBytes, &pbkdf2Params)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("parsing PBKDF2 parameters failed").AddError(err)
 	}
 
 	// Verify it's AES-256-CBC
@@ -546,7 +546,7 @@ func decryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 	var iv []byte
 	_, err = asn1.Unmarshal(pbes2Params.EncryptionScheme.Parameters.FullBytes, &iv)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("parsing AES-256-CBC parameters failed").AddError(err)
 	}
 
 	// Derive the key using PBKDF2
@@ -559,7 +559,7 @@ func decryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 	// Decrypt using AES-256-CBC
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("creating AES cipher failed").AddError(err)
 	}
 
 	if len(encryptedPKI.EncryptedData)%aes.BlockSize != 0 {

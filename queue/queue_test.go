@@ -724,7 +724,10 @@ func BenchmarkMemoryQueueDequeue(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, _ = q.Dequeue(ctx, time.Second)
+		_, err := q.Dequeue(ctx, time.Second)
+		if err != nil {
+			b.Fatal(err)
+		}
 	}
 }
 

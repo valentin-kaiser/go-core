@@ -60,6 +60,7 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509/pkix"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -292,15 +293,15 @@ func (s *Server) Start() *Server {
 			var err error
 			if protocol == "https" {
 				err = server.ListenAndServeTLS("", "")
-				if err != nil && err != http.ErrServerClosed {
-					return apperror.NewErrorf("failed to start https server").AddError(err)
+				if err != nil && !errors.Is(err, http.ErrServerClosed) {
+					return apperror.NewError("starting https server failed").AddError(err)
 				}
 				return nil
 			}
 
 			err = server.ListenAndServe()
-			if err != nil && err != http.ErrServerClosed {
-				return apperror.NewErrorf("failed to start http server").AddError(err)
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
+				return apperror.NewError("starting http server failed").AddError(err)
 			}
 			return nil
 		})
@@ -346,7 +347,7 @@ func (s *Server) Stop() error {
 		if server != nil {
 			err := server.Close()
 			if err != nil {
-				return apperror.NewErrorf("failed to stop %s server", serverKey).AddError(err)
+				return apperror.NewErrorf("stopping %s server failed", serverKey).AddError(err)
 			}
 		}
 	}
@@ -371,7 +372,7 @@ func (s *Server) Shutdown() error {
 			if server != nil {
 				err := server.Shutdown(shutdownCtx)
 				if err != nil {
-					return apperror.NewErrorf("failed to shutdown %s server", serverKey).AddError(err)
+					return apperror.NewErrorf("shutting down %s server failed", serverKey).AddError(err)
 				}
 			}
 		}
@@ -395,7 +396,7 @@ func (s *Server) Restart() error {
 				err := server.Shutdown(shutdownCtx)
 				if err != nil {
 					s.mutex.RUnlock()
-					return apperror.NewErrorf("failed to shutdown %s server", key).AddError(err)
+					return apperror.NewErrorf("shutting down %s server failed", key).AddError(err)
 				}
 			}
 		}
@@ -404,7 +405,7 @@ func (s *Server) Restart() error {
 
 	err := s.Start().Error
 	if err != nil {
-		return apperror.NewError("failed to start webserver").AddError(err)
+		return apperror.NewError("starting webserver failed").AddError(err)
 	}
 
 	return nil
@@ -425,7 +426,7 @@ func (s *Server) RestartAsync(done chan error) {
 			if server != nil {
 				err := server.Shutdown(shutdownCtx)
 				if err != nil {
-					done <- apperror.NewErrorf("failed to shutdown %s server", key).AddError(err)
+					done <- apperror.NewErrorf("shutting down %s server failed", key).AddError(err)
 					s.mutex.RUnlock()
 					return
 				}
@@ -491,7 +492,7 @@ func (s *Server) WithFS(entrypoints []string, filesystem fs.FS) *Server {
 	for _, entrypoint := range entrypoints {
 		err := s.WithHandler(entrypoint, http.FileServer(http.FS(filesystem))).Error
 		if err != nil {
-			s.Error = apperror.Wrap(err)
+			s.Error = apperror.NewErrorf("registering file server entrypoint %s failed", entrypoint).AddError(err)
 			return s
 		}
 	}
@@ -833,7 +834,7 @@ func (s *Server) WithSelfSignedTLS() *Server {
 
 	cert, pool, err := security.GenerateSelfSignedCertificate(pkix.Name{CommonName: s.host})
 	if err != nil {
-		s.Error = apperror.Wrap(err)
+		s.Error = apperror.NewError("generating self-signed certificate failed").AddError(err)
 		return s
 	}
 	s.tlsConfig = security.NewTLSConfig(cert, pool, tls.NoClientCert)
@@ -876,7 +877,7 @@ func (s *Server) WithRouteCORS(pattern string, config *CORSConfig) *Server {
 	defer s.mutex.Unlock()
 	err := s.router.registerCORS(pattern, config)
 	if err != nil {
-		s.Error = apperror.Wrap(err)
+		s.Error = apperror.NewErrorf("registering CORS for pattern %s failed", pattern).AddError(err)
 		return s
 	}
 
@@ -981,7 +982,7 @@ func (s *Server) WithRouteCacheControl(pattern, cacheControl string) *Server {
 	defer s.mutex.Unlock()
 	err := s.router.registerCacheControl(pattern, cacheControl)
 	if err != nil {
-		s.Error = apperror.Wrap(err)
+		s.Error = apperror.NewErrorf("registering cache control for pattern %s failed", pattern).AddError(err)
 	}
 	return s
 }
@@ -1004,7 +1005,7 @@ func (s *Server) WithGzipLevel(level int) *Server {
 	defer s.mutex.Unlock()
 	handler, err := gziphandler.NewGzipLevelHandler(level)
 	if err != nil {
-		s.Error = apperror.NewError("failed to create gzip handler").AddError(err)
+		s.Error = apperror.NewError("creating gzip handler failed").AddError(err)
 		return s
 	}
 
@@ -1038,7 +1039,7 @@ func (s *Server) WithRateLimit(pattern string, count int, period time.Duration) 
 
 	err := s.router.registerRateLimit(pattern, rate.Every(period/time.Duration(count)), count)
 	if err != nil {
-		s.Error = apperror.Wrap(err)
+		s.Error = apperror.NewErrorf("registering rate limit for pattern %s failed", pattern).AddError(err)
 	}
 	return s
 }
@@ -1117,7 +1118,7 @@ func (s *Server) SetWhitelist(list []string) *Server {
 
 	err := s.router.setWhitelist(list)
 	if err != nil {
-		s.Error = apperror.Wrap(err)
+		s.Error = apperror.NewError("setting whitelist failed").AddError(err)
 	}
 	return s
 }
@@ -1134,7 +1135,7 @@ func (s *Server) SetBlacklist(list []string) *Server {
 
 	err := s.router.setBlacklist(list)
 	if err != nil {
-		s.Error = apperror.Wrap(err)
+		s.Error = apperror.NewError("setting blacklist failed").AddError(err)
 	}
 	return s
 }

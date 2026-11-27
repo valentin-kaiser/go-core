@@ -169,7 +169,7 @@ func dumpTable(w *bufio.Writer, rows *sql.Rows, columns int, prefix, suffix stri
 	for rows.Next() {
 		err := rows.Scan(pointers...)
 		if err != nil {
-			return apperror.NewErrorf("failed to scan row").AddError(err)
+			return apperror.NewError("scanning row failed").AddError(err)
 		}
 
 		row = append(row[:0], '(')
@@ -194,7 +194,7 @@ func dumpTable(w *bufio.Writer, rows *sql.Rows, columns int, prefix, suffix stri
 			_, err = w.Write(row)
 		}
 		if err != nil {
-			return apperror.NewErrorf("failed to write values").AddError(err)
+			return apperror.NewError("writing values failed").AddError(err)
 		}
 
 		inBatch++
@@ -202,20 +202,20 @@ func dumpTable(w *bufio.Writer, rows *sql.Rows, columns int, prefix, suffix stri
 		if inBatch >= dumpBatchRows || batchBytes >= dumpBatchBytes {
 			_, err := w.WriteString(suffix + "\n")
 			if err != nil {
-				return apperror.NewErrorf("failed to write statement terminator").AddError(err)
+				return apperror.NewError("writing statement terminator failed").AddError(err)
 			}
 			inBatch, batchBytes = 0, 0
 		}
 	}
 	err := rows.Err()
 	if err != nil {
-		return apperror.NewErrorf("failed to read rows").AddError(err)
+		return apperror.NewError("reading rows failed").AddError(err)
 	}
 
 	if inBatch > 0 {
 		_, err := w.WriteString(suffix + "\n")
 		if err != nil {
-			return apperror.NewErrorf("failed to write statement terminator").AddError(err)
+			return apperror.NewError("writing statement terminator failed").AddError(err)
 		}
 	}
 	return nil
@@ -227,7 +227,7 @@ func quotedColumns(columns []string, driver Driver) (string, error) {
 	for i, col := range columns {
 		q, err := quoteIdentifier(col, driver)
 		if err != nil {
-			return "", apperror.NewErrorf("invalid column name").AddError(err)
+			return "", apperror.NewError("quoting column name failed").AddError(err)
 		}
 		quoted[i] = q
 	}
@@ -238,46 +238,46 @@ func quotedColumns(columns []string, driver Driver) (string, error) {
 func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 	file, err := os.Create(filepath.Clean(path))
 	if err != nil {
-		return apperror.NewErrorf("failed to create backup file").AddError(err)
+		return apperror.NewError("creating backup file failed").AddError(err)
 	}
 	// Writes are buffered: a dump has one small write per row otherwise
 	w := bufio.NewWriterSize(file, 256*1024)
 	defer func() {
 		flushErr := w.Flush()
 		if err == nil && flushErr != nil {
-			err = apperror.NewErrorf("failed to write backup file").AddError(flushErr)
+			err = apperror.NewError("writing backup file failed").AddError(flushErr)
 		}
 		closeErr := file.Close()
 		if err == nil && closeErr != nil {
-			err = apperror.NewErrorf("failed to close backup file").AddError(closeErr)
+			err = apperror.NewError("closing backup file failed").AddError(closeErr)
 		}
 	}()
 
 	_, err = fmt.Fprintf(w, "-- MySQL/MariaDB database backup\n-- DSN: %s\n-- Generated: %s\n\n",
 		redactDSN(d.getDSN()), time.Now().Format(time.RFC3339))
 	if err != nil {
-		return apperror.NewErrorf("failed to write backup header").AddError(err)
+		return apperror.NewError("writing backup header failed").AddError(err)
 	}
 	_, err = w.WriteString("SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS = 0;\n\n")
 	if err != nil {
-		return apperror.NewErrorf("failed to write charset settings").AddError(err)
+		return apperror.NewError("writing charset settings failed").AddError(err)
 	}
 
 	rows, err := dbInstance.Query("SHOW TABLES")
 	if err != nil {
-		return apperror.NewErrorf("failed to get table list").AddError(err)
+		return apperror.NewError("listing tables failed").AddError(err)
 	}
 	var tables []string
 	for rows.Next() {
 		var table string
 		err := rows.Scan(&table)
 		if err != nil {
-			_ = rows.Close()
-			return apperror.NewErrorf("failed to scan table name").AddError(err)
+			apperror.Catch(rows.Close, "closing table list rows failed")
+			return apperror.NewError("scanning table name failed").AddError(err)
 		}
 		tables = append(tables, table)
 	}
-	_ = rows.Close()
+	apperror.Catch(rows.Close, "closing table list rows failed")
 
 	for _, table := range tables {
 		quotedTable, err := quoteIdentifier(table, DriverMySQL)
@@ -288,53 +288,53 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 		var tableName, createStmt string
 		err = dbInstance.QueryRow("SHOW CREATE TABLE "+quotedTable).Scan(&tableName, &createStmt)
 		if err != nil {
-			d.logger.Warn().Err(err).Msgf("failed to get schema for table %s", table)
+			d.logger.Warn().Err(err).Msgf("getting schema of table %s failed", table)
 			continue
 		}
 		_, err = fmt.Fprintf(w, "\n-- Table structure for %s\nDROP TABLE IF EXISTS %s;\n%s;\n\n", table, quotedTable, createStmt)
 		if err != nil {
-			return apperror.NewErrorf("failed to write table schema").AddError(err)
+			return apperror.NewError("writing table schema failed").AddError(err)
 		}
 
 		dataRows, err := dbInstance.Query("SELECT * FROM " + quotedTable) //nolint:gosec,unqueryvet // quotedTable is escaped by quoteIdentifier; a dump needs every column
 		if err != nil {
-			d.logger.Warn().Err(err).Msgf("failed to read data from table %s", table)
+			d.logger.Warn().Err(err).Msgf("reading data of table %s failed", table)
 			continue
 		}
 		columns, err := dataRows.Columns()
 		if err != nil {
-			_ = dataRows.Close()
-			return apperror.NewErrorf("failed to get columns for table %s", table).AddError(err)
+			apperror.Catch(dataRows.Close, "closing table data rows failed")
+			return apperror.NewErrorf("getting columns of table %s failed", table).AddError(err)
 		}
 		if len(columns) > 0 {
 			cols, err := quotedColumns(columns, DriverMySQL)
 			if err != nil {
-				_ = dataRows.Close()
-				return err
+				apperror.Catch(dataRows.Close, "closing table data rows failed")
+				return apperror.NewErrorf("quoting columns of table %s failed", table).AddError(err)
 			}
 			_, err = fmt.Fprintf(w, "-- Data for table %s\n", table)
 			if err != nil {
-				_ = dataRows.Close()
-				return apperror.NewErrorf("failed to write data header").AddError(err)
+				apperror.Catch(dataRows.Close, "closing table data rows failed")
+				return apperror.NewError("writing data header failed").AddError(err)
 			}
 			prefix := "INSERT INTO " + quotedTable + " (" + cols + ") VALUES"
 			err = dumpTable(w, dataRows, len(columns), prefix, ";", appendMySQLValue)
 			if err != nil {
-				_ = dataRows.Close()
-				return err
+				apperror.Catch(dataRows.Close, "closing table data rows failed")
+				return apperror.NewErrorf("dumping data of table %s failed", table).AddError(err)
 			}
 			_, err = w.WriteString("\n")
 			if err != nil {
-				_ = dataRows.Close()
-				return apperror.NewErrorf("failed to write newline").AddError(err)
+				apperror.Catch(dataRows.Close, "closing table data rows failed")
+				return apperror.NewError("writing newline failed").AddError(err)
 			}
 		}
-		_ = dataRows.Close()
+		apperror.Catch(dataRows.Close, "closing table data rows failed")
 	}
 
 	_, err = w.WriteString("SET FOREIGN_KEY_CHECKS = 1;\n")
 	if err != nil {
-		return apperror.NewErrorf("failed to write footer").AddError(err)
+		return apperror.NewError("writing footer failed").AddError(err)
 	}
 
 	d.logger.Info().Msgf("database backup created: %s", path)
@@ -345,29 +345,29 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 func (d *Database[Q]) backupPostgres(dbInstance *sql.DB, path string, schema string) (err error) {
 	file, err := os.Create(filepath.Clean(path))
 	if err != nil {
-		return apperror.NewErrorf("failed to create backup file").AddError(err)
+		return apperror.NewError("creating backup file failed").AddError(err)
 	}
 	w := bufio.NewWriterSize(file, 256*1024)
 	defer func() {
 		flushErr := w.Flush()
 		if err == nil && flushErr != nil {
-			err = apperror.NewErrorf("failed to write backup file").AddError(flushErr)
+			err = apperror.NewError("writing backup file failed").AddError(flushErr)
 		}
 		closeErr := file.Close()
 		if err == nil && closeErr != nil {
-			err = apperror.NewErrorf("failed to close backup file").AddError(closeErr)
+			err = apperror.NewError("closing backup file failed").AddError(closeErr)
 		}
 	}()
 
 	_, err = fmt.Fprintf(w, "-- PostgreSQL database backup\n-- DSN: %s\n-- Generated: %s\n\n",
 		redactDSN(d.getDSN()), time.Now().Format(time.RFC3339))
 	if err != nil {
-		return apperror.NewErrorf("failed to write backup header").AddError(err)
+		return apperror.NewError("writing backup header failed").AddError(err)
 	}
 
 	quotedSchema, err := quoteIdentifier(schema, DriverPostgres)
 	if err != nil {
-		return apperror.NewErrorf("invalid schema name").AddError(err)
+		return apperror.NewError("quoting schema name failed").AddError(err)
 	}
 
 	rows, err := dbInstance.Query(`
@@ -377,19 +377,19 @@ func (d *Database[Q]) backupPostgres(dbInstance *sql.DB, path string, schema str
 		ORDER BY tablename
 	`, schema)
 	if err != nil {
-		return apperror.NewErrorf("failed to get table list").AddError(err)
+		return apperror.NewError("listing tables failed").AddError(err)
 	}
 	var tables []string
 	for rows.Next() {
 		var table string
 		err := rows.Scan(&table)
 		if err != nil {
-			_ = rows.Close()
-			return apperror.NewErrorf("failed to scan table name").AddError(err)
+			apperror.Catch(rows.Close, "closing table list rows failed")
+			return apperror.NewError("scanning table name failed").AddError(err)
 		}
 		tables = append(tables, table)
 	}
-	_ = rows.Close()
+	apperror.Catch(rows.Close, "closing table list rows failed")
 
 	for _, table := range tables {
 		var createStmt string
@@ -405,52 +405,52 @@ func (d *Database[Q]) backupPostgres(dbInstance *sql.DB, path string, schema str
 			GROUP BY c.relname
 		`, table, schema).Scan(&createStmt)
 		if err != nil {
-			d.logger.Warn().Err(err).Msgf("failed to get schema for table %s", table)
+			d.logger.Warn().Err(err).Msgf("getting schema of table %s failed", table)
 			continue
 		}
 		_, err = fmt.Fprintf(w, "\n-- Table: %s\n%s\n\n", table, createStmt)
 		if err != nil {
-			return apperror.NewErrorf("failed to write table schema").AddError(err)
+			return apperror.NewError("writing table schema failed").AddError(err)
 		}
 
 		quotedTable, err := quoteIdentifier(table, DriverPostgres)
 		if err != nil {
-			return apperror.NewErrorf("invalid table name").AddError(err)
+			return apperror.NewError("quoting table name failed").AddError(err)
 		}
 
 		dataRows, err := dbInstance.Query("SELECT * FROM " + quotedSchema + "." + quotedTable) //nolint:gosec,unqueryvet // both identifiers are escaped by quoteIdentifier; a dump needs every column
 		if err != nil {
-			d.logger.Warn().Err(err).Msgf("failed to read data from table %s", table)
+			d.logger.Warn().Err(err).Msgf("reading data of table %s failed", table)
 			continue
 		}
 		columns, err := dataRows.Columns()
 		if err != nil {
-			_ = dataRows.Close()
-			return apperror.NewErrorf("failed to get columns for table %s", table).AddError(err)
+			apperror.Catch(dataRows.Close, "closing table data rows failed")
+			return apperror.NewErrorf("getting columns of table %s failed", table).AddError(err)
 		}
 		if len(columns) > 0 {
 			cols, err := quotedColumns(columns, DriverPostgres)
 			if err != nil {
-				_ = dataRows.Close()
-				return err
+				apperror.Catch(dataRows.Close, "closing table data rows failed")
+				return apperror.NewErrorf("quoting columns of table %s failed", table).AddError(err)
 			}
 			_, err = fmt.Fprintf(w, "-- Data for table: %s\n", table)
 			if err != nil {
-				_ = dataRows.Close()
-				return apperror.NewErrorf("failed to write data header").AddError(err)
+				apperror.Catch(dataRows.Close, "closing table data rows failed")
+				return apperror.NewError("writing data header failed").AddError(err)
 			}
 			prefix := "INSERT INTO " + quotedSchema + "." + quotedTable + " (" + cols + ") VALUES"
 			// Rows that exist already are kept: one duplicate would otherwise abort the whole restore
 			err = dumpTable(w, dataRows, len(columns), prefix, " ON CONFLICT DO NOTHING;", appendPostgresValue)
 			if err != nil {
-				_ = dataRows.Close()
-				return err
+				apperror.Catch(dataRows.Close, "closing table data rows failed")
+				return apperror.NewErrorf("dumping data of table %s failed", table).AddError(err)
 			}
 		}
-		_ = dataRows.Close()
+		apperror.Catch(dataRows.Close, "closing table data rows failed")
 		_, err = w.WriteString("\n")
 		if err != nil {
-			return apperror.NewErrorf("failed to write newline").AddError(err)
+			return apperror.NewError("writing newline failed").AddError(err)
 		}
 	}
 

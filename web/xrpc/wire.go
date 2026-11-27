@@ -259,7 +259,7 @@ func (w jsonWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
 				b = append(b, `,"data":`...)
 				b, err = w.c.appendJSON(b, r.err.Data.ProtoReflect(), 0)
 				if err != nil {
-					return nil, err
+					return nil, apperror.NewError("encoding error data failed").AddError(err)
 				}
 			}
 			b = append(b, '}')
@@ -270,7 +270,7 @@ func (w jsonWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
 			} else {
 				b, err = w.c.appendJSON(b, r.result.ProtoReflect(), 0)
 				if err != nil {
-					return nil, err
+					return nil, apperror.NewError("encoding result failed").AddError(err)
 				}
 			}
 		}
@@ -289,7 +289,7 @@ func (w jsonWire) encodeRequest(id rpcID, method string, params proto.Message) (
 	if params != nil {
 		body, err := w.c.marshalJSON(params)
 		if err != nil {
-			return nil, err
+			return nil, apperror.NewError("encoding request params failed").AddError(err)
 		}
 		b = append(b, `,"params":`...)
 		if len(body) > 0 && body[0] != '{' {
@@ -313,7 +313,7 @@ func (w jsonWire) encodeEvent(method string, id rpcID, data proto.Message) ([]by
 		b = append(b, `,"data":`...)
 		b, err = w.c.appendJSON(b, data.ProtoReflect(), 0)
 		if err != nil {
-			return nil, err
+			return nil, apperror.NewError("encoding event data failed").AddError(err)
 		}
 	}
 	return append(b, "}}"...), nil

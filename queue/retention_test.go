@@ -62,9 +62,15 @@ func TestMemoryQueueRetentionKeepsRetriedJobs(t *testing.T) {
 		t.Fatal(err)
 	}
 	job.Status = queue.StatusFailed
-	_ = q.UpdateJob(ctx, job)
+	err = q.UpdateJob(ctx, job)
+	if err != nil {
+		t.Error(err)
+	}
 	job.Status = queue.StatusRetrying
-	_ = q.UpdateJob(ctx, job)
+	err = q.UpdateJob(ctx, job)
+	if err != nil {
+		t.Error(err)
+	}
 
 	for i := range 5 {
 		finish(t, q, fmt.Sprintf("other-%d", i), queue.StatusCompleted)

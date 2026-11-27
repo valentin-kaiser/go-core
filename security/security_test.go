@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/security"
 )
 
@@ -452,11 +453,6 @@ func TestGenerateRandomPasswordEdgeCases(t *testing.T) {
 				if len(result) != tt.length {
 					t.Errorf("GenerateRandomPassword() returned %d characters, expected %d", len(result), tt.length)
 				}
-			} else {
-				// For negative lengths, the behavior depends on the implementation
-				// It might fail or return empty string
-				_ = result
-				_ = err
 			}
 		})
 	}
@@ -515,7 +511,7 @@ func TestReadOrSavePassphraseFileOperations(t *testing.T) {
 				dir := filepath.Dir(path)
 				err := os.MkdirAll(dir, 0750)
 				if err != nil {
-					return err
+					return apperror.NewError("creating directory failed").AddError(err)
 				}
 				// Remove all permissions on Unix-like systems
 				return os.Chmod(dir, 0000)

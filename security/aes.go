@@ -37,11 +37,11 @@ func (a *AesCipher) gcm() (cipher.AEAD, error) {
 
 	block, err := aes.NewCipher(a.passphrase)
 	if err != nil {
-		return nil, apperror.NewError("failed to create AES cipher").AddError(err)
+		return nil, apperror.NewError("creating AES cipher failed").AddError(err)
 	}
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, apperror.NewError("failed to create GCM cipher").AddError(err)
+		return nil, apperror.NewError("creating GCM cipher failed").AddError(err)
 	}
 	a.aead.Store(&aeadCache{key: append([]byte(nil), a.passphrase...), aead: aead})
 	return aead, nil
@@ -57,7 +57,7 @@ func (a *AesCipher) WithAES128() *AesCipher {
 	var err error
 	a.passphrase, err = GetRandomBytes(16)
 	if err != nil {
-		a.Error = apperror.Wrap(err)
+		a.Error = apperror.NewError("generating AES-128 key failed").AddError(err)
 	}
 	return a
 }
@@ -67,7 +67,7 @@ func (a *AesCipher) WithAES192() *AesCipher {
 	var err error
 	a.passphrase, err = GetRandomBytes(24)
 	if err != nil {
-		a.Error = apperror.Wrap(err)
+		a.Error = apperror.NewError("generating AES-192 key failed").AddError(err)
 	}
 	return a
 }
@@ -77,7 +77,7 @@ func (a *AesCipher) WithAES256() *AesCipher {
 	var err error
 	a.passphrase, err = GetRandomBytes(32)
 	if err != nil {
-		a.Error = apperror.Wrap(err)
+		a.Error = apperror.NewError("generating AES-256 key failed").AddError(err)
 	}
 	return a
 }
@@ -106,7 +106,7 @@ func (a *AesCipher) Encrypt(plaintext string, out io.Writer) *AesCipher {
 	sealed := make([]byte, nonceSize, nonceSize+len(plaintext)+gcm.Overhead())
 	_, err = io.ReadFull(rand.Reader, sealed)
 	if err != nil {
-		a.Error = apperror.NewError("failed to read nonce").AddError(err)
+		a.Error = apperror.NewError("reading nonce failed").AddError(err)
 		return a
 	}
 
@@ -115,7 +115,7 @@ func (a *AesCipher) Encrypt(plaintext string, out io.Writer) *AesCipher {
 	base64.StdEncoding.Encode(encoded, sealed)
 	_, err = out.Write(encoded)
 	if err != nil {
-		a.Error = apperror.NewError("failed to write encrypted data").AddError(err)
+		a.Error = apperror.NewError("writing encrypted data failed").AddError(err)
 		return a
 	}
 
@@ -126,7 +126,7 @@ func (a *AesCipher) Encrypt(plaintext string, out io.Writer) *AesCipher {
 func (a *AesCipher) Decrypt(ciphertext string, out io.Writer) *AesCipher {
 	cipherBytes, err := base64.StdEncoding.DecodeString(ciphertext)
 	if err != nil {
-		a.Error = apperror.NewError("failed to decode base64 string").AddError(err)
+		a.Error = apperror.NewError("decoding base64 string failed").AddError(err)
 		return a
 	}
 
@@ -145,13 +145,13 @@ func (a *AesCipher) Decrypt(ciphertext string, out io.Writer) *AesCipher {
 	nonce, cipherBytes := cipherBytes[:nonceSize], cipherBytes[nonceSize:]
 	plaintext, err := gcm.Open(nil, nonce, cipherBytes, nil)
 	if err != nil {
-		a.Error = apperror.NewError("failed to decrypt data").AddError(err)
+		a.Error = apperror.NewError("decrypting data failed").AddError(err)
 		return a
 	}
 
 	_, err = out.Write(plaintext)
 	if err != nil {
-		a.Error = apperror.NewError("failed to write decrypted data").AddError(err)
+		a.Error = apperror.NewError("writing decrypted data failed").AddError(err)
 		return a
 	}
 

@@ -111,7 +111,7 @@ func (g *generator) ID() (string, error) {
 	identifiers, err := collectHardwareIdentifiersWithOptions(g)
 	switch {
 	case err != nil:
-		return "", apperror.NewError("failed to collect hardware identifiers").AddError(err)
+		return "", apperror.NewError("collecting hardware identifiers failed").AddError(err)
 	case len(identifiers) == 0:
 		return "", apperror.NewError("no hardware identifiers found with current configuration")
 	default:

@@ -36,7 +36,7 @@ func forEachStatement(r io.Reader, fn func(stmt string) error) error {
 			line = long
 		}
 		if err != nil && !errors.Is(err, io.EOF) {
-			return apperror.Wrap(err)
+			return apperror.NewError("reading statement failed").AddError(err)
 		}
 
 		trimmed := bytes.TrimSpace(line)
@@ -66,23 +66,27 @@ const backupFileMode os.FileMode = 0o640
 func copyFile(src, dst string) error {
 	in, err := os.Open(filepath.Clean(src))
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("opening file %s failed", src).AddError(err)
 	}
-	defer func() { _ = in.Close() }()
+	defer apperror.Catch(in.Close, "closing source file failed")
 
 	out, err := os.OpenFile(filepath.Clean(dst), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, backupFileMode)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("opening file %s failed", dst).AddError(err)
 	}
 
 	_, err = io.Copy(out, in)
 	if err != nil {
+		copyErr := apperror.NewErrorf("copying file %s to %s failed", src, dst).AddError(err)
 		closeErr := out.Close()
-		return apperror.Wrap(errors.Join(err, closeErr))
+		if closeErr != nil {
+			return copyErr.AddError(closeErr)
+		}
+		return copyErr
 	}
 	err = out.Close()
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("closing file %s failed", dst).AddError(err)
 	}
 	return nil
 }

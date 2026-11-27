@@ -85,6 +85,7 @@ import (
 	"context"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io/fs"
 	"maps"
@@ -147,12 +148,13 @@ type Option func(*Bundle) error
 // given directory for JSON files named by language code (e.g. "en.json",
 // "fr.json", "ja.json") and loads each one automatically. Any language is
 // supported — the language code is derived from the filename.
-// Files that cannot be read or parsed are silently skipped.
+// Files that cannot be read or parsed are reported as joined error after the
+// remaining files have been loaded.
 func WithFS(fsys fs.FS, dir string) Option {
 	return func(b *Bundle) error {
 		err := loadDir(b, fsys, dir)
 		if err != nil {
-			return err
+			return fmt.Errorf("loading translation directory %q failed: %w", dir, err)
 		}
 		return nil
 	}
@@ -174,7 +176,7 @@ func WithJSON(lang Language, data []byte) Option {
 	return func(b *Bundle) error {
 		err := b.loadJSON(lang, data)
 		if err != nil {
-			return err
+			return fmt.Errorf("loading JSON of language %q failed: %w", lang, err)
 		}
 		return nil
 	}
@@ -202,7 +204,7 @@ func New(opts ...Option) (*Bundle, error) {
 	for _, opt := range opts {
 		err := opt(b)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("applying bundle option failed: %w", err)
 		}
 	}
 	return b, nil
@@ -311,12 +313,12 @@ func (b *Bundle) RegisterJSON(lang Language, data []byte) error {
 	raw := make(map[string]any)
 	err := json.Unmarshal(data, &raw)
 	if err != nil {
-		return fmt.Errorf("i18n: failed to parse JSON for language %q: %w", lang, err)
+		return fmt.Errorf("parsing JSON of language %q failed: %w", lang, err)
 	}
 	m := make(map[string]string)
 	err = flattenJSON("", raw, m)
 	if err != nil {
-		return fmt.Errorf("i18n: failed to flatten JSON for language %q: %w", lang, err)
+		return fmt.Errorf("flattening JSON of language %q failed: %w", lang, err)
 	}
 	b.Register(lang, m)
 	return nil
@@ -327,7 +329,7 @@ func (b *Bundle) RegisterJSON(lang Language, data []byte) error {
 func (b *Bundle) Load(fsys fs.FS, dir string) error {
 	err := loadDir(b, fsys, dir)
 	if err != nil {
-		return err
+		return fmt.Errorf("loading translation directory %q failed: %w", dir, err)
 	}
 	return nil
 }
@@ -359,12 +361,12 @@ func (b *Bundle) loadJSON(lang Language, data []byte) error {
 	raw := make(map[string]any)
 	err := json.Unmarshal(data, &raw)
 	if err != nil {
-		return err
+		return fmt.Errorf("parsing JSON failed: %w", err)
 	}
 	m := make(map[string]string)
 	err = flattenJSON("", raw, m)
 	if err != nil {
-		return err
+		return fmt.Errorf("flattening JSON failed: %w", err)
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -391,7 +393,7 @@ func flattenJSON(prefix string, raw map[string]any, out map[string]string) error
 		case map[string]any:
 			err := flattenJSON(key, val, out)
 			if err != nil {
-				return err
+				return fmt.Errorf("flattening key %q failed: %w", key, err)
 			}
 		case string:
 			if _, exists := out[key]; exists {
@@ -414,8 +416,10 @@ func flattenJSON(prefix string, raw map[string]any, out map[string]string) error
 func loadDir(b *Bundle, fsys fs.FS, dir string) error {
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
-		return err
+		return fmt.Errorf("reading directory %q failed: %w", dir, err)
 	}
+
+	var errs []error
 	for _, entry := range entries {
 		if entry.IsDir() {
 			continue
@@ -427,11 +431,15 @@ func loadDir(b *Bundle, fsys fs.FS, dir string) error {
 		lang := Language(strings.ToLower(strings.TrimSuffix(name, ".json")))
 		data, err := fs.ReadFile(fsys, path.Join(dir, name))
 		if err != nil {
+			errs = append(errs, fmt.Errorf("reading translation file %q failed: %w", name, err))
 			continue
 		}
-		_ = b.loadJSON(lang, data) // Silently skip files with parse errors
+		err = b.loadJSON(lang, data)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("loading translation file %q failed: %w", name, err))
+		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // ---------------------------------------------------------------------------
@@ -443,7 +451,7 @@ var globalBundle atomic.Pointer[Bundle]
 func init() {
 	bundle, err := New()
 	if err != nil {
-		panic(fmt.Sprintf("failed to initialize i18n bundle: %v", err))
+		panic(fmt.Sprintf("initializing i18n bundle failed: %v", err))
 	}
 	globalBundle.Store(bundle)
 }
@@ -467,7 +475,7 @@ func GetDefault() *Bundle {
 func Init(opts ...Option) error {
 	bundle, err := New(opts...)
 	if err != nil {
-		return err
+		return fmt.Errorf("creating bundle failed: %w", err)
 	}
 	globalBundle.Store(bundle)
 	return nil

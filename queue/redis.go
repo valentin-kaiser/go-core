@@ -44,7 +44,7 @@ func (rq *RedisQueue) Enqueue(ctx context.Context, job *Job) error {
 
 	jobData, err := json.Marshal(job)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("marshaling job %s failed", job.ID).AddError(err)
 	}
 
 	pipe := rq.client.Pipeline()
@@ -66,7 +66,7 @@ func (rq *RedisQueue) Enqueue(ctx context.Context, job *Job) error {
 
 	_, err = pipe.Exec(ctx)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("enqueuing job %s failed", job.ID).AddError(err)
 	}
 
 	return nil
@@ -83,7 +83,7 @@ func (rq *RedisQueue) Dequeue(ctx context.Context, timeout time.Duration) (*Job,
 		if err == redis.Nil {
 			return nil, context.DeadlineExceeded
 		}
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("popping job from pending queue failed").AddError(err)
 	}
 
 	memberStr, ok := result.Member.(string)
@@ -92,13 +92,13 @@ func (rq *RedisQueue) Dequeue(ctx context.Context, timeout time.Duration) (*Job,
 	}
 	jobData, err := rq.client.HGet(ctx, rq.jobKey(memberStr), "data").Result()
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewErrorf("reading job %s failed", memberStr).AddError(err)
 	}
 
 	var job Job
 	err = json.Unmarshal([]byte(jobData), &job)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewErrorf("unmarshaling job %s failed", memberStr).AddError(err)
 	}
 
 	return &job, nil
@@ -112,7 +112,7 @@ func (rq *RedisQueue) Schedule(ctx context.Context, job *Job) error {
 
 	jobData, err := json.Marshal(job)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("marshaling job %s failed", job.ID).AddError(err)
 	}
 
 	pipe := rq.client.Pipeline()
@@ -125,7 +125,7 @@ func (rq *RedisQueue) Schedule(ctx context.Context, job *Job) error {
 
 	_, err = pipe.Exec(ctx)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("scheduling job %s failed", job.ID).AddError(err)
 	}
 
 	return nil
@@ -142,13 +142,13 @@ func (rq *RedisQueue) GetJob(ctx context.Context, id string) (*Job, error) {
 		if err == redis.Nil {
 			return nil, apperror.NewError("job not found")
 		}
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewErrorf("reading job %s failed", id).AddError(err)
 	}
 
 	var job Job
 	err = json.Unmarshal([]byte(jobData), &job)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewErrorf("unmarshaling job %s failed", id).AddError(err)
 	}
 
 	return &job, nil
@@ -162,7 +162,7 @@ func (rq *RedisQueue) UpdateJob(ctx context.Context, job *Job) error {
 
 	jobData, err := json.Marshal(job)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("marshaling job %s failed", job.ID).AddError(err)
 	}
 
 	pipe := rq.client.Pipeline()
@@ -185,7 +185,7 @@ func (rq *RedisQueue) UpdateJob(ctx context.Context, job *Job) error {
 
 	_, err = pipe.Exec(ctx)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("updating job %s failed", job.ID).AddError(err)
 	}
 
 	return nil
@@ -204,7 +204,7 @@ func (rq *RedisQueue) DeleteJob(ctx context.Context, id string) error {
 
 	_, err := pipe.Exec(ctx)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("deleting job %s failed", id).AddError(err)
 	}
 
 	return nil
@@ -231,12 +231,13 @@ func (rq *RedisQueue) GetJobs(ctx context.Context, status Status, limit int) ([]
 	}
 
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewErrorf("listing jobs with status %s failed", status).AddError(err)
 	}
 
 	for _, jobID := range jobIDs {
 		job, err := rq.GetJob(ctx, jobID)
 		if err != nil {
+			logger.Error().Err(err).Field("job_id", jobID).Msg("reading scheduled job failed")
 			continue // Skip jobs that can't be retrieved
 		}
 
@@ -257,7 +258,7 @@ func (rq *RedisQueue) scanJobsByStatus(ctx context.Context, status Status, limit
 	for {
 		keys, nextCursor, err := rq.client.Scan(ctx, cursor, rq.keyPrefix+":job:*", 100).Result()
 		if err != nil {
-			return nil, apperror.Wrap(err)
+			return nil, apperror.NewError("scanning jobs failed").AddError(err)
 		}
 
 		for _, key := range keys {
@@ -267,12 +268,14 @@ func (rq *RedisQueue) scanJobsByStatus(ctx context.Context, status Status, limit
 
 			jobData, err := rq.client.HGet(ctx, key, "data").Result()
 			if err != nil {
+				logger.Warn().Err(err).Field("key", key).Msg("reading job while scanning failed")
 				continue
 			}
 
 			var job Job
 			unmarshalErr := json.Unmarshal([]byte(jobData), &job)
 			if unmarshalErr != nil {
+				logger.Warn().Err(unmarshalErr).Field("key", key).Msg("unmarshaling job while scanning failed")
 				continue
 			}
 
@@ -301,14 +304,14 @@ func (rq *RedisQueue) GetStats(ctx context.Context) (*Stats, error) {
 
 	pendingCount, err := rq.client.ZCard(ctx, rq.pendingKey()).Result()
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("counting pending jobs failed").AddError(err)
 	}
 	stats.Pending = pendingCount
 	stats.QueueSize += pendingCount
 
 	scheduledCount, err := rq.client.ZCard(ctx, rq.scheduledKey()).Result()
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("counting scheduled jobs failed").AddError(err)
 	}
 	stats.Scheduled = scheduledCount
 	stats.QueueSize += scheduledCount
@@ -317,7 +320,7 @@ func (rq *RedisQueue) GetStats(ctx context.Context) (*Stats, error) {
 	for {
 		keys, nextCursor, err := rq.client.Scan(ctx, cursor, rq.keyPrefix+":job:*", 100).Result()
 		if err != nil {
-			return nil, apperror.Wrap(err)
+			return nil, apperror.NewError("scanning jobs failed").AddError(err)
 		}
 
 		for _, key := range keys {
@@ -393,7 +396,7 @@ func (rq *RedisQueue) MoveScheduledToPending(ctx context.Context) error {
 	}).Result()
 
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("listing due scheduled jobs failed").AddError(err)
 	}
 
 	for _, jobID := range jobIDs {
@@ -407,6 +410,7 @@ func (rq *RedisQueue) MoveScheduledToPending(ctx context.Context) error {
 
 		updateErr := rq.UpdateJob(ctx, job)
 		if updateErr != nil {
+			logger.Error().Err(updateErr).Field("job_id", jobID).Msg("moving scheduled job to pending failed")
 			continue
 		}
 	}

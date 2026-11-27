@@ -205,12 +205,12 @@ func decodeBase64(s string) ([]byte, error) {
 func marshalWKT(m protoreflect.Message) ([]byte, error) {
 	raw, err := protojson.Marshal(m.Interface())
 	if err != nil {
-		return nil, err
+		return nil, apperror.NewError("marshaling well-known type failed").AddError(err)
 	}
 	var buf bytes.Buffer
 	err = json.Compact(&buf, raw)
 	if err != nil {
-		return nil, err
+		return nil, apperror.NewError("compacting well-known type failed").AddError(err)
 	}
 	return buf.Bytes(), nil
 }

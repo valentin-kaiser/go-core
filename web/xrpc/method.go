@@ -85,7 +85,7 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 		}
 		m.in, err = messageOf(t.In(1), md.Input())
 		if err != nil {
-			return nil, err
+			return nil, apperror.NewErrorf("binding signature of method %s failed", m.name).AddError(err)
 		}
 		m.out, err = messageOf(t.Out(0), md.Output())
 	case !cs && ss:
@@ -95,7 +95,7 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 		}
 		m.in, err = messageOf(t.In(1), md.Input())
 		if err != nil {
-			return nil, err
+			return nil, apperror.NewErrorf("binding signature of method %s failed", m.name).AddError(err)
 		}
 		m.out, err = chanOf(t.In(2), reflect.SendDir, md.Output())
 	case cs && !ss:
@@ -105,7 +105,7 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 		}
 		m.in, err = chanOf(t.In(1), reflect.RecvDir, md.Input())
 		if err != nil {
-			return nil, err
+			return nil, apperror.NewErrorf("binding signature of method %s failed", m.name).AddError(err)
 		}
 		m.out, err = messageOf(t.Out(0), md.Output())
 	default:
@@ -115,11 +115,14 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 		}
 		m.in, err = chanOf(t.In(1), reflect.RecvDir, md.Input())
 		if err != nil {
-			return nil, err
+			return nil, apperror.NewErrorf("binding signature of method %s failed", m.name).AddError(err)
 		}
 		m.out, err = chanOf(t.In(2), reflect.SendDir, md.Output())
 	}
-	return m, err
+	if err != nil {
+		return nil, apperror.NewErrorf("binding signature of method %s failed", m.name).AddError(err)
+	}
+	return m, nil
 }
 
 // call invokes the method and converts panics to errors.

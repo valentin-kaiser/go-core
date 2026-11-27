@@ -202,7 +202,7 @@ func (m *manager) parseStructTags(v reflect.Value, labelBase string) error {
 
 			err := m.parseStructTags(v.Field(i).Elem(), fieldName)
 			if err != nil {
-				return apperror.Wrap(err)
+				return apperror.NewErrorf("parsing struct tags of field %s failed", fieldName).AddError(err)
 			}
 			continue
 		}
@@ -217,7 +217,7 @@ func (m *manager) parseStructTags(v reflect.Value, labelBase string) error {
 			label := buildLabel(labelBase, fieldName)
 			err := m.parseStructTags(subv, label)
 			if err != nil {
-				return apperror.Wrap(err)
+				return apperror.NewErrorf("parsing struct tags of field %s failed", fieldName).AddError(err)
 			}
 			continue
 		}
@@ -225,7 +225,7 @@ func (m *manager) parseStructTags(v reflect.Value, labelBase string) error {
 		tag := buildLabel(labelBase, fieldName)
 		err := m.declareFlag(tag, field.Tag.Get("usage"), v.Field(i).Interface())
 		if err != nil {
-			return apperror.Wrap(err)
+			return apperror.NewErrorf("declaring flag %s failed", tag).AddError(err)
 		}
 	}
 

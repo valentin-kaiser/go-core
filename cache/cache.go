@@ -67,7 +67,6 @@ package cache
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"reflect"
 	"sync"
@@ -281,7 +280,7 @@ func (s *NativeSerializer) Keep(value any) (any, error) {
 func (s *NativeSerializer) Restore(kept any, dest any) error {
 	dv := reflect.ValueOf(dest)
 	if dv.Kind() != reflect.Pointer || dv.IsNil() {
-		return errors.New("destination must be a non-nil pointer")
+		return apperror.NewError("destination must be a non-nil pointer")
 	}
 	dv = dv.Elem()
 	if kept == nil {
@@ -295,7 +294,7 @@ func (s *NativeSerializer) Restore(kept any, dest any) error {
 
 	data, err := s.Serialize(kept)
 	if err != nil {
-		return err
+		return apperror.NewError("serializing value failed").AddError(err)
 	}
 	return s.Deserialize(data, dest)
 }

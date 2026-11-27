@@ -550,7 +550,7 @@ func (router *Router) block(w http.ResponseWriter, r *http.Request, whitelist, b
 func (router *Router) setWhitelist(entries []string) error {
 	networks, err := router.parseIPList(entries)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("parsing whitelist failed").AddError(err)
 	}
 	whitelist := make(map[string]*net.IPNet, len(networks))
 	for _, network := range networks {
@@ -567,7 +567,7 @@ func (router *Router) setWhitelist(entries []string) error {
 func (router *Router) setBlacklist(entries []string) error {
 	networks, err := router.parseIPList(entries)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("parsing blacklist failed").AddError(err)
 	}
 	blacklist := make(map[string]*net.IPNet, len(networks))
 	for _, network := range networks {
@@ -650,7 +650,7 @@ func (router *Router) parseIPList(entries []string) ([]*net.IPNet, error) {
 		}
 		_, network, err := net.ParseCIDR(entry)
 		if err != nil {
-			return nil, apperror.NewErrorf("failed to parse CIDR entry '%s'", entry).AddError(err)
+			return nil, apperror.NewErrorf("parsing CIDR entry '%s' failed", entry).AddError(err)
 		}
 		list = append(list, network)
 	}

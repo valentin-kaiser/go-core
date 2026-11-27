@@ -40,7 +40,7 @@ func SizeOf(value any) (int64, error) {
 	buff := new(bytes.Buffer)
 	err := gob.NewEncoder(buff).Encode(value)
 	if err != nil {
-		return 0, apperror.Wrap(err)
+		return 0, apperror.NewError("encoding value failed").AddError(err)
 	}
 	return int64(buff.Len()), nil
 }

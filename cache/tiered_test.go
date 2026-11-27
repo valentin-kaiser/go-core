@@ -59,7 +59,7 @@ func setupTieredTest(t *testing.T) *cache.TieredCache {
 
 func TestTieredCache_BasicOperations(t *testing.T) {
 	c := setupTieredTest(t)
-	defer apperror.Catch(c.Close, "failed to close cache")
+	defer apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 
@@ -135,7 +135,7 @@ func TestTieredCache_BasicOperations(t *testing.T) {
 
 func TestTieredCache_L1Eviction(t *testing.T) {
 	c := setupTieredTest(t)
-	defer apperror.Catch(c.Close, "failed to close cache")
+	defer apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 
@@ -183,7 +183,7 @@ func TestTieredCache_L1Eviction(t *testing.T) {
 
 func TestTieredCache_L2Backfill(t *testing.T) {
 	c := setupTieredTest(t)
-	defer apperror.Catch(c.Close, "failed to close cache")
+	defer apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 
@@ -238,7 +238,7 @@ func TestTieredCache_L2Backfill(t *testing.T) {
 
 func TestTieredCache_TTL(t *testing.T) {
 	c := setupTieredTest(t)
-	defer apperror.Catch(c.Close, "failed to close cache")
+	defer apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 
@@ -260,7 +260,7 @@ func TestTieredCache_TTL(t *testing.T) {
 
 func TestTieredCache_TTLPropagation(t *testing.T) {
 	c := setupTieredTest(t)
-	defer apperror.Catch(c.Close, "failed to close cache")
+	defer apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 
@@ -302,7 +302,7 @@ func TestTieredCache_TTLPropagation(t *testing.T) {
 
 func TestTieredCache_MultiOperations(t *testing.T) {
 	c := setupTieredTest(t)
-	defer apperror.Catch(c.Close, "failed to close cache")
+	defer apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 
@@ -375,7 +375,7 @@ func TestTieredCache_MultiOperations(t *testing.T) {
 
 func TestTieredCache_Clear(t *testing.T) {
 	c := setupTieredTest(t)
-	defer apperror.Catch(c.Close, "failed to close cache")
+	defer apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 
@@ -423,7 +423,7 @@ func TestTieredCache_Events(t *testing.T) {
 	c = c.WithEventHandler(func(event cache.Event) {
 		eventsChan <- event
 	})
-	defer apperror.Catch(c.Close, "failed to close cache")
+	defer apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 
@@ -482,7 +482,7 @@ eventLoop:
 
 func TestTieredCache_Stats(t *testing.T) {
 	c := setupTieredTest(t)
-	defer apperror.Catch(c.Close, "failed to close cache")
+	defer apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 

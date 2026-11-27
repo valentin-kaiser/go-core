@@ -3,11 +3,12 @@ package web
 import (
 	"bufio"
 	"bytes"
-	"errors"
 	"net"
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/valentin-kaiser/go-core/apperror"
 )
 
 // ResponseWriter is a wrapper around http.ResponseWriter that captures the status code
@@ -82,11 +83,11 @@ func (rw *ResponseWriter) Status() int {
 func (rw *ResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	h, ok := rw.w.(http.Hijacker)
 	if !ok {
-		return nil, nil, errors.New("hijack not supported")
+		return nil, nil, apperror.NewError("hijack not supported")
 	}
 	conn, rwbuf, err := h.Hijack()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, apperror.NewError("hijacking connection failed").AddError(err)
 	}
 	rw.hijacked = true
 	rw.clear() // Clear the buffer and history when hijacking

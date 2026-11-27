@@ -21,7 +21,7 @@ func TestMemoryCache_BasicOperations(t *testing.T) {
 		WithMaxSize(100).
 		WithDefaultTTL(time.Hour)
 
-	defer apperror.Catch(c.Close, "failed to close cache")
+	defer apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 
@@ -74,7 +74,7 @@ func TestMemoryCache_TTL(t *testing.T) {
 	c := cache.NewMemoryCache().
 		WithDefaultTTL(time.Millisecond * 100)
 
-	apperror.Catch(c.Close, "failed to close cache")
+	apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 
@@ -111,7 +111,7 @@ func TestMemoryCache_LRUEviction(t *testing.T) {
 		WithMaxSize(3).
 		WithLRUEviction(true)
 
-	apperror.Catch(c.Close, "failed to close cache")
+	apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 
@@ -159,7 +159,7 @@ func TestMemoryCache_LRUEviction(t *testing.T) {
 
 func TestMemoryCache_MultiOperations(t *testing.T) {
 	c := cache.NewMemoryCache()
-	apperror.Catch(c.Close, "failed to close cache")
+	apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 
@@ -218,7 +218,7 @@ func TestMemoryCache_Stats(t *testing.T) {
 	c := cache.NewMemoryCache().
 		WithMaxSize(10)
 
-	apperror.Catch(c.Close, "failed to close cache")
+	apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 
@@ -284,7 +284,7 @@ func TestMemoryCache_Events(t *testing.T) {
 			eventsChan <- event
 		})
 
-	apperror.Catch(c.Close, "failed to close cache")
+	apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 
@@ -341,7 +341,7 @@ func TestMemoryCache_Namespace(t *testing.T) {
 	config.Namespace = "test"
 
 	c := cache.NewMemoryCacheWithConfig(config)
-	apperror.Catch(c.Close, "failed to close cache")
+	apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 
@@ -377,7 +377,7 @@ func TestMemoryCache_Namespace(t *testing.T) {
 
 func TestMemoryCache_Clear(t *testing.T) {
 	c := cache.NewMemoryCache()
-	apperror.Catch(c.Close, "failed to close cache")
+	apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 
@@ -419,7 +419,7 @@ func TestMemoryCache_Clear(t *testing.T) {
 
 func TestMemoryCache_TTLOperations(t *testing.T) {
 	c := cache.NewMemoryCache()
-	apperror.Catch(c.Close, "failed to close cache")
+	apperror.Catch(c.Close, "closing cache failed")
 
 	ctx := t.Context()
 

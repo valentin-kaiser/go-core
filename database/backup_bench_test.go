@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/database"
 )
 
@@ -16,7 +17,7 @@ func BenchmarkBackupSQLite(b *testing.B) {
 	dbPath := filepath.Join(dir, "bench.db")
 	db := database.New[TestQueries](database.DriverSQLite, "bench-backup")
 	db.Connect(100*time.Millisecond, "file:"+dbPath)
-	b.Cleanup(func() { _ = db.Disconnect() })
+	b.Cleanup(func() { apperror.Catch(db.Disconnect, "disconnecting database failed") })
 	db.AwaitConnection()
 
 	err := db.Execute(func(sqlDB *sql.DB) error {
@@ -35,8 +36,7 @@ func BenchmarkBackupSQLite(b *testing.B) {
 		for range 30000 {
 			_, err := tx.Exec("INSERT INTO t (payload) VALUES (?)", string(payload))
 			if err != nil {
-				_ = tx.Rollback()
-				return err
+				return apperror.NewError("inserting rows failed").AddError(err).AddError(tx.Rollback())
 			}
 		}
 		return tx.Commit()
@@ -46,7 +46,10 @@ func BenchmarkBackupSQLite(b *testing.B) {
 	}
 
 	target := filepath.Join(dir, "backup.db")
-	info, _ := os.Stat(dbPath)
+	info, err := os.Stat(dbPath)
+	if err != nil {
+		b.Fatal(err)
+	}
 	b.SetBytes(info.Size())
 	b.ReportAllocs()
 	b.ResetTimer()

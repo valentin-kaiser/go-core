@@ -134,7 +134,7 @@ func OnSignal(handlers []func() error, signals ...os.Signal) context.Context {
 				defer Catch()
 				err := handler()
 				if err != nil {
-					logger.Error().Err(err).Msgf("handler failed")
+					logger.Error().Err(err).Msg("running signal handler failed")
 				}
 			}()
 		}
@@ -223,7 +223,7 @@ const (
 func write(err any, caller string, line int) {
 	e := os.MkdirAll(Directory, panicDirMode)
 	if e != nil {
-		fmt.Fprintf(os.Stderr, "failed to create panic directory: %v", apperror.Wrap(e))
+		fmt.Fprintf(os.Stderr, "%v", apperror.NewError("creating panic directory failed").AddError(e))
 		return
 	}
 	timestamp := time.Now().Format(Format)
@@ -234,6 +234,6 @@ func write(err any, caller string, line int) {
 	}
 	werr := os.WriteFile(name, []byte(content), panicFileMode)
 	if werr != nil {
-		fmt.Fprintf(os.Stderr, "failed to write panic: %v", apperror.Wrap(werr))
+		fmt.Fprintf(os.Stderr, "%v", apperror.NewError("writing panic file failed").AddError(werr))
 	}
 }

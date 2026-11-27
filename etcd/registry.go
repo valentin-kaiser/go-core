@@ -64,7 +64,7 @@ const defaultRegisterTTL = 15 * time.Second
 func (c *Client) Register(ctx context.Context, info Descriptor, ttl time.Duration) (*Registration, error) {
 	err := info.Validate()
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("validating service descriptor failed").AddError(err)
 	}
 
 	if ttl <= 0 {

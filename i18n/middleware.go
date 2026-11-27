@@ -127,7 +127,7 @@ func (b *Bundle) languageMatcher() *languageMatcher {
 	// Place the Default language first so the matcher falls back to it
 	// when no requested language matches (the first entry is the matcher's default).
 	supported := make([]language.Tag, 0, len(b.translations)+1)
-	defaultTag, _ := language.Parse(string(Default))
+	defaultTag := language.Make(string(Default))
 	supported = append(supported, defaultTag)
 	for l := range b.translations {
 		if l == Default {

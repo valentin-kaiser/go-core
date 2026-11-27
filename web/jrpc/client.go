@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
-	"fmt"
 	"io"
 	"net/http"
 	"net/url"
@@ -165,13 +164,13 @@ func (c *Client) Call(ctx context.Context, u *url.URL, req, resp proto.Message, 
 	reqBytes, err := c.marshalOpts.Marshal(req)
 	c.mutex.RUnlock()
 	if err != nil {
-		return apperror.NewError("failed to marshal request").AddError(err)
+		return apperror.NewError("marshaling request failed").AddError(err)
 	}
 
 	// Create HTTP request
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(reqBytes))
 	if err != nil {
-		return apperror.NewError("failed to create HTTP request").AddError(err)
+		return apperror.NewError("creating HTTP request failed").AddError(err)
 	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
@@ -200,12 +199,12 @@ func (c *Client) Call(ctx context.Context, u *url.URL, req, resp proto.Message, 
 	// Read response body
 	respBytes, err := io.ReadAll(httpResp.Body)
 	if err != nil {
-		return apperror.NewError("failed to read response body").AddError(err)
+		return apperror.NewError("reading response body failed").AddError(err)
 	}
 
 	// Check HTTP status
 	if httpResp.StatusCode != http.StatusOK {
-		return apperror.NewError(fmt.Sprintf("server returned status %d: %s", httpResp.StatusCode, string(respBytes)))
+		return apperror.NewErrorf("server returned status %d: %s", httpResp.StatusCode, string(respBytes))
 	}
 
 	// Unmarshal response
@@ -213,7 +212,7 @@ func (c *Client) Call(ctx context.Context, u *url.URL, req, resp proto.Message, 
 	err = c.unmarshalOpts.Unmarshal(respBytes, resp)
 	c.mutex.RUnlock()
 	if err != nil {
-		return apperror.NewError("failed to unmarshal response").AddError(err)
+		return apperror.NewError("unmarshaling response failed").AddError(err)
 	}
 
 	return nil
@@ -246,7 +245,7 @@ func ServerStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, r
 
 	conn, resp, err := c.dialWebSocket(u)
 	if err != nil {
-		return err
+		return apperror.NewError("starting server stream failed").AddError(err)
 	}
 	defer apperror.Catch(func() error { return resp.Body.Close() }, "closing handshake response body failed")
 	closeConn := closeOnce(conn)
@@ -255,7 +254,7 @@ func ServerStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, r
 	// Send initial request
 	err = c.writeWSMessage(conn, req)
 	if err != nil {
-		return apperror.NewError("failed to send request").AddError(err)
+		return apperror.NewError("sending request failed").AddError(err)
 	}
 
 	errChan := make(chan error, 1)
@@ -270,7 +269,7 @@ func ServerStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, r
 					errChan <- nil
 					return
 				}
-				errChan <- apperror.NewError("failed to read message").AddError(err)
+				errChan <- apperror.NewError("reading message failed").AddError(err)
 				return
 			}
 			select {
@@ -317,7 +316,7 @@ func ClientStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, i
 
 	conn, r, err := c.dialWebSocket(u)
 	if err != nil {
-		return err
+		return apperror.NewError("starting client stream failed").AddError(err)
 	}
 	defer apperror.Catch(func() error { return r.Body.Close() }, "closing handshake response body failed")
 	closeConn := closeOnce(conn)
@@ -333,7 +332,7 @@ func ClientStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, i
 			default:
 				err := c.writeWSMessage(conn, msg)
 				if err != nil {
-					errChan <- apperror.NewError("failed to send message").AddError(err)
+					errChan <- apperror.NewError("sending message failed").AddError(err)
 					return
 				}
 			}
@@ -342,7 +341,7 @@ func ClientStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, i
 		closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
 		err := conn.WriteMessage(websocket.CloseMessage, closeMsg)
 		if err != nil {
-			errChan <- apperror.NewError("failed to send close message").AddError(err)
+			errChan <- apperror.NewError("sending close message failed").AddError(err)
 			return
 		}
 		// Read final response - may fail with close error due to WebSocket protocol
@@ -353,7 +352,7 @@ func ClientStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, i
 				errChan <- nil
 				return
 			}
-			errChan <- apperror.NewError("failed to read response").AddError(err)
+			errChan <- apperror.NewError("reading response failed").AddError(err)
 			return
 		}
 		errChan <- nil
@@ -400,7 +399,7 @@ func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx
 
 	conn, resp, err := c.dialWebSocket(u)
 	if err != nil {
-		return err
+		return apperror.NewError("starting bidirectional stream failed").AddError(err)
 	}
 	defer apperror.Catch(func() error { return resp.Body.Close() }, "closing handshake response body failed")
 	closeConn := closeOnce(conn)
@@ -431,7 +430,7 @@ func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx
 				err := c.writeWSMessage(conn, msg)
 				if err != nil {
 					errMutex.Lock()
-					writerErr = apperror.NewError("failed to send message").AddError(err)
+					writerErr = apperror.NewError("sending message failed").AddError(err)
 					errMutex.Unlock()
 					return
 				}
@@ -451,7 +450,7 @@ func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx
 					return
 				}
 				errMutex.Lock()
-				readerErr = apperror.NewError("failed to read message").AddError(err)
+				readerErr = apperror.NewError("reading message failed").AddError(err)
 				errMutex.Unlock()
 				return
 			}
@@ -518,7 +517,7 @@ func (c *Client) dialWebSocket(u *url.URL) (*websocket.Conn, *http.Response, err
 
 	conn, resp, err := dialer.Dial(dialURL.String(), headers)
 	if err != nil {
-		return nil, nil, apperror.NewError("failed to connect to WebSocket").AddError(err)
+		return nil, nil, apperror.NewError("connecting to websocket failed").AddError(err)
 	}
 
 	return conn, resp, nil
@@ -530,9 +529,13 @@ func (c *Client) writeWSMessage(conn *websocket.Conn, msg proto.Message) error {
 	data, err := c.marshalOpts.Marshal(msg)
 	c.mutex.RUnlock()
 	if err != nil {
-		return err
+		return apperror.NewError("marshaling message failed").AddError(err)
 	}
-	return conn.WriteMessage(websocket.TextMessage, data)
+	err = conn.WriteMessage(websocket.TextMessage, data)
+	if err != nil {
+		return apperror.NewError("writing websocket message failed").AddError(err)
+	}
+	return nil
 }
 
 // readWSMessage reads a proto message from the WebSocket connection.
@@ -551,7 +554,10 @@ func (c *Client) readWSMessage(conn *websocket.Conn, msg *proto.Message) error {
 	c.mutex.RLock()
 	err = c.unmarshalOpts.Unmarshal(data, *msg)
 	c.mutex.RUnlock()
-	return err
+	if err != nil {
+		return apperror.NewError("unmarshaling message failed").AddError(err)
+	}
+	return nil
 }
 
 // closeOnce wraps c so that closing it repeatedly is safe: the first call closes

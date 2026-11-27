@@ -88,16 +88,16 @@ type RabbitMQConfig struct {
 // - Invalid MaxPriority values (outside the range 0-255) may cause unexpected behavior.
 func NewRabbitMQ(config RabbitMQConfig) (*RabbitMQ, error) {
 	if strings.TrimSpace(config.URL) == "" {
-		return nil, apperror.NewError("RabbitMQ URL is required")
+		return nil, apperror.NewError("rabbitmq url is required")
 	}
 	if strings.TrimSpace(config.QueueName) == "" {
-		return nil, apperror.NewError("Queue name is required")
+		return nil, apperror.NewError("queue name is required")
 	}
 	if strings.TrimSpace(config.ExchangeName) == "" {
-		return nil, apperror.NewError("Exchange name is required")
+		return nil, apperror.NewError("exchange name is required")
 	}
 	if strings.TrimSpace(config.RoutingKey) == "" {
-		return nil, apperror.NewError("Routing key is required")
+		return nil, apperror.NewError("routing key is required")
 	}
 	if config.MaxPriority == 0 {
 		config.MaxPriority = 10 // Default to 10 priority levels
@@ -105,20 +105,20 @@ func NewRabbitMQ(config RabbitMQConfig) (*RabbitMQ, error) {
 
 	conn, err := amqp.Dial(config.URL)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("connecting to rabbitmq failed").AddError(err)
 	}
 
 	channel, err := conn.Channel()
 	if err != nil {
-		apperror.Handle(conn.Close(), "failed to close connection")
-		return nil, apperror.Wrap(err)
+		apperror.Catch(conn.Close, "closing connection failed")
+		return nil, apperror.NewError("opening rabbitmq channel failed").AddError(err)
 	}
 
 	err = declareTopology(channel, config)
 	if err != nil {
-		apperror.Handle(channel.Close(), "failed to close channel")
-		apperror.Handle(conn.Close(), "failed to close connection")
-		return nil, apperror.Wrap(err)
+		apperror.Catch(channel.Close, "closing channel failed")
+		apperror.Catch(conn.Close, "closing connection failed")
+		return nil, apperror.NewError("declaring rabbitmq topology failed").AddError(err)
 	}
 
 	delayedQueueName := config.QueueName + "_schedule"
@@ -151,7 +151,7 @@ func declareTopology(channel *amqp.Channel, config RabbitMQConfig) error {
 		nil,                 // arguments
 	)
 	if err != nil {
-		return err
+		return apperror.NewErrorf("declaring exchange %s failed", config.ExchangeName).AddError(err)
 	}
 
 	queueArgs := amqp.Table{}
@@ -168,7 +168,7 @@ func declareTopology(channel *amqp.Channel, config RabbitMQConfig) error {
 		queueArgs,         // arguments
 	)
 	if err != nil {
-		return err
+		return apperror.NewErrorf("declaring queue %s failed", config.QueueName).AddError(err)
 	}
 
 	err = channel.QueueBind(
@@ -179,7 +179,7 @@ func declareTopology(channel *amqp.Channel, config RabbitMQConfig) error {
 		nil,                 // arguments
 	)
 	if err != nil {
-		return err
+		return apperror.NewErrorf("binding queue %s failed", config.QueueName).AddError(err)
 	}
 
 	// Scheduled jobs wait here with a per message expiration and are dead-lettered to the
@@ -197,7 +197,11 @@ func declareTopology(channel *amqp.Channel, config RabbitMQConfig) error {
 			"x-dead-letter-routing-key": config.RoutingKey,
 		},
 	)
-	return err
+	if err != nil {
+		return apperror.NewErrorf("declaring queue %s failed", config.QueueName+"_schedule").AddError(err)
+	}
+
+	return nil
 }
 
 // NewRabbitMQFromURL creates a new RabbitMQ queue with a simple URL
@@ -230,7 +234,7 @@ func (rq *RabbitMQ) Enqueue(ctx context.Context, job *Job) error {
 
 	jobData, err := json.Marshal(job)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("marshaling job %s failed", job.ID).AddError(err)
 	}
 
 	headers := amqp.Table{
@@ -260,7 +264,7 @@ func (rq *RabbitMQ) Enqueue(ctx context.Context, job *Job) error {
 		return rq.scheduleJob(ctx, message, job.ScheduleAt)
 	}
 
-	return rq.channel.PublishWithContext(
+	err = rq.channel.PublishWithContext(
 		ctx,
 		rq.exchangeName,
 		rq.routingKey,
@@ -268,6 +272,11 @@ func (rq *RabbitMQ) Enqueue(ctx context.Context, job *Job) error {
 		false, // immediate
 		message,
 	)
+	if err != nil {
+		return apperror.NewErrorf("publishing job %s failed", job.ID).AddError(err)
+	}
+
+	return nil
 }
 
 // scheduleJob handles scheduled job publishing
@@ -276,7 +285,7 @@ func (rq *RabbitMQ) scheduleJob(ctx context.Context, message amqp.Publishing, ru
 	// straight into the schedule queue. RabbitMQ expires messages only at the head of a queue,
 	// so a job with a long delay holds back jobs behind it that are due earlier.
 	message.Expiration = strconv.FormatInt(max(time.Until(runAt).Milliseconds(), 0), 10)
-	return rq.channel.PublishWithContext(
+	err := rq.channel.PublishWithContext(
 		ctx,
 		"",
 		rq.delayQueue,
@@ -284,6 +293,11 @@ func (rq *RabbitMQ) scheduleJob(ctx context.Context, message amqp.Publishing, ru
 		false,
 		message,
 	)
+	if err != nil {
+		return apperror.NewErrorf("publishing scheduled job to queue %s failed", rq.delayQueue).AddError(err)
+	}
+
+	return nil
 }
 
 // next returns the next message, waiting until the context is done. It returns
@@ -292,7 +306,7 @@ func (rq *RabbitMQ) next(ctx context.Context) (amqp.Delivery, error) {
 	if rq.prefetch > 0 {
 		deliveries, err := rq.consumer()
 		if err != nil {
-			return amqp.Delivery{}, err
+			return amqp.Delivery{}, apperror.NewError("starting consumer failed").AddError(err)
 		}
 		select {
 		case msg, ok := <-deliveries:
@@ -307,7 +321,7 @@ func (rq *RabbitMQ) next(ctx context.Context) (amqp.Delivery, error) {
 
 	msg, ok, err := rq.get()
 	if err != nil {
-		return amqp.Delivery{}, apperror.Wrap(err)
+		return amqp.Delivery{}, apperror.NewError("receiving job message failed").AddError(err)
 	}
 
 	// basic.get does not wait, so poll until the timeout. Start with short pauses so a job that
@@ -321,7 +335,7 @@ func (rq *RabbitMQ) next(ctx context.Context) (amqp.Delivery, error) {
 
 		msg, ok, err = rq.get()
 		if err != nil {
-			return amqp.Delivery{}, apperror.Wrap(err)
+			return amqp.Delivery{}, apperror.NewError("receiving job message failed").AddError(err)
 		}
 	}
 	return msg, nil
@@ -345,11 +359,11 @@ func (rq *RabbitMQ) consumer() (<-chan amqp.Delivery, error) {
 
 	err := rq.channel.Qos(rq.prefetch, 0, false)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("setting consumer prefetch failed").AddError(err)
 	}
 	deliveries, err := rq.channel.Consume(rq.queueName, "", false, false, false, false, nil)
 	if err != nil {
-		return nil, apperror.Wrap(err)
+		return nil, apperror.NewError("starting consumer failed").AddError(err)
 	}
 	rq.deliveries = deliveries
 	return deliveries, nil
@@ -366,7 +380,7 @@ func (rq *RabbitMQ) get() (amqp.Delivery, bool, error) {
 	}
 	msg, ok, err := rq.channel.Get(rq.queueName, false)
 	if err != nil {
-		return amqp.Delivery{}, false, apperror.Wrap(err)
+		return amqp.Delivery{}, false, apperror.NewError("getting message from queue failed").AddError(err)
 	}
 	return msg, ok, nil
 }
@@ -384,8 +398,8 @@ func (rq *RabbitMQ) Dequeue(ctx context.Context, timeout time.Duration) (*Job, e
 	var job Job
 	err = json.Unmarshal(msg.Body, &job)
 	if err != nil {
-		apperror.Handle(msg.Nack(false, false), "failed to nack message")
-		return nil, apperror.Wrap(err)
+		apperror.Catch(func() error { return msg.Nack(false, false) }, "nacking message failed")
+		return nil, apperror.NewError("unmarshaling job failed").AddError(err)
 	}
 
 	job.Status = StatusRunning
@@ -425,16 +439,21 @@ func (rq *RabbitMQ) UpdateJob(_ context.Context, job *Job) error {
 		if deliveryTagStr, exists := job.Metadata["delivery_tag"]; exists {
 			deliveryTag, err := strconv.ParseUint(deliveryTagStr, 10, 64)
 			if err == nil {
+				var settleErr error
 				switch job.Status {
 				case StatusCompleted:
-					return rq.channel.Ack(deliveryTag, false)
+					settleErr = rq.channel.Ack(deliveryTag, false)
 				case StatusFailed:
 					if job.Attempts >= job.MaxAttempts {
-						return rq.channel.Ack(deliveryTag, false)
+						settleErr = rq.channel.Ack(deliveryTag, false)
+						break
 					}
-					return rq.channel.Nack(deliveryTag, false, true)
+					settleErr = rq.channel.Nack(deliveryTag, false, true)
 				case StatusRetrying:
-					return rq.channel.Nack(deliveryTag, false, true)
+					settleErr = rq.channel.Nack(deliveryTag, false, true)
+				}
+				if settleErr != nil {
+					return apperror.NewErrorf("settling delivery of job %s failed", job.ID).AddError(settleErr)
 				}
 			}
 		}
@@ -518,9 +537,11 @@ func (rq *RabbitMQ) GetStats(_ context.Context) (*Stats, error) {
 	rq.finished.addTo(stats)
 
 	queueInfo, err := rq.channel.QueueDeclarePassive(rq.queueName, true, false, false, false, nil)
-	if err == nil {
-		stats.QueueSize = int64(queueInfo.Messages)
+	if err != nil {
+		logger.Debug().Err(err).Msg("reading queue size failed")
+		return stats, nil
 	}
+	stats.QueueSize = int64(queueInfo.Messages)
 
 	return stats, nil
 }
@@ -601,13 +622,13 @@ func (rq *RabbitMQ) Reconnect(config RabbitMQConfig) error {
 	}
 	conn, err := amqp.Dial(url)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("connecting to rabbitmq failed").AddError(err)
 	}
 
 	channel, err := conn.Channel()
 	if err != nil {
-		apperror.Handle(conn.Close(), "failed to close connection")
-		return apperror.Wrap(err)
+		apperror.Catch(conn.Close, "closing connection failed")
+		return apperror.NewError("opening rabbitmq channel failed").AddError(err)
 	}
 
 	// The broker may have lost the queues: an AutoDelete queue is deleted with its last
@@ -615,9 +636,9 @@ func (rq *RabbitMQ) Reconnect(config RabbitMQConfig) error {
 	// is harmless when they still exist.
 	err = declareTopology(channel, rq.topology)
 	if err != nil {
-		apperror.Handle(channel.Close(), "failed to close channel")
-		apperror.Handle(conn.Close(), "failed to close connection")
-		return apperror.Wrap(err)
+		apperror.Catch(channel.Close, "closing channel failed")
+		apperror.Catch(conn.Close, "closing connection failed")
+		return apperror.NewError("declaring rabbitmq topology failed").AddError(err)
 	}
 
 	rq.conn = conn
@@ -642,12 +663,12 @@ func (rq *RabbitMQ) PurgeQueue(_ context.Context) error {
 
 	_, err := rq.channel.QueuePurge(rq.queueName, false)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("purging queue %s failed", rq.queueName).AddError(err)
 	}
 	// Scheduled jobs that have not come due yet are part of the queue
 	_, err = rq.channel.QueuePurge(rq.delayQueue, false)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("purging queue %s failed", rq.delayQueue).AddError(err)
 	}
 
 	rq.jobsMutex.Lock()

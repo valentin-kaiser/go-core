@@ -54,54 +54,39 @@ func NewSecurityManager(config SecurityConfig) *SecurityManager {
 		mutex:        sync.RWMutex{},
 	}
 
-	// Parse IP allowlist
-	for _, ipStr := range config.IPAllowlist {
-		_, parsedNetwork, parseErr := net.ParseCIDR(ipStr)
-		if parseErr == nil {
-			sm.allowedNetworks = append(sm.allowedNetworks, parsedNetwork)
-			continue
-		}
-
-		ip := net.ParseIP(ipStr)
-		if ip == nil {
-			continue
-		}
-
-		// Single IP address - convert to /32 or /128 network
-		var network *net.IPNet
-		_, network, _ = net.ParseCIDR(ipStr + "/128") // Default to IPv6
-		if ip.To4() != nil {
-			_, network, _ = net.ParseCIDR(ipStr + "/32") // Override for IPv4
-		}
-		sm.allowedNetworks = append(sm.allowedNetworks, network)
-	}
-
-	// Parse IP blocklist
-	for _, ipStr := range config.IPBlocklist {
-		_, blockNetwork, blockErr := net.ParseCIDR(ipStr)
-		if blockErr == nil {
-			sm.blockedNetworks = append(sm.blockedNetworks, blockNetwork)
-			continue
-		}
-
-		ip := net.ParseIP(ipStr)
-		if ip == nil {
-			continue
-		}
-
-		// Single IP address - convert to /32 or /128 network
-		var network *net.IPNet
-		_, network, _ = net.ParseCIDR(ipStr + "/128") // Default to IPv6
-		if ip.To4() != nil {
-			_, network, _ = net.ParseCIDR(ipStr + "/32") // Override for IPv4
-		}
-		sm.blockedNetworks = append(sm.blockedNetworks, network)
-	}
+	sm.allowedNetworks = parseNetworks(config.IPAllowlist)
+	sm.blockedNetworks = parseNetworks(config.IPBlocklist)
 
 	// Start cleanup goroutine
 	go sm.cleanup()
 
 	return sm
+}
+
+// parseNetworks converts CIDR notations and single IP addresses to networks and skips invalid entries.
+func parseNetworks(entries []string) []*net.IPNet {
+	networks := make([]*net.IPNet, 0, len(entries))
+	for _, entry := range entries {
+		_, network, err := net.ParseCIDR(entry)
+		if err == nil {
+			networks = append(networks, network)
+			continue
+		}
+
+		ip := net.ParseIP(entry)
+		if ip == nil {
+			logger.Warn().Err(err).Field("entry", entry).Msg("ignoring invalid ip entry")
+			continue
+		}
+
+		// Single IP address - convert to a /32 or /128 network
+		if ip4 := ip.To4(); ip4 != nil {
+			networks = append(networks, &net.IPNet{IP: ip4, Mask: net.CIDRMask(32, 32)})
+			continue
+		}
+		networks = append(networks, &net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)})
+	}
+	return networks
 }
 
 // ValidateConnection checks if a connection from the given IP is allowed
@@ -116,7 +101,7 @@ func (sm *SecurityManager) ValidateConnection(remoteAddr string) error {
 		if sm.config.LogSecurityEvents {
 			logger.Warn().Field("remote_addr", remoteAddr).Msg("invalid IP address in connection")
 		}
-		return &SecurityError{Type: "invalid_ip", Message: "invalid IP address"}
+		return &SecurityError{Type: "invalid_ip", Message: "invalid ip address"}
 	}
 
 	sm.mutex.Lock()
@@ -127,7 +112,7 @@ func (sm *SecurityManager) ValidateConnection(remoteAddr string) error {
 		if sm.config.LogSecurityEvents {
 			logger.Warn().Field("ip", ip.String()).Msg("connection blocked - IP in blocklist")
 		}
-		return &SecurityError{Type: "ip_blocked", Message: "IP address is blocked"}
+		return &SecurityError{Type: "ip_blocked", Message: "ip address is blocked"}
 	}
 
 	// Check if IP is in allowlist (if allowlist is configured)
@@ -135,7 +120,7 @@ func (sm *SecurityManager) ValidateConnection(remoteAddr string) error {
 		if sm.config.LogSecurityEvents {
 			logger.Warn().Field("ip", ip.String()).Msg("connection denied - IP not in allowlist")
 		}
-		return &SecurityError{Type: "ip_not_allowed", Message: "IP address is not allowed"}
+		return &SecurityError{Type: "ip_not_allowed", Message: "ip address is not allowed"}
 	}
 
 	// Check connection limits per IP
@@ -158,7 +143,7 @@ func (sm *SecurityManager) ValidateConnection(remoteAddr string) error {
 			if sm.config.LogSecurityEvents {
 				logger.Warn().Field("ip", ip.String()).Msg("connection blocked due to authentication failures")
 			}
-			return &SecurityError{Type: "auth_blocked", Message: "IP temporarily blocked due to authentication failures"}
+			return &SecurityError{Type: "auth_blocked", Message: "ip temporarily blocked due to authentication failures"}
 		}
 
 		// Reset auth failure tracking after window expires
@@ -195,7 +180,7 @@ func (sm *SecurityManager) ValidateHelo(hostname, remoteAddr string) error {
 		if sm.config.LogSecurityEvents {
 			logger.Warn().Field("ip", host).Msg("empty HELO hostname")
 		}
-		return &SecurityError{Type: "empty_helo", Message: "HELO hostname cannot be empty"}
+		return &SecurityError{Type: "empty_helo", Message: "helo hostname cannot be empty"}
 	}
 
 	// Check for FQDN requirement
@@ -204,7 +189,7 @@ func (sm *SecurityManager) ValidateHelo(hostname, remoteAddr string) error {
 			if sm.config.LogSecurityEvents {
 				logger.Warn().Field("ip", host).Field("hostname", hostname).Msg("invalid FQDN in HELO")
 			}
-			return &SecurityError{Type: "invalid_fqdn", Message: "HELO hostname must be a valid FQDN"}
+			return &SecurityError{Type: "invalid_fqdn", Message: "helo hostname must be a valid FQDN"}
 		}
 	}
 
@@ -219,7 +204,7 @@ func (sm *SecurityManager) ValidateHelo(hostname, remoteAddr string) error {
 			if sm.config.LogSecurityEvents {
 				logger.Warn().Field("ip", host).Field("hostname", hostname).Err(lookupErr).Msg("DNS resolution failed for HELO hostname")
 			}
-			return &SecurityError{Type: "dns_resolution_failed", Message: "HELO hostname cannot be resolved"}
+			return &SecurityError{Type: "dns_resolution_failed", Message: "helo hostname cannot be resolved"}
 		}
 	}
 
@@ -262,7 +247,7 @@ func (sm *SecurityManager) CheckRateLimit(remoteAddr string) error {
 		if sm.config.LogSecurityEvents {
 			logger.Warn().Field("ip", host).Msg("rate limit exceeded")
 		}
-		return &SecurityError{Type: "rate_limit", Message: "Rate limit exceeded"}
+		return &SecurityError{Type: "rate_limit", Message: "rate limit exceeded"}
 	}
 
 	return nil

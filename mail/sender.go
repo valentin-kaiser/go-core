@@ -36,27 +36,27 @@ func NewSMTPSender(config ClientConfig, templateManager *TemplateManager) Sender
 // Send sends an email message via SMTP
 func (s *smtpSender) Send(ctx context.Context, message *Message) error {
 	if !s.config.Enabled {
-		return apperror.NewError("SMTP sender is disabled")
+		return apperror.NewError("smtp sender is disabled")
 	}
 
 	// Validate message
 	err := s.validateMessage(message)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("validating message %s failed", message.ID).AddError(err)
 	}
 
 	// Process template if specified
 	if s.templateManager != nil && s.templateManager.config.Enabled {
 		err = s.processTemplate(message)
 		if err != nil {
-			return apperror.Wrap(err)
+			return apperror.NewErrorf("processing template of message %s failed", message.ID).AddError(err)
 		}
 	}
 
 	// Create email using internal email package
 	emailMsg, err := s.createEmail(message)
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewErrorf("creating email for message %s failed", message.ID).AddError(err)
 	}
 
 	// Send with retries
@@ -77,14 +77,14 @@ func (s *smtpSender) Send(ctx context.Context, message *Message) error {
 			return nil
 		}
 
-		logger.Error().Err(err).Field("attempt", attempt).Field("message_id", message.ID).Msg("failed to send email via SMTP")
-
 		if attempt == s.config.MaxRetries {
 			break
 		}
+
+		logger.Warn().Err(err).Field("attempt", attempt).Field("message_id", message.ID).Msg("sending email via SMTP failed")
 	}
 
-	return apperror.NewError("failed to send email after retries").AddError(err)
+	return apperror.NewError("sending email after retries failed").AddError(err)
 }
 
 // SendAsync is not implemented for SMTP sender (handled by manager)
@@ -118,7 +118,7 @@ func (s *smtpSender) processTemplate(message *Message) error {
 	}
 
 	if err != nil {
-		return apperror.Wrap(err)
+		return apperror.NewError("rendering message template failed").AddError(err)
 	}
 
 	return nil
@@ -181,7 +181,7 @@ func (s *smtpSender) createEmail(message *Message) (*email.Email, error) {
 	for _, attachment := range message.Attachments {
 		err := s.addAttachment(emailMsg, attachment)
 		if err != nil {
-			return nil, apperror.Wrap(err)
+			return nil, apperror.NewErrorf("adding attachment %s failed", attachment.Filename).AddError(err)
 		}
 	}
 
@@ -205,7 +205,7 @@ func (s *smtpSender) addAttachment(emailMsg *email.Email, attachment Attachment)
 		// Inline attachment with Content-ID for HTML embedding
 		a, err := emailMsg.Attach(reader, attachment.Filename, attachment.ContentType)
 		if err != nil {
-			return err
+			return apperror.NewErrorf("attaching inline file %s failed", attachment.Filename).AddError(err)
 		}
 		// Set Content-ID header for inline attachments
 		a.Header.Set("Content-ID", fmt.Sprintf("<%s>", attachment.ContentID))
@@ -214,7 +214,11 @@ func (s *smtpSender) addAttachment(emailMsg *email.Email, attachment Attachment)
 	}
 
 	_, err := emailMsg.Attach(reader, attachment.Filename, attachment.ContentType)
-	return err
+	if err != nil {
+		return apperror.NewErrorf("attaching file %s failed", attachment.Filename).AddError(err)
+	}
+
+	return nil
 }
 
 // sendEmail sends the email using the appropriate method

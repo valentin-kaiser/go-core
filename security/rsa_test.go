@@ -379,7 +379,10 @@ func BenchmarkRSACipher_Verify_2048(b *testing.B) {
 	cipher := security.NewRSACipher()
 	cipher.GenerateKeyPair(2048)
 	testData := []byte("Benchmark test message for RSA verification")
-	signature, _ := cipher.Sign(testData)
+	signature, err := cipher.Sign(testData)
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -408,7 +411,10 @@ func BenchmarkRSACipher_Verify_4096(b *testing.B) {
 	cipher := security.NewRSACipher()
 	cipher.GenerateKeyPair(4096)
 	testData := []byte("Benchmark test message for RSA verification")
-	signature, _ := cipher.Sign(testData)
+	signature, err := cipher.Sign(testData)
+	if err != nil {
+		b.Fatal(err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {

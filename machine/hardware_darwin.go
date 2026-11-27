@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+
+	"github.com/valentin-kaiser/go-core/apperror"
 )
 
 // collectHardwareIdentifiersWithOptions gathers macOS-specific hardware identifiers based on generator config
 func collectHardwareIdentifiersWithOptions(g *generator) ([]string, error) {
 	if g == nil {
-		return nil, fmt.Errorf("generator cannot be nil")
+		return nil, apperror.NewError("generator cannot be nil")
 	}
 
 	var collectors []func() []string
@@ -110,7 +112,7 @@ func extractMacOSValue(output, key string) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("%s not found in output", key)
+	return "", apperror.NewErrorf("%s not found in output", key)
 }
 
 // getMacOSHardwareUUIDIOReg retrieves hardware UUID using ioreg as fallback
@@ -134,7 +136,7 @@ func getMacOSHardwareUUIDIOReg() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("hardware UUID not found in ioreg output")
+	return "", apperror.NewError("hardware UUID not found in ioreg output")
 }
 
 // getMacOSSerialNumber retrieves system serial number
@@ -171,7 +173,7 @@ func getMacOSSerialNumberIOReg() (string, error) {
 		}
 	}
 
-	return "", fmt.Errorf("serial number not found in ioreg output")
+	return "", apperror.NewError("serial number not found in ioreg output")
 }
 
 // getMacOSCPUInfo retrieves CPU information
@@ -200,7 +202,7 @@ func getMacOSMACAddresses() ([]string, error) {
 	cmd := exec.Command("ifconfig")
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, err
+		return nil, apperror.NewError("running ifconfig failed").AddError(err)
 	}
 
 	var macs []string
@@ -257,7 +259,7 @@ func getMacOSDiskInfoSystemProfiler() ([]string, error) {
 	cmd := exec.Command("system_profiler", "SPStorageDataType", "-json")
 	output, err := cmd.Output()
 	if err != nil {
-		return nil, err
+		return nil, apperror.NewError("running system_profiler failed").AddError(err)
 	}
 
 	var diskInfo []string
