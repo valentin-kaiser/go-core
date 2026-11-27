@@ -309,7 +309,6 @@ func (b *Bundle) loadJSON(lang Language, data []byte) error {
 // Option configures a Bundle during creation.
 type Option func(*Bundle) error
 
-
 // WithFS loads translation files from an embed.FS (or any fs.FS). It scans the
 // given directory for JSON files named by language code (e.g. "en.json",
 // "fr.json", "ja.json") and loads each one automatically. Any language is
@@ -361,6 +360,7 @@ func WithMap(lang Language, translations map[string]string) Option {
 		return nil
 	}
 }
+
 // Supported returns all languages that have translations loaded in the global
 // default bundle. If no translations have been loaded yet the list may be empty.
 func Supported() []Language {

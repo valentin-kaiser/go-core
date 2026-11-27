@@ -54,7 +54,7 @@ type method struct {
 	in, out reflect.Type // pointer-to-message types
 }
 
-func (m *method) newIn() proto.Message  { return newMessage(m.in) }
+func (m *method) newIn() proto.Message { return newMessage(m.in) }
 
 func (m *method) newOut() proto.Message { return newMessage(m.out) }
 
