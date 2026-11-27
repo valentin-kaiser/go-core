@@ -9,16 +9,23 @@ import (
 	"github.com/valentin-kaiser/go-core/security"
 )
 
+const (
+	rsaTestKeyBits     = 2048
+	rsaLargeKeyBits    = 4096
+	rsaTooSmallKeyBits = 1024
+	rsaTestPassphrase  = "test-passphrase-123"
+)
+
 func TestRSACipher_GenerateKeyPair(t *testing.T) {
 	tests := []struct {
 		name    string
 		bits    int
 		wantErr bool
 	}{
-		{"2048 bits", 2048, false},
-		{"3072 bits", 3072, false},
-		{"4096 bits", 4096, false},
-		{"too small", 1024, true},
+		{name: "2048 bits", bits: 2048, wantErr: false},
+		{name: "3072 bits", bits: 3072, wantErr: false},
+		{name: "4096 bits", bits: 4096, wantErr: false},
+		{name: "too small", bits: 1024, wantErr: true},
 	}
 
 	for _, tt := range tests {
@@ -55,7 +62,7 @@ func TestRSACipher_GenerateKeyPair(t *testing.T) {
 
 func TestRSACipher_SignAndVerify(t *testing.T) {
 	cipher := security.NewRSACipher()
-	cipher.GenerateKeyPair(2048)
+	cipher.GenerateKeyPair(rsaTestKeyBits)
 
 	if cipher.Error != nil {
 		t.Fatalf("failed to generate key pair: %v", cipher.Error)
@@ -111,7 +118,7 @@ func TestRSACipher_SignAndVerify(t *testing.T) {
 
 func TestRSACipher_EncryptAndDecrypt(t *testing.T) {
 	cipher := security.NewRSACipher()
-	cipher.GenerateKeyPair(2048)
+	cipher.GenerateKeyPair(rsaTestKeyBits)
 
 	if cipher.Error != nil {
 		t.Fatalf("failed to generate key pair: %v", cipher.Error)
@@ -143,7 +150,7 @@ func TestRSACipher_EncryptAndDecrypt(t *testing.T) {
 func TestRSACipher_ExportAndLoadKeys(t *testing.T) {
 	// Generate a key pair
 	cipher := security.NewRSACipher()
-	cipher.GenerateKeyPair(2048)
+	cipher.GenerateKeyPair(rsaTestKeyBits)
 
 	if cipher.Error != nil {
 		t.Fatalf("failed to generate key pair: %v", cipher.Error)
@@ -195,11 +202,11 @@ func TestRSACipher_ExportAndLoadKeys(t *testing.T) {
 }
 
 func TestRSACipher_ExportAndLoadKeysWithPassphrase(t *testing.T) {
-	passphrase := []byte("test-passphrase-123")
+	passphrase := []byte(rsaTestPassphrase)
 
 	// Generate a key pair
 	cipher := security.NewRSACipher()
-	cipher.GenerateKeyPair(2048)
+	cipher.GenerateKeyPair(rsaTestKeyBits)
 
 	if cipher.Error != nil {
 		t.Fatalf("failed to generate key pair: %v", cipher.Error)
@@ -253,7 +260,7 @@ func TestRSACipher_SaveAndLoadFromFile(t *testing.T) {
 
 	// Generate and save keys
 	cipher := security.NewRSACipher()
-	cipher.GenerateKeyPair(2048)
+	cipher.GenerateKeyPair(rsaTestKeyBits)
 
 	if cipher.Error != nil {
 		t.Fatalf("failed to generate key pair: %v", cipher.Error)
@@ -315,7 +322,7 @@ func TestRSACipher_SaveAndLoadFromFile(t *testing.T) {
 func TestRSACipher_ErrorChaining(t *testing.T) {
 	// Test error propagation in chained calls
 	cipher := security.NewRSACipher()
-	cipher.GenerateKeyPair(1024) // This should fail (too small)
+	cipher.GenerateKeyPair(rsaTooSmallKeyBits) // This should fail (too small)
 
 	if cipher.Error == nil {
 		t.Fatal("expected error for small key size")
@@ -363,7 +370,10 @@ func TestRSACipher_NoKeyLoaded(t *testing.T) {
 
 func BenchmarkRSACipher_Sign_2048(b *testing.B) {
 	cipher := security.NewRSACipher()
-	cipher.GenerateKeyPair(2048)
+	cipher.GenerateKeyPair(rsaTestKeyBits)
+	if cipher.Error != nil {
+		b.Fatalf("generating key pair failed: %v", cipher.Error)
+	}
 	testData := []byte("Benchmark test message for RSA signing")
 
 	b.ResetTimer()
@@ -377,7 +387,10 @@ func BenchmarkRSACipher_Sign_2048(b *testing.B) {
 
 func BenchmarkRSACipher_Verify_2048(b *testing.B) {
 	cipher := security.NewRSACipher()
-	cipher.GenerateKeyPair(2048)
+	cipher.GenerateKeyPair(rsaTestKeyBits)
+	if cipher.Error != nil {
+		b.Fatalf("generating key pair failed: %v", cipher.Error)
+	}
 	testData := []byte("Benchmark test message for RSA verification")
 	signature, err := cipher.Sign(testData)
 	if err != nil {
@@ -395,7 +408,10 @@ func BenchmarkRSACipher_Verify_2048(b *testing.B) {
 
 func BenchmarkRSACipher_Sign_4096(b *testing.B) {
 	cipher := security.NewRSACipher()
-	cipher.GenerateKeyPair(4096)
+	cipher.GenerateKeyPair(rsaLargeKeyBits)
+	if cipher.Error != nil {
+		b.Fatalf("generating key pair failed: %v", cipher.Error)
+	}
 	testData := []byte("Benchmark test message for RSA signing")
 
 	b.ResetTimer()
@@ -409,7 +425,10 @@ func BenchmarkRSACipher_Sign_4096(b *testing.B) {
 
 func BenchmarkRSACipher_Verify_4096(b *testing.B) {
 	cipher := security.NewRSACipher()
-	cipher.GenerateKeyPair(4096)
+	cipher.GenerateKeyPair(rsaLargeKeyBits)
+	if cipher.Error != nil {
+		b.Fatalf("generating key pair failed: %v", cipher.Error)
+	}
 	testData := []byte("Benchmark test message for RSA verification")
 	signature, err := cipher.Sign(testData)
 	if err != nil {
@@ -429,7 +448,7 @@ func BenchmarkRSACipher_GenerateKeyPair_2048(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		cipher := security.NewRSACipher()
-		cipher.GenerateKeyPair(2048)
+		cipher.GenerateKeyPair(rsaTestKeyBits)
 		if cipher.Error != nil {
 			b.Fatal(cipher.Error)
 		}
@@ -440,7 +459,7 @@ func BenchmarkRSACipher_GenerateKeyPair_4096(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		cipher := security.NewRSACipher()
-		cipher.GenerateKeyPair(4096)
+		cipher.GenerateKeyPair(rsaLargeKeyBits)
 		if cipher.Error != nil {
 			b.Fatal(cipher.Error)
 		}

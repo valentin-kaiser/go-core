@@ -22,7 +22,10 @@ func BenchmarkWrapChain8(b *testing.B) {
 	base := errors.New("base")
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = wrapChain(8, base)
+		err := wrapChain(8, base)
+		if err == nil {
+			b.Fatal("wrapChain() = nil, want an error")
+		}
 	}
 }
 
@@ -30,7 +33,10 @@ func BenchmarkNewErrorAddErrorWrap(b *testing.B) {
 	base := errors.New("base")
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = apperror.Wrap(apperror.NewError("insert failed").AddError(base))
+		err := apperror.Wrap(apperror.NewError("insert failed").AddError(base))
+		if err == nil {
+			b.Fatal("Wrap() = nil, want an error")
+		}
 	}
 }
 

@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/mail"
 	"github.com/valentin-kaiser/go-core/queue"
 )
@@ -144,7 +143,6 @@ func TestTemplateManagerWithFS(t *testing.T) {
 func TestTemplateManagerWithFileServer(t *testing.T) {
 	// Create a temporary directory with a test template
 	tempDir := t.TempDir()
-	defer apperror.Catch(func() error { return os.RemoveAll(tempDir) }, "failed to remove temp dir")
 
 	// Create a test template file
 	templateContent := `<html><body><h1>{{.Subject}}</h1><p>{{.Message}}</p></body></html>`
@@ -202,7 +200,7 @@ func TestTemplateManagerWithFileServer(t *testing.T) {
 func TestSMTPSender(t *testing.T) {
 	config := mail.ClientConfig{
 		Host:       "localhost",
-		Port:       587,
+		Port:       submissionPort,
 		From:       "sender@example.com",
 		Auth:       false,
 		Encryption: "NONE",
@@ -261,10 +259,10 @@ func TestPriorityString(t *testing.T) {
 		priority mail.Priority
 		expected string
 	}{
-		{mail.PriorityLow, "low"},
-		{mail.PriorityNormal, "normal"},
-		{mail.PriorityHigh, "high"},
-		{mail.PriorityCritical, "critical"},
+		{priority: mail.PriorityLow, expected: "low"},
+		{priority: mail.PriorityNormal, expected: "normal"},
+		{priority: mail.PriorityHigh, expected: "high"},
+		{priority: mail.PriorityCritical, expected: "critical"},
 	}
 
 	for _, test := range tests {
@@ -495,7 +493,7 @@ func TestManagerAddNotificationHandler(t *testing.T) {
 func TestSenderValidation(t *testing.T) {
 	config := mail.ClientConfig{
 		Host:       "localhost",
-		Port:       587,
+		Port:       submissionPort,
 		From:       "",
 		Auth:       false,
 		Encryption: "NONE",
@@ -549,7 +547,7 @@ func TestSenderValidation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			// Use a short timeout context to avoid long waits for network connection
-			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 			defer cancel()
 
 			err := sender.Send(ctx, tt.message)
@@ -870,9 +868,9 @@ func TestSMTPSenderWithPerMessageTemplateFuncs(t *testing.T) {
 
 	config := mail.ClientConfig{
 		Enabled:    true, // Enable the SMTP sender
-		Host:       "smtp.example.com",
-		Port:       587,
-		From:       "sender@example.com",
+		Host:       smtpTestHost,
+		Port:       submissionPort,
+		From:       testSenderAddress,
 		MaxRetries: 0, // Disable retries for faster test
 	}
 
@@ -903,8 +901,8 @@ func TestSMTPSenderWithPerMessageTemplateFuncs(t *testing.T) {
 
 	// Create message using the basic template but test via direct rendering
 	message := &mail.Message{
-		From:     "sender@example.com",
-		To:       []string{"recipient@example.com"},
+		From:     testSenderAddress,
+		To:       []string{testRecipientAddress},
 		Subject:  "Test Subject",
 		Template: "permsg.html", // Use the basic template for SMTP flow
 		TemplateData: map[string]string{
@@ -918,7 +916,7 @@ func TestSMTPSenderWithPerMessageTemplateFuncs(t *testing.T) {
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
 
 	// This will fail due to network, but template processing should work

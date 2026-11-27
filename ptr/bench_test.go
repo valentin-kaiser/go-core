@@ -19,6 +19,8 @@ func BenchmarkDeref(b *testing.B) {
 	v := 1
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = ptr.Deref(&v)
+		if ptr.Deref(&v) != v {
+			b.Fatal("Deref changed the value")
+		}
 	}
 }

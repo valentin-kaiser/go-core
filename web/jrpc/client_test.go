@@ -18,7 +18,24 @@ import (
 	"google.golang.org/protobuf/types/known/emptypb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
+	"github.com/valentin-kaiser/go-core/internal/await"
 	"github.com/valentin-kaiser/go-core/web/jrpc"
+)
+
+const (
+	testMethodPath      = "/TestService/TestMethod"
+	nilArgumentURL      = "http://localhost:8080" + testMethodPath
+	closedPortURL       = "http://localhost:1" + testMethodPath
+	jsonContentType     = "application/json"
+	emptyJSONBody       = "{}"
+	clientTimeout       = 50 * time.Millisecond
+	cancelTimeout       = 100 * time.Millisecond
+	streamTimeout       = 2 * time.Second
+	serverReadDeadline  = 5 * time.Second
+	handlerWaitTimeout  = 5 * time.Second
+	dialerStreamTimeout = 500 * time.Millisecond
+	streamMessageCount  = 3
+	serverStreamCount   = 2
 )
 
 // Test-specific marshal/unmarshal options
@@ -63,29 +80,28 @@ func TestNewClient(t *testing.T) {
 // TestClientWithTimeout verifies that custom timeout option works
 func TestClientWithTimeout(t *testing.T) {
 	// Create a test server that delays response beyond the timeout
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(200 * time.Millisecond)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("{}"))
-		if err != nil {
-			t.Errorf("writing response failed: %v", err)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		// The client gives up first; the handler only has to outlive that.
+		select {
+		case <-r.Context().Done():
+		case <-release:
 		}
 	}))
 	defer server.Close()
+	defer close(release)
 
 	// Create a client with a short timeout
-	customTimeout := 50 * time.Millisecond
-	customClient := &http.Client{Timeout: customTimeout}
+	customClient := &http.Client{Timeout: clientTimeout}
 	client := jrpc.NewClient(jrpc.WithClient(customClient))
 
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
 
-	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	u := mustParseURL(t, server.URL+testMethodPath)
 	err := client.Call(context.Background(), u, req, resp, nil)
 
-	// Should timeout because server takes 200ms but client timeout is 50ms
+	// Should time out because the server never responds
 	if err == nil {
 		t.Fatal("expected timeout error, got nil")
 	}
@@ -97,20 +113,20 @@ func TestClientWithTimeout(t *testing.T) {
 // TestClientWithHTTPClient verifies that custom HTTP client option works
 func TestClientWithHTTPClient(t *testing.T) {
 	// Create a test server with a slow response
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(200 * time.Millisecond)
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("{}"))
-		if err != nil {
-			t.Errorf("writing response failed: %v", err)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		// The client gives up first; the handler only has to outlive that.
+		select {
+		case <-r.Context().Done():
+		case <-release:
 		}
 	}))
 	defer server.Close()
+	defer close(release)
 
 	// Create a custom HTTP client with a very short timeout
 	customClient := &http.Client{
-		Timeout: 50 * time.Millisecond,
+		Timeout: clientTimeout,
 	}
 
 	client := jrpc.NewClient(jrpc.WithClient(customClient))
@@ -118,11 +134,10 @@ func TestClientWithHTTPClient(t *testing.T) {
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
 
-	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	u := mustParseURL(t, server.URL+testMethodPath)
 	err := client.Call(context.Background(), u, req, resp, nil)
 
-	// Should timeout because the custom client has a 50ms timeout
-	// but the server takes 200ms to respond
+	// Should time out because the server never responds
 	if err == nil {
 		t.Fatal("expected timeout error from custom HTTP client, got nil")
 	}
@@ -140,9 +155,9 @@ func TestClientWithUserAgent(t *testing.T) {
 		if r.Header.Get("User-Agent") != customUserAgent {
 			t.Errorf("expected User-Agent %s, got %s", customUserAgent, r.Header.Get("User-Agent"))
 		}
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", jsonContentType)
 		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("{}"))
+		_, err := w.Write([]byte(emptyJSONBody))
 		if err != nil {
 			t.Errorf("writing response failed: %v", err)
 		}
@@ -154,7 +169,7 @@ func TestClientWithUserAgent(t *testing.T) {
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
 
-	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	u := mustParseURL(t, server.URL+testMethodPath)
 	err := client.Call(context.Background(), u, req, resp, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -165,7 +180,10 @@ func TestClientWithUserAgent(t *testing.T) {
 func TestClientWithMarshalOptions(t *testing.T) {
 	// Create a test server that inspects the request body to verify marshal options
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body, _ := io.ReadAll(r.Body)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("reading request body failed: %v", err)
+		}
 		bodyStr := string(body)
 
 		// With EmitUnpopulated: false, empty/zero fields should not be present
@@ -174,9 +192,9 @@ func TestClientWithMarshalOptions(t *testing.T) {
 			t.Errorf("expected minimal JSON with EmitUnpopulated:false, got: %s", bodyStr)
 		}
 
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", jsonContentType)
 		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("{}"))
+		_, err = w.Write([]byte(emptyJSONBody))
 		if err != nil {
 			t.Errorf("writing response failed: %v", err)
 		}
@@ -194,7 +212,7 @@ func TestClientWithMarshalOptions(t *testing.T) {
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
 
-	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	u := mustParseURL(t, server.URL+testMethodPath)
 	err := client.Call(context.Background(), u, req, resp, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -205,7 +223,7 @@ func TestClientWithMarshalOptions(t *testing.T) {
 func TestClientWithUnmarshalOptions(t *testing.T) {
 	// Create a test server that returns JSON with unknown fields
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", jsonContentType)
 		w.WriteHeader(http.StatusOK)
 		// Return JSON with an unknown field
 		_, err := w.Write([]byte(`{"unknownField": "value"}`))
@@ -226,7 +244,7 @@ func TestClientWithUnmarshalOptions(t *testing.T) {
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
 
-	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	u := mustParseURL(t, server.URL+testMethodPath)
 	err := client.Call(context.Background(), u, req, resp, nil)
 
 	// Should get an error because of unknown field and DiscardUnknown: false
@@ -248,17 +266,17 @@ func TestClientCall(t *testing.T) {
 		}
 
 		// Verify URL path
-		expectedPath := "/TestService/TestMethod"
+		expectedPath := testMethodPath
 		if r.URL.Path != expectedPath {
 			t.Errorf("expected path %s, got %s", expectedPath, r.URL.Path)
 		}
 
 		// Verify headers
-		if r.Header.Get("Content-Type") != "application/json" {
+		if r.Header.Get("Content-Type") != jsonContentType {
 			t.Errorf("expected Content-Type application/json, got %s", r.Header.Get("Content-Type"))
 		}
 
-		if r.Header.Get("Accept") != "application/json" {
+		if r.Header.Get("Accept") != jsonContentType {
 			t.Errorf("expected Accept application/json, got %s", r.Header.Get("Accept"))
 		}
 
@@ -268,9 +286,9 @@ func TestClientCall(t *testing.T) {
 		}
 
 		// Return a valid empty response
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", jsonContentType)
 		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("{}"))
+		_, err := w.Write([]byte(emptyJSONBody))
 		if err != nil {
 			t.Errorf("writing response failed: %v", err)
 		}
@@ -285,7 +303,7 @@ func TestClientCall(t *testing.T) {
 	resp := &emptypb.Empty{}
 
 	// Parse URL
-	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	u := mustParseURL(t, server.URL+testMethodPath)
 	err := client.Call(context.Background(), u, req, resp, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -303,9 +321,9 @@ func TestClientCallCustomUserAgent(t *testing.T) {
 			t.Errorf("expected User-Agent %s, got %s", customUserAgent, r.Header.Get("User-Agent"))
 		}
 
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", jsonContentType)
 		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("{}"))
+		_, err := w.Write([]byte(emptyJSONBody))
 		if err != nil {
 			t.Errorf("writing response failed: %v", err)
 		}
@@ -318,7 +336,7 @@ func TestClientCallCustomUserAgent(t *testing.T) {
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
 
-	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	u := mustParseURL(t, server.URL+testMethodPath)
 	err := client.Call(context.Background(), u, req, resp, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -330,7 +348,7 @@ func TestClientCallNilRequest(t *testing.T) {
 	client := jrpc.NewClient()
 
 	resp := &emptypb.Empty{}
-	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
+	u := mustParseURL(t, nilArgumentURL)
 	err := client.Call(context.Background(), u, nil, resp, nil)
 
 	if err == nil {
@@ -347,7 +365,7 @@ func TestClientCallNilResponse(t *testing.T) {
 	client := jrpc.NewClient()
 
 	req := &emptypb.Empty{}
-	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
+	u := mustParseURL(t, nilArgumentURL)
 	err := client.Call(context.Background(), u, req, nil, nil)
 
 	if err == nil {
@@ -376,7 +394,7 @@ func TestClientCallServerError(t *testing.T) {
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
 
-	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	u := mustParseURL(t, server.URL+testMethodPath)
 	err := client.Call(context.Background(), u, req, resp, nil)
 	if err == nil {
 		t.Fatal("expected error for server error response")
@@ -391,26 +409,26 @@ func TestClientCallServerError(t *testing.T) {
 // TestClientCallContextCancellation verifies that context cancellation works
 func TestClientCallContextCancellation(t *testing.T) {
 	// Create a test server that delays response
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		time.Sleep(2 * time.Second)
-		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("{}"))
-		if err != nil {
-			t.Errorf("writing response failed: %v", err)
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-r.Context().Done():
+		case <-release:
 		}
 	}))
 	defer server.Close()
+	defer close(release)
 
 	client := jrpc.NewClient()
 
 	// Create context with short timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), cancelTimeout)
 	defer cancel()
 
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
 
-	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	u := mustParseURL(t, server.URL+testMethodPath)
 	err := client.Call(ctx, u, req, resp, nil)
 	if err == nil {
 		t.Fatal("expected error for context timeout")
@@ -421,7 +439,7 @@ func TestClientCallContextCancellation(t *testing.T) {
 func TestClientCallInvalidJSON(t *testing.T) {
 	// Create a test server that returns invalid JSON
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", jsonContentType)
 		w.WriteHeader(http.StatusOK)
 		_, err := w.Write([]byte("not valid json"))
 		if err != nil {
@@ -435,7 +453,7 @@ func TestClientCallInvalidJSON(t *testing.T) {
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
 
-	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	u := mustParseURL(t, server.URL+testMethodPath)
 	err := client.Call(context.Background(), u, req, resp, nil)
 	if err == nil {
 		t.Fatal("expected error for invalid JSON response")
@@ -446,9 +464,9 @@ func TestClientCallInvalidJSON(t *testing.T) {
 func BenchmarkClientCall(b *testing.B) {
 	// Create a test server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", jsonContentType)
 		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("{}"))
+		_, err := w.Write([]byte(emptyJSONBody))
 		if err != nil {
 			b.Errorf("writing response failed: %v", err)
 		}
@@ -458,11 +476,14 @@ func BenchmarkClientCall(b *testing.B) {
 	client := jrpc.NewClient()
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
-	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	u := mustParseURL(b, server.URL+testMethodPath)
 
 	b.ResetTimer()
 	for b.Loop() {
-		_ = client.Call(context.Background(), u, req, resp, nil)
+		err := client.Call(context.Background(), u, req, resp, nil)
+		if err != nil {
+			b.Fatalf("calling method failed: %v", err)
+		}
 	}
 }
 
@@ -472,7 +493,7 @@ func TestClientServerStreamNilRequest(t *testing.T) {
 	out := make(chan *emptypb.Empty, 1)
 	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
 
-	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
+	u := mustParseURL(t, nilArgumentURL)
 	err := jrpc.ServerStream(client, context.Background(), u, nil, out, factory)
 	if err == nil {
 		t.Fatal("expected error for nil request")
@@ -485,7 +506,7 @@ func TestClientServerStreamNilChannel(t *testing.T) {
 	req := &emptypb.Empty{}
 	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
 
-	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
+	u := mustParseURL(t, nilArgumentURL)
 	err := jrpc.ServerStream(client, context.Background(), u, req, nil, factory)
 	if err == nil {
 		t.Fatal("expected error for nil output channel")
@@ -498,7 +519,7 @@ func TestClientServerStreamNilFactory(t *testing.T) {
 	req := &emptypb.Empty{}
 	out := make(chan *emptypb.Empty, 1)
 
-	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
+	u := mustParseURL(t, nilArgumentURL)
 	err := jrpc.ServerStream(client, context.Background(), u, req, out, nil)
 	if err == nil {
 		t.Fatal("expected error for nil response factory")
@@ -510,7 +531,7 @@ func TestClientClientStreamNilChannel(t *testing.T) {
 	client := jrpc.NewClient()
 	resp := &emptypb.Empty{}
 
-	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
+	u := mustParseURL(t, nilArgumentURL)
 	err := jrpc.ClientStream[*emptypb.Empty](client, context.Background(), u, nil, resp)
 	if err == nil {
 		t.Fatal("expected error for nil input channel")
@@ -522,40 +543,61 @@ func TestClientClientStreamNilResponse(t *testing.T) {
 	client := jrpc.NewClient()
 	in := make(chan *emptypb.Empty, 1)
 
-	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
+	u := mustParseURL(t, nilArgumentURL)
 	err := jrpc.ClientStream(client, context.Background(), u, in, nil)
 	if err == nil {
 		t.Fatal("expected error for nil response")
 	}
 }
 
-// TestClientBidirectionalStreamNilChannels verifies that nil channels return errors
-func TestClientBidirectionalStreamNilChannels(t *testing.T) {
+// TestClientBidirectionalStreamNilInputChannel verifies that nil input channel returns an error
+func TestClientBidirectionalStreamNilInputChannel(t *testing.T) {
 	client := jrpc.NewClient()
 	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
-	u, _ := url.Parse("http://localhost:8080/TestService/TestMethod")
-
-	// Test nil input channel
+	u := mustParseURL(t, nilArgumentURL)
 	out := make(chan *emptypb.Empty, 1)
+
 	err := jrpc.BidirectionalStream[*emptypb.Empty](client, context.Background(), u, nil, out, factory)
 	if err == nil {
 		t.Fatal("expected error for nil input channel")
 	}
+}
 
-	// Test nil output channel
+// TestClientBidirectionalStreamNilOutputChannel verifies that nil output channel returns an error
+func TestClientBidirectionalStreamNilOutputChannel(t *testing.T) {
+	client := jrpc.NewClient()
+	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
+	u := mustParseURL(t, nilArgumentURL)
 	in := make(chan *emptypb.Empty, 1)
-	err = jrpc.BidirectionalStream(client, context.Background(), u, in, nil, factory)
+
+	err := jrpc.BidirectionalStream(client, context.Background(), u, in, nil, factory)
 	if err == nil {
 		t.Fatal("expected error for nil output channel")
 	}
+}
 
-	// Test nil factory
-	in = make(chan *emptypb.Empty, 1)
-	out = make(chan *emptypb.Empty, 1)
-	err = jrpc.BidirectionalStream(client, context.Background(), u, in, out, nil)
+// TestClientBidirectionalStreamNilFactory verifies that nil factory returns an error
+func TestClientBidirectionalStreamNilFactory(t *testing.T) {
+	client := jrpc.NewClient()
+	u := mustParseURL(t, nilArgumentURL)
+	in := make(chan *emptypb.Empty, 1)
+	out := make(chan *emptypb.Empty, 1)
+
+	err := jrpc.BidirectionalStream(client, context.Background(), u, in, out, nil)
 	if err == nil {
 		t.Fatal("expected error for nil response factory")
 	}
+}
+
+// mustParseURL parses raw and fails the test if it is not a valid URL.
+func mustParseURL(tb testing.TB, raw string) *url.URL {
+	tb.Helper()
+
+	u, err := url.Parse(raw)
+	if err != nil {
+		tb.Fatalf("parsing url %q failed: %v", raw, err)
+	}
+	return u
 }
 
 // closeAndLog closes c and logs the error; a peer may already have closed the connection.
@@ -606,11 +648,16 @@ func TestClientServerStreamConnection(t *testing.T) {
 		}
 
 		// Send two messages to the client
-		for range 2 {
+		for range serverStreamCount {
 			msg := wrapperspb.String("message")
-			data, _ := testMarshalOpts.Marshal(msg)
-			err := conn.WriteMessage(websocket.TextMessage, data)
+			data, err := testMarshalOpts.Marshal(msg)
 			if err != nil {
+				t.Errorf("marshaling message failed: %v", err)
+				return
+			}
+			err = conn.WriteMessage(websocket.TextMessage, data)
+			if err != nil {
+				t.Errorf("writing message failed: %v", err)
 				return
 			}
 		}
@@ -629,7 +676,7 @@ func TestClientServerStreamConnection(t *testing.T) {
 	factory := func() *wrapperspb.StringValue { return &wrapperspb.StringValue{} }
 
 	req := &emptypb.Empty{}
-	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	u := mustParseURL(t, server.URL+testMethodPath)
 
 	// Start server stream in goroutine
 	errCh := make(chan error, 1)
@@ -654,8 +701,8 @@ func TestClientServerStreamConnection(t *testing.T) {
 	}
 
 	// Verify we received the expected messages
-	if messageCount != 2 {
-		t.Errorf("expected 2 messages, got %d", messageCount)
+	if messageCount != serverStreamCount {
+		t.Errorf("expected %d messages, got %d", serverStreamCount, messageCount)
 	}
 }
 
@@ -667,7 +714,7 @@ func TestClientServerStreamConnectionFailure(t *testing.T) {
 	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
 
 	req := &emptypb.Empty{}
-	u, _ := url.Parse("http://localhost:1/TestService/TestMethod")
+	u := mustParseURL(t, closedPortURL)
 
 	err := jrpc.ServerStream(client, context.Background(), u, req, out, factory)
 
@@ -682,11 +729,17 @@ func TestClientServerStreamConnectionFailure(t *testing.T) {
 // receiving a close frame. This test verifies that messages are sent and received properly,
 // even though the final response read may fail due to WebSocket protocol constraints.
 func TestClientClientStreamConnection(t *testing.T) {
-	messagesReceived := 0
-	responseSent := false
+	type serverResult struct {
+		messagesReceived int
+		responseSent     bool
+	}
+	finished := make(chan serverResult, 1)
 
 	// Create WebSocket server that accepts connection
 	server := newWSTestServer(t, func(conn *websocket.Conn) {
+		var result serverResult
+		defer func() { finished <- result }()
+
 		// Read messages from client
 		for {
 			msgType, data, err := conn.ReadMessage()
@@ -695,11 +748,13 @@ func TestClientClientStreamConnection(t *testing.T) {
 			if msgType == websocket.CloseMessage {
 				// Send response - this may or may not work due to WebSocket state
 				resp := wrapperspb.String("received")
-				respData, _ := testMarshalOpts.Marshal(resp)
-				err := conn.WriteMessage(websocket.TextMessage, respData)
-				if err == nil {
-					responseSent = true
+				respData, err := testMarshalOpts.Marshal(resp)
+				if err != nil {
+					t.Errorf("failed to marshal response: %v", err)
+					return
 				}
+				err = conn.WriteMessage(websocket.TextMessage, respData)
+				result.responseSent = err == nil
 				return
 			}
 
@@ -715,17 +770,17 @@ func TestClientClientStreamConnection(t *testing.T) {
 				t.Errorf("failed to unmarshal message: %v", err)
 				return
 			}
-			messagesReceived++
+			result.messagesReceived++
 		}
 	})
 	defer server.Close()
 
 	// Create client and test client streaming
 	client := jrpc.NewClient()
-	in := make(chan *wrapperspb.StringValue, 10)
+	in := make(chan *wrapperspb.StringValue, streamMessageCount)
 	resp := &wrapperspb.StringValue{}
 
-	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	u := mustParseURL(t, server.URL+testMethodPath)
 
 	// Start client stream in goroutine
 	errCh := make(chan error, 1)
@@ -734,7 +789,7 @@ func TestClientClientStreamConnection(t *testing.T) {
 	}()
 
 	// Send messages through input channel
-	for range 3 {
+	for range streamMessageCount {
 		in <- wrapperspb.String("test message")
 	}
 	close(in)
@@ -748,17 +803,16 @@ func TestClientClientStreamConnection(t *testing.T) {
 		t.Fatalf("unexpected error from ClientStream: %v", err)
 	}
 
-	// Give server time to finish
-	time.Sleep(50 * time.Millisecond)
+	result := await.Receive(t, finished, handlerWaitTimeout, "the server handler to finish")
 
 	// Verify server received messages
-	if messagesReceived != 3 {
-		t.Errorf("expected server to receive 3 messages, got %d", messagesReceived)
+	if result.messagesReceived != streamMessageCount {
+		t.Errorf("expected server to receive %d messages, got %d", streamMessageCount, result.messagesReceived)
 	}
 
 	// Note: We don't verify the response because WebSocket close frame protocol
 	// makes it unreliable. Full end-to-end testing should be done with generated code.
-	t.Logf("Server received %d messages, response sent: %v", messagesReceived, responseSent)
+	t.Logf("Server received %d messages, response sent: %v", result.messagesReceived, result.responseSent)
 }
 
 // TestClientClientStreamConnectionFailure tests WebSocket connection failures
@@ -768,7 +822,7 @@ func TestClientClientStreamConnectionFailure(t *testing.T) {
 	in := make(chan *wrapperspb.StringValue, 1)
 
 	resp := &wrapperspb.StringValue{}
-	u, _ := url.Parse("http://localhost:1/TestService/TestMethod")
+	u := mustParseURL(t, closedPortURL)
 	err := jrpc.ClientStream(client, context.Background(), u, in, resp)
 
 	// Should get connection error
@@ -784,7 +838,7 @@ func TestClientBidirectionalStreamConnection(t *testing.T) {
 	// Create WebSocket server that echoes messages back
 	server := newWSTestServer(t, func(conn *websocket.Conn) {
 		// Set a deadline to avoid hanging
-		err := conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+		err := conn.SetReadDeadline(time.Now().Add(serverReadDeadline))
 		if err != nil {
 			t.Errorf("setting read deadline failed: %v", err)
 			return
@@ -826,10 +880,10 @@ func TestClientBidirectionalStreamConnection(t *testing.T) {
 	out := make(chan *wrapperspb.StringValue, 10)
 	factory := func() *wrapperspb.StringValue { return &wrapperspb.StringValue{} }
 
-	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	u := mustParseURL(t, server.URL+testMethodPath)
 
 	// Use context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), streamTimeout)
 	defer cancel()
 
 	// Start bidirectional stream in goroutine
@@ -840,11 +894,16 @@ func TestClientBidirectionalStreamConnection(t *testing.T) {
 
 	// Send a few messages
 	sentMessages := []string{"message1", "message2", "message3"}
+	echoed := make(chan struct{})
 	go func() {
 		for _, msg := range sentMessages {
 			in <- wrapperspb.String(msg)
 		}
-		time.Sleep(100 * time.Millisecond) // Give time for echoes to come back
+		// Closing the input before the echoes are back would end the stream early.
+		select {
+		case <-echoed:
+		case <-ctx.Done():
+		}
 		close(in)
 	}()
 
@@ -860,7 +919,11 @@ func TestClientBidirectionalStreamConnection(t *testing.T) {
 			}
 			countMutex.Lock()
 			receivedCount++
+			allEchoed := receivedCount == len(sentMessages)
 			countMutex.Unlock()
+			if allEchoed {
+				close(echoed)
+			}
 		}
 		close(done)
 	}()
@@ -894,7 +957,7 @@ func TestClientBidirectionalStreamConnectionFailure(t *testing.T) {
 	out := make(chan *emptypb.Empty, 1)
 	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
 
-	u, _ := url.Parse("http://localhost:1/TestService/TestMethod")
+	u := mustParseURL(t, closedPortURL)
 	err := jrpc.BidirectionalStream(client, context.Background(), u, in, out, factory)
 
 	// Should get connection error
@@ -910,8 +973,8 @@ func TestClientWebSocketURLConversion(t *testing.T) {
 		scheme string
 		wantWS bool
 	}{
-		{"HTTP to WS", "http", true},
-		{"HTTPS to WSS", "https", true},
+		{name: "HTTP to WS", scheme: "http", wantWS: true},
+		{name: "HTTPS to WSS", scheme: "https", wantWS: true},
 	}
 
 	for _, tt := range tests {
@@ -926,18 +989,25 @@ func TestClientWebSocketURLConversion(t *testing.T) {
 	}
 }
 
-// TestClientWithTLSConfig verifies that custom TLS config option works
-func TestClientWithTLSConfig(t *testing.T) {
-	// Create a TLS test server
+// newTLSTestServer starts a TLS server with a self-signed certificate that answers every call with an empty response.
+func newTLSTestServer(t *testing.T) *httptest.Server {
+	t.Helper()
+
 	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Type", jsonContentType)
 		w.WriteHeader(http.StatusOK)
-		_, err := w.Write([]byte("{}"))
+		_, err := w.Write([]byte(emptyJSONBody))
 		if err != nil {
 			t.Errorf("writing response failed: %v", err)
 		}
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
+	return server
+}
+
+// TestClientWithTLSConfig verifies that custom TLS config option works
+func TestClientWithTLSConfig(t *testing.T) {
+	server := newTLSTestServer(t)
 
 	// Create a custom TLS config that accepts the test server's certificate
 	tlsConfig := &tls.Config{
@@ -956,15 +1026,24 @@ func TestClientWithTLSConfig(t *testing.T) {
 	req := &emptypb.Empty{}
 	resp := &emptypb.Empty{}
 
-	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	u := mustParseURL(t, server.URL+testMethodPath)
 	err := client.Call(context.Background(), u, req, resp, nil)
 	if err != nil {
 		t.Fatalf("TLS connection failed: %v", err)
 	}
+}
 
-	// Now test without the TLS config - should fail
-	clientWithoutTLS := jrpc.NewClient()
-	err = clientWithoutTLS.Call(context.Background(), u, req, resp, nil)
+// TestClientWithoutTLSConfigRejectsSelfSignedCertificate verifies that the default client does not trust the test certificate
+func TestClientWithoutTLSConfigRejectsSelfSignedCertificate(t *testing.T) {
+	server := newTLSTestServer(t)
+
+	client := jrpc.NewClient()
+
+	req := &emptypb.Empty{}
+	resp := &emptypb.Empty{}
+
+	u := mustParseURL(t, server.URL+testMethodPath)
+	err := client.Call(context.Background(), u, req, resp, nil)
 	if err == nil {
 		t.Error("expected error without TLS config for TLS server")
 	}
@@ -977,10 +1056,10 @@ func TestWebSocketMessageMarshaling(t *testing.T) {
 		name string
 		msg  proto.Message
 	}{
-		{"Empty", &emptypb.Empty{}},
-		{"String", wrapperspb.String("test message")},
-		{"Int32", wrapperspb.Int32(42)},
-		{"Bool", wrapperspb.Bool(true)},
+		{name: "Empty", msg: &emptypb.Empty{}},
+		{name: "String", msg: wrapperspb.String("test message")},
+		{name: "Int32", msg: wrapperspb.Int32(42)},
+		{name: "Bool", msg: wrapperspb.Bool(true)},
 	}
 
 	for _, tt := range tests {
@@ -1027,6 +1106,7 @@ func TestWebSocketDialerConfiguration(t *testing.T) {
 		}
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
+			t.Errorf("failed to upgrade connection: %v", err)
 			return
 		}
 		defer closeAndLog(t, conn)
@@ -1039,6 +1119,7 @@ func TestWebSocketDialerConfiguration(t *testing.T) {
 		// Read one message (the initial request)
 		_, msgData, err := conn.ReadMessage()
 		if err != nil {
+			t.Errorf("failed to read request: %v", err)
 			return
 		}
 
@@ -1046,18 +1127,23 @@ func TestWebSocketDialerConfiguration(t *testing.T) {
 		req := &emptypb.Empty{}
 		err = testUnmarshalOpts.Unmarshal(msgData, req)
 		if err != nil {
+			t.Errorf("failed to unmarshal request: %v", err)
 			return
 		}
 
 		// Send multiple responses to keep the stream alive briefly
 		resp := &emptypb.Empty{}
-		data, _ := testMarshalOpts.Marshal(resp)
-		for range 3 {
-			err := conn.WriteMessage(websocket.TextMessage, data)
+		data, err := testMarshalOpts.Marshal(resp)
+		if err != nil {
+			t.Errorf("failed to marshal response: %v", err)
+			return
+		}
+		for range streamMessageCount {
+			err = conn.WriteMessage(websocket.TextMessage, data)
 			if err != nil {
+				t.Errorf("failed to write response: %v", err)
 				return
 			}
-			time.Sleep(10 * time.Millisecond)
 		}
 	}))
 	defer server.Close()
@@ -1076,8 +1162,8 @@ func TestWebSocketDialerConfiguration(t *testing.T) {
 	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
 	req := &emptypb.Empty{}
 
-	u, _ := url.Parse(wsURL + "/TestService/TestMethod")
-	ctx, cancel := context.WithTimeout(context.Background(), 500*time.Millisecond)
+	u := mustParseURL(t, wsURL+testMethodPath)
+	ctx, cancel := context.WithTimeout(context.Background(), dialerStreamTimeout)
 	defer cancel()
 
 	// Collect messages in a goroutine
@@ -1092,7 +1178,8 @@ func TestWebSocketDialerConfiguration(t *testing.T) {
 	// Start streaming in another goroutine
 	var wg sync.WaitGroup
 	wg.Go(func() {
-		_ = jrpc.ServerStream(client, ctx, u, req, out, factory)
+		err := jrpc.ServerStream(client, ctx, u, req, out, factory)
+		t.Logf("server stream ended: %v", err)
 	})
 
 	// Wait for streaming to complete
@@ -1135,7 +1222,7 @@ func TestWebSocketConnectionClosure(t *testing.T) {
 	factory := func() *emptypb.Empty { return &emptypb.Empty{} }
 
 	req := &emptypb.Empty{}
-	u, _ := url.Parse(server.URL + "/TestService/TestMethod")
+	u := mustParseURL(t, server.URL+testMethodPath)
 
 	// This should fail because server closes immediately
 	err := jrpc.ServerStream(client, context.Background(), u, req, out, factory)
@@ -1144,7 +1231,4 @@ func TestWebSocketConnectionClosure(t *testing.T) {
 	if err == nil {
 		t.Log("Warning: expected error due to immediate connection closure, but got nil")
 	}
-
-	// Give server time to clean up
-	time.Sleep(10 * time.Millisecond)
 }

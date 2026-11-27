@@ -6,14 +6,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/cache"
+)
+
+const (
+	existsIterations    = 100000
+	concurrentMaxSize   = 50
+	concurrentSizeSlack = 10
+	workerCount         = 8
+	opsPerWorker        = 2000
 )
 
 // Exists drops expired entries. A concurrent Set of the same key must never lose its fresh value.
 func TestMemoryCacheExistsDoesNotDropFreshValue(t *testing.T) {
 	mc := cache.NewMemoryCache()
-	defer apperror.Catch(mc.Close, "closing cache failed")
+	closeOnCleanup(t, "cache", mc)
 	ctx := context.Background()
 
 	var wg sync.WaitGroup
@@ -32,7 +39,7 @@ func TestMemoryCacheExistsDoesNotDropFreshValue(t *testing.T) {
 		}
 	})
 
-	for i := range 100000 {
+	for i := range existsIterations {
 		// A short TTL entry that expires, immediately followed by a long-lived one
 		err := mc.Set(ctx, "k", i, time.Nanosecond)
 		if err != nil {
@@ -57,10 +64,10 @@ func TestMemoryCacheExistsDoesNotDropFreshValue(t *testing.T) {
 // A key that was read is protected from eviction, as in a strict LRU.
 func TestMemoryCacheEvictsLeastRecentlyRead(t *testing.T) {
 	cfg := cache.DefaultConfig()
-	cfg.MaxSize = 3
+	cfg.MaxSize = lruMaxSize
 	cfg.EnableLRU = true
 	mc := cache.NewMemoryCacheWithConfig(cfg)
-	defer apperror.Catch(mc.Close, "closing cache failed")
+	closeOnCleanup(t, "cache", mc)
 	ctx := context.Background()
 
 	for _, k := range []string{"a", "b", "c"} {
@@ -96,17 +103,17 @@ func TestMemoryCacheEvictsLeastRecentlyRead(t *testing.T) {
 // Reads, writes, expiry and eviction run together; the race detector checks the locking.
 func TestMemoryCacheConcurrentMixed(t *testing.T) {
 	cfg := cache.DefaultConfig()
-	cfg.MaxSize = 50
+	cfg.MaxSize = concurrentMaxSize
 	mc := cache.NewMemoryCacheWithConfig(cfg)
-	defer apperror.Catch(mc.Close, "closing cache failed")
+	closeOnCleanup(t, "cache", mc)
 	ctx := context.Background()
 
 	var wg sync.WaitGroup
-	for g := range 8 {
+	for g := range workerCount {
 		wg.Add(1)
 		go func(g int) {
 			defer wg.Done()
-			for i := range 2000 {
+			for i := range opsPerWorker {
 				k := "k" + string(rune('a'+(i+g)%26))
 				switch i % 4 {
 				case 0:
@@ -130,14 +137,14 @@ func TestMemoryCacheConcurrentMixed(t *testing.T) {
 		}(g)
 	}
 	wg.Wait()
-	if got := mc.GetSize(); got > 60 {
+	if got := mc.GetSize(); got > concurrentMaxSize+concurrentSizeSlack {
 		t.Errorf("cache holds %d items, limit is 50", got)
 	}
 }
 
 func TestMemoryCacheStatsCountHitsAndMisses(t *testing.T) {
 	mc := cache.NewMemoryCache()
-	defer apperror.Catch(mc.Close, "closing cache failed")
+	closeOnCleanup(t, "cache", mc)
 	ctx := context.Background()
 	err := mc.Set(ctx, "k", 1, time.Hour)
 	if err != nil {

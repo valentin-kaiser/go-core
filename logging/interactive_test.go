@@ -5,7 +5,6 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/logging"
 )
 
@@ -17,7 +16,12 @@ func TestInteractiveRedirectedToFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer apperror.Catch(f.Close, "closing log file failed")
+	t.Cleanup(func() {
+		err := f.Close()
+		if err != nil {
+			t.Errorf("closing log file failed: %v", err)
+		}
+	})
 
 	old := os.Stdout
 	os.Stdout = f

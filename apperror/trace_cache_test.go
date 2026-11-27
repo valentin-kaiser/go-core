@@ -47,7 +47,10 @@ func TestNewErrorTraceHoldsCreationSite(t *testing.T) {
 	if len(err.Trace) != 1 || !strings.Contains(err.Trace[0], "trace_cache_test.go:") {
 		t.Fatalf("trace %v", err.Trace)
 	}
-	wrapped, _ := apperror.Wrap(err).(apperror.Error)
+	wrapped, ok := apperror.Wrap(err).(apperror.Error)
+	if !ok {
+		t.Fatalf("Wrap() did not return an apperror.Error")
+	}
 	if len(wrapped.Trace) != 2 {
 		t.Fatalf("wrapped trace %v", wrapped.Trace)
 	}

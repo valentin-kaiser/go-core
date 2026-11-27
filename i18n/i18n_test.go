@@ -16,19 +16,19 @@ func TestParse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer resetBundle(t)
+	t.Cleanup(func() { resetBundle(t) })
 
 	tests := []struct {
 		input string
 		want  i18n.Language
 	}{
-		{"en", i18n.English},
-		{"EN", i18n.English},
-		{"de", i18n.German},
-		{"De", i18n.German},
-		{" de ", i18n.German},
-		{"fr", i18n.Default}, // not loaded
-		{"", i18n.Default},
+		{input: "en", want: i18n.English},
+		{input: "EN", want: i18n.English},
+		{input: "de", want: i18n.German},
+		{input: "De", want: i18n.German},
+		{input: " de ", want: i18n.German},
+		{input: "fr", want: i18n.Default}, // not loaded
+		{input: "", want: i18n.Default},
 	}
 	for _, tt := range tests {
 		got := i18n.Parse(tt.input)
@@ -44,17 +44,17 @@ func TestValid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer resetBundle(t)
+	t.Cleanup(func() { resetBundle(t) })
 
 	tests := []struct {
 		input string
 		want  bool
 	}{
-		{"en", true},
-		{"de", true},
-		{"DE", true},
-		{"fr", false},
-		{"", false},
+		{input: "en", want: true},
+		{input: "de", want: true},
+		{input: "DE", want: true},
+		{input: "fr", want: false},
+		{input: "", want: false},
 	}
 	for _, tt := range tests {
 		got := i18n.Valid(tt.input)
@@ -69,7 +69,7 @@ func TestSupported(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer resetBundle(t)
+	t.Cleanup(func() { resetBundle(t) })
 
 	langs := i18n.Supported()
 	if len(langs) != 2 {
@@ -311,6 +311,7 @@ func TestGlobalFunctions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
+	t.Cleanup(func() { resetBundle(t) })
 
 	if got := i18n.T(i18n.English, "global.key"); got != "Global Value" {
 		t.Errorf("global T = %q, want %q", got, "Global Value")
@@ -318,9 +319,6 @@ func TestGlobalFunctions(t *testing.T) {
 	if got := i18n.Tf(i18n.English, "format.key", "World"); got != "Hello World" {
 		t.Errorf("global Tf = %q, want %q", got, "Hello World")
 	}
-
-	// Reset to empty to avoid polluting other tests
-	resetBundle(t)
 }
 
 func TestSetDefault(t *testing.T) {
@@ -329,6 +327,7 @@ func TestSetDefault(t *testing.T) {
 		t.Fatalf("New failed: %v", err)
 	}
 	i18n.SetDefault(b)
+	t.Cleanup(func() { resetBundle(t) })
 
 	if got := i18n.T(i18n.German, "x"); got != "y" {
 		t.Errorf("T after SetDefault = %q, want %q", got, "y")
@@ -338,9 +337,6 @@ func TestSetDefault(t *testing.T) {
 	if i18n.GetDefault() != b {
 		t.Error("GetDefault did not return the bundle set by SetDefault")
 	}
-
-	// Reset
-	resetBundle(t)
 }
 
 // ---------------------------------------------------------------------------
@@ -380,7 +376,7 @@ func TestParseArbitraryLanguage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer resetBundle(t)
+	t.Cleanup(func() { resetBundle(t) })
 
 	if got := i18n.Parse("fr"); got != "fr" {
 		t.Errorf("Parse(fr) = %q, want %q", got, "fr")
@@ -454,10 +450,10 @@ func TestNestedJSON(t *testing.T) {
 		key  string
 		want string
 	}{
-		{"page.login.title", "Login"},
-		{"page.login.subtitle", "Welcome back"},
-		{"page.register.title", "Register"},
-		{"error.internal", "An internal error occurred."},
+		{key: "page.login.title", want: "Login"},
+		{key: "page.login.subtitle", want: "Welcome back"},
+		{key: "page.register.title", want: "Register"},
+		{key: "error.internal", want: "An internal error occurred."},
 	}
 	for _, tc := range cases {
 		if got := b.T(i18n.English, tc.key); got != tc.want {

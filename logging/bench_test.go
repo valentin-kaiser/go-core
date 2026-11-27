@@ -9,8 +9,13 @@ import (
 	"github.com/valentin-kaiser/go-core/logging"
 )
 
+const (
+	streamBufferSize   = 100
+	listenerBufferSize = 1024
+)
+
 func BenchmarkStreamWriterWrite(b *testing.B) {
-	sw := logging.NewStreamWriter(100)
+	sw := logging.NewStreamWriter(streamBufferSize)
 	line := []byte(`{"level":"info","time":"2026-01-01T00:00:00Z","message":"hello world"}` + "\n")
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
@@ -22,8 +27,8 @@ func BenchmarkStreamWriterWrite(b *testing.B) {
 }
 
 func BenchmarkStreamWriterWriteParallel(b *testing.B) {
-	sw := logging.NewStreamWriter(100)
-	ch := make(chan string, 1024)
+	sw := logging.NewStreamWriter(streamBufferSize)
+	ch := make(chan string, listenerBufferSize)
 	sw.AddListener(ch)
 	go func() {
 		for range ch {
@@ -97,6 +102,8 @@ func BenchmarkZerologWithPackage(b *testing.B) {
 	a := logging.NewZerologAdapterWithLogger(zerolog.New(io.Discard)).SetLevel(logging.InfoLevel)
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = a.WithPackage("bench")
+		if a.WithPackage("bench") == nil {
+			b.Fatal("WithPackage returned nil")
+		}
 	}
 }

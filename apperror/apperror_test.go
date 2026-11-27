@@ -127,7 +127,10 @@ func TestAddErrorWithAppError(t *testing.T) {
 func TestErrorString(t *testing.T) {
 	// Save original debug state
 	originalDebug := flag.Debug
-	defer func() { flag.Debug = originalDebug }()
+	t.Cleanup(func() {
+		flag.Debug = originalDebug
+		apperror.Anonymous(false)
+	})
 
 	// Test without debug mode
 	flag.Debug = false
@@ -157,7 +160,6 @@ func TestErrorString(t *testing.T) {
 	if !strings.Contains(errorStr, "TestErrorString") {
 		t.Error("Error string should contain trace information in debug mode")
 	}
-	apperror.Anonymous(false) // Reset to default
 }
 
 func TestSplit(t *testing.T) {
@@ -277,7 +279,10 @@ func BenchmarkWrap(b *testing.B) {
 	b.ResetTimer()
 
 	for i := 0; i < b.N; i++ {
-		_ = apperror.Wrap(baseErr)
+		err := apperror.Wrap(baseErr)
+		if err == nil {
+			b.Fatal("Wrap() = nil, want an error")
+		}
 	}
 }
 
@@ -341,7 +346,7 @@ func TestErrorChaining(t *testing.T) {
 
 func TestCatchFunction(t *testing.T) {
 	original := apperror.CatchHandler
-	defer func() { apperror.CatchHandler = original }()
+	t.Cleanup(func() { apperror.CatchHandler = original })
 
 	var gotMsg string
 	var gotErr error

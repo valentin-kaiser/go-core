@@ -4,20 +4,19 @@ import (
 	"testing"
 
 	"github.com/valentin-kaiser/go-core/config"
-	"github.com/valentin-kaiser/go-core/flag"
 )
+
+const benchGetName = "bench-get"
 
 // Get() is typically called in hot paths, from many goroutines.
 
 func setupGet(b *testing.B) {
 	b.Helper()
 	tempDir := b.TempDir()
-	originalPath := flag.Path
-	flag.Path = tempDir
-	b.Cleanup(func() { flag.Path = originalPath })
+	setFlagPath(b, tempDir)
 
-	cfg := &TestConfig{ApplicationName: "bench-get", ServerPort: 8080, DatabaseURL: "sqlite:///test.db"}
-	err := config.Manager().WithPath(tempDir).WithName("bench-get").Register(cfg)
+	cfg := &TestConfig{ApplicationName: benchGetName, ServerPort: testPort, DatabaseURL: testDatabaseURL}
+	err := config.Manager().WithPath(tempDir).WithName(benchGetName).Register(cfg)
 	if err != nil {
 		b.Fatalf("Register failed: %v", err)
 	}

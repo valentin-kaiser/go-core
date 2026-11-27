@@ -146,7 +146,7 @@ func TestGlobalTCTX(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer resetBundle(t)
+	t.Cleanup(func() { resetBundle(t) })
 
 	ctx := i18n.WithLanguage(context.Background(), i18n.German)
 	got := i18n.TCTX(ctx, "greeting")
@@ -163,7 +163,7 @@ func TestGlobalTfCTX(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Init failed: %v", err)
 	}
-	defer resetBundle(t)
+	t.Cleanup(func() { resetBundle(t) })
 
 	ctx := i18n.WithLanguage(context.Background(), i18n.German)
 	got := i18n.TfCTX(ctx, "fmt", "World")

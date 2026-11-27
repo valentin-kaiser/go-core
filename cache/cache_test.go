@@ -5,8 +5,19 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/cache"
+	"github.com/valentin-kaiser/go-core/internal/await"
+)
+
+const (
+	basicMaxSize     = 100
+	lruMaxSize       = 3
+	statsMaxSize     = 10
+	namespacePrefix  = "test"
+	expiryDefaultTTL = 5 * time.Second
+	expiryTTL        = 200 * time.Millisecond
+	expiryTimeout    = 5 * time.Second
+	unsupportedValue = 123
 )
 
 // TestUser represents a test user struct for testing serialization
@@ -18,10 +29,10 @@ type TestUser struct {
 
 func TestMemoryCache_BasicOperations(t *testing.T) {
 	c := cache.NewMemoryCache().
-		WithMaxSize(100).
+		WithMaxSize(basicMaxSize).
 		WithDefaultTTL(time.Hour)
 
-	defer apperror.Catch(c.Close, "closing cache failed")
+	closeOnCleanup(t, "cache", c)
 
 	ctx := t.Context()
 
@@ -72,14 +83,14 @@ func TestMemoryCache_BasicOperations(t *testing.T) {
 
 func TestMemoryCache_TTL(t *testing.T) {
 	c := cache.NewMemoryCache().
-		WithDefaultTTL(time.Millisecond * 100)
+		WithDefaultTTL(expiryDefaultTTL)
 
-	apperror.Catch(c.Close, "closing cache failed")
+	closeOnCleanup(t, "cache", c)
 
 	ctx := t.Context()
 
 	// Set value with short TTL
-	err := c.Set(ctx, "test", "value", time.Millisecond*50)
+	err := c.Set(ctx, "test", "value", expiryTTL)
 	if err != nil {
 		t.Fatalf("Failed to set value: %v", err)
 	}
@@ -94,24 +105,23 @@ func TestMemoryCache_TTL(t *testing.T) {
 	}
 
 	// Wait for expiration
-	time.Sleep(time.Millisecond * 60)
-
-	var value string
-	found, err := c.Get(ctx, "test", &value)
-	if err != nil {
-		t.Fatalf("Failed to get expired value: %v", err)
-	}
-	if found {
-		t.Error("Expected value to be expired")
-	}
+	await.Until(t, expiryTimeout, func() bool {
+		var value string
+		found, err := c.Get(ctx, "test", &value)
+		if err != nil {
+			t.Errorf("Failed to get expired value: %v", err)
+			return true
+		}
+		return !found
+	}, "the key to expire")
 }
 
 func TestMemoryCache_LRUEviction(t *testing.T) {
 	c := cache.NewMemoryCache().
-		WithMaxSize(3).
+		WithMaxSize(lruMaxSize).
 		WithLRUEviction(true)
 
-	apperror.Catch(c.Close, "closing cache failed")
+	closeOnCleanup(t, "cache", c)
 
 	ctx := t.Context()
 
@@ -159,7 +169,7 @@ func TestMemoryCache_LRUEviction(t *testing.T) {
 
 func TestMemoryCache_MultiOperations(t *testing.T) {
 	c := cache.NewMemoryCache()
-	apperror.Catch(c.Close, "closing cache failed")
+	closeOnCleanup(t, "cache", c)
 
 	ctx := t.Context()
 
@@ -216,9 +226,9 @@ func TestMemoryCache_MultiOperations(t *testing.T) {
 
 func TestMemoryCache_Stats(t *testing.T) {
 	c := cache.NewMemoryCache().
-		WithMaxSize(10)
+		WithMaxSize(statsMaxSize)
 
-	apperror.Catch(c.Close, "closing cache failed")
+	closeOnCleanup(t, "cache", c)
 
 	ctx := t.Context()
 
@@ -284,7 +294,7 @@ func TestMemoryCache_Events(t *testing.T) {
 			eventsChan <- event
 		})
 
-	apperror.Catch(c.Close, "closing cache failed")
+	closeOnCleanup(t, "cache", c)
 
 	ctx := t.Context()
 
@@ -338,10 +348,10 @@ func TestMemoryCache_Events(t *testing.T) {
 
 func TestMemoryCache_Namespace(t *testing.T) {
 	config := cache.DefaultConfig()
-	config.Namespace = "test"
+	config.Namespace = namespacePrefix
 
 	c := cache.NewMemoryCacheWithConfig(config)
-	apperror.Catch(c.Close, "closing cache failed")
+	closeOnCleanup(t, "cache", c)
 
 	ctx := t.Context()
 
@@ -356,7 +366,7 @@ func TestMemoryCache_Namespace(t *testing.T) {
 		t.Fatalf("Expected 1 key, got %d", len(keys))
 	}
 
-	expectedKey := "test:key"
+	expectedKey := namespacePrefix + ":key"
 	if keys[0] != expectedKey {
 		t.Errorf("Expected key to be '%s', got '%s'", expectedKey, keys[0])
 	}
@@ -377,7 +387,7 @@ func TestMemoryCache_Namespace(t *testing.T) {
 
 func TestMemoryCache_Clear(t *testing.T) {
 	c := cache.NewMemoryCache()
-	apperror.Catch(c.Close, "closing cache failed")
+	closeOnCleanup(t, "cache", c)
 
 	ctx := t.Context()
 
@@ -419,7 +429,7 @@ func TestMemoryCache_Clear(t *testing.T) {
 
 func TestMemoryCache_TTLOperations(t *testing.T) {
 	c := cache.NewMemoryCache()
-	apperror.Catch(c.Close, "closing cache failed")
+	closeOnCleanup(t, "cache", c)
 
 	ctx := t.Context()
 
@@ -485,10 +495,8 @@ func TestJSONSerializer(t *testing.T) {
 	}
 }
 
-func TestNoOpSerializer(t *testing.T) {
+func TestNoOpSerializerBytes(t *testing.T) {
 	serializer := &cache.NoOpSerializer{}
-
-	// Test with []byte
 	originalData := []byte("test data")
 
 	data, err := serializer.Serialize(originalData)
@@ -505,11 +513,13 @@ func TestNoOpSerializer(t *testing.T) {
 	if string(result) != string(originalData) {
 		t.Errorf("Expected %s, got %s", string(originalData), string(result))
 	}
+}
 
-	// Test with string
+func TestNoOpSerializerString(t *testing.T) {
+	serializer := &cache.NoOpSerializer{}
 	originalString := "test string"
 
-	data, err = serializer.Serialize(originalString)
+	data, err := serializer.Serialize(originalString)
 	if err != nil {
 		t.Fatalf("Failed to serialize string: %v", err)
 	}
@@ -523,9 +533,12 @@ func TestNoOpSerializer(t *testing.T) {
 	if resultString != originalString {
 		t.Errorf("Expected %s, got %s", originalString, resultString)
 	}
+}
 
-	// Test with unsupported type
-	_, err = serializer.Serialize(123)
+func TestNoOpSerializerRejectsUnsupportedType(t *testing.T) {
+	serializer := &cache.NoOpSerializer{}
+
+	_, err := serializer.Serialize(unsupportedValue)
 	if err == nil {
 		t.Error("Expected error for unsupported type")
 	}

@@ -39,7 +39,9 @@ func BenchmarkCompareVersions(b *testing.B) {
 func BenchmarkDetectFormat(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = version.DetectFormat("v1.22.3")
+		if version.DetectFormat("v1.22.3") != version.FormatSemVer {
+			b.Fatal("DetectFormat did not detect semver")
+		}
 	}
 }
 
@@ -56,6 +58,8 @@ func BenchmarkGetVersionComponents(b *testing.B) {
 func BenchmarkGet(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_ = version.Get()
+		if version.Get() == nil {
+			b.Fatal("Get returned nil")
+		}
 	}
 }

@@ -8,12 +8,21 @@ import (
 	"testing"
 )
 
+const (
+	localAppData = `C:\Users\Test\AppData\Local`
+	roamingData  = `C:\Users\Test\AppData\Roaming`
+	programData  = `C:\ProgramData`
+	userProfile  = `C:\Users\Test`
+	xdgDataHome  = "/tmp/xdg-data"
+	serviceLib   = "/var/lib"
+)
+
 func TestDataPathForInteractiveRoot(t *testing.T) {
-	t.Setenv("LOCALAPPDATA", `C:\Users\Test\AppData\Local`)
-	t.Setenv("APPDATA", `C:\Users\Test\AppData\Roaming`)
-	t.Setenv("PROGRAMDATA", `C:\ProgramData`)
-	t.Setenv("USERPROFILE", `C:\Users\Test`)
-	t.Setenv("XDG_DATA_HOME", "/tmp/xdg-data")
+	t.Setenv("LOCALAPPDATA", localAppData)
+	t.Setenv("APPDATA", roamingData)
+	t.Setenv("PROGRAMDATA", programData)
+	t.Setenv("USERPROFILE", userProfile)
+	t.Setenv("XDG_DATA_HOME", xdgDataHome)
 
 	got := dataPathFor("SampleApp", false)
 	if got == "" {
@@ -25,21 +34,21 @@ func TestDataPathForInteractiveRoot(t *testing.T) {
 			t.Fatalf("expected interactive data path to include the app name, got %q", got)
 		}
 
-		if !strings.HasPrefix(strings.ToLower(got), strings.ToLower(`C:\Users\Test\AppData\Local`)) {
+		if !strings.HasPrefix(strings.ToLower(got), strings.ToLower(localAppData)) {
 			t.Fatalf("expected interactive data path to use local app data, got %q", got)
 		}
 		return
 	}
 
 	if runtime.GOOS == "linux" {
-		if !strings.HasPrefix(got, filepath.Clean("/tmp/xdg-data")) {
+		if !strings.HasPrefix(got, filepath.Clean(xdgDataHome)) {
 			t.Fatalf("expected interactive data path to use XDG data home, got %q", got)
 		}
 	}
 }
 
 func TestDataPathForServiceRoot(t *testing.T) {
-	t.Setenv("PROGRAMDATA", `C:\ProgramData`)
+	t.Setenv("PROGRAMDATA", programData)
 
 	got := dataPathFor("SampleService", true)
 	if got == "" {
@@ -47,13 +56,13 @@ func TestDataPathForServiceRoot(t *testing.T) {
 	}
 
 	if runtime.GOOS == "windows" {
-		if !strings.HasPrefix(strings.ToLower(got), strings.ToLower(`C:\ProgramData`)) {
+		if !strings.HasPrefix(strings.ToLower(got), strings.ToLower(programData)) {
 			t.Fatalf("expected service data path to use ProgramData, got %q", got)
 		}
 	}
 
 	if runtime.GOOS == "linux" {
-		if !strings.HasPrefix(got, "/var/lib") {
+		if !strings.HasPrefix(got, serviceLib) {
 			t.Fatalf("expected service data path to use /var/lib, got %q", got)
 		}
 	}

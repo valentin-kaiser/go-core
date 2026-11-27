@@ -82,6 +82,9 @@ func BenchmarkContextRoundTrip(b *testing.B) {
 	ctx := context.Background()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		_, _ = i18n.LanguageFromContext(i18n.WithLanguage(ctx, i18n.German))
+		_, ok := i18n.LanguageFromContext(i18n.WithLanguage(ctx, i18n.German))
+		if !ok {
+			b.Fatal("no language in the context")
+		}
 	}
 }

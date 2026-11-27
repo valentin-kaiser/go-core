@@ -9,8 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
+	"github.com/valentin-kaiser/go-core/internal/await"
 	"github.com/valentin-kaiser/go-core/queue"
+)
+
+const (
+	queueWaitTimeout     = 5 * time.Second
+	managerScheduleDelay = 500 * time.Millisecond
 )
 
 func TestNewJob(t *testing.T) {
@@ -136,11 +141,11 @@ func TestPriorityString(t *testing.T) {
 		priority queue.Priority
 		expected string
 	}{
-		{queue.PriorityLow, "low"},
-		{queue.PriorityNormal, "normal"},
-		{queue.PriorityHigh, "high"},
-		{queue.PriorityCritical, "critical"},
-		{queue.Priority(99), "unknown"},
+		{priority: queue.PriorityLow, expected: "low"},
+		{priority: queue.PriorityNormal, expected: "normal"},
+		{priority: queue.PriorityHigh, expected: "high"},
+		{priority: queue.PriorityCritical, expected: "critical"},
+		{priority: queue.Priority(99), expected: "unknown"},
 	}
 
 	for _, test := range tests {
@@ -155,14 +160,14 @@ func TestStatusString(t *testing.T) {
 		status   queue.Status
 		expected string
 	}{
-		{queue.StatusPending, "pending"},
-		{queue.StatusRunning, "running"},
-		{queue.StatusCompleted, "completed"},
-		{queue.StatusFailed, "failed"},
-		{queue.StatusRetrying, "retrying"},
-		{queue.StatusScheduled, "scheduled"},
-		{queue.StatusDeadLetter, "dead_letter"},
-		{queue.Status(99), "unknown"},
+		{status: queue.StatusPending, expected: "pending"},
+		{status: queue.StatusRunning, expected: "running"},
+		{status: queue.StatusCompleted, expected: "completed"},
+		{status: queue.StatusFailed, expected: "failed"},
+		{status: queue.StatusRetrying, expected: "retrying"},
+		{status: queue.StatusScheduled, expected: "scheduled"},
+		{status: queue.StatusDeadLetter, expected: "dead_letter"},
+		{status: queue.Status(99), expected: "unknown"},
 	}
 
 	for _, test := range tests {
@@ -357,7 +362,17 @@ func TestManager(t *testing.T) {
 	}
 
 	// Wait for job to be processed
-	time.Sleep(time.Millisecond * 200)
+	await.Until(t, queueWaitTimeout, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return handlerCalled
+	}, "the handler to be called")
+
+	// Stop manager: it waits for the worker to finish the job, which makes the job state safe to read
+	err = manager.Stop()
+	if err != nil {
+		t.Fatalf("Failed to stop manager: %v", err)
+	}
 
 	mu.Lock()
 	called := handlerCalled
@@ -375,12 +390,6 @@ func TestManager(t *testing.T) {
 
 	if processedJob.Status != queue.StatusCompleted {
 		t.Errorf("Expected job status Completed, got %v", processedJob.Status)
-	}
-
-	// Stop manager
-	err = manager.Stop()
-	if err != nil {
-		t.Fatalf("Failed to stop manager: %v", err)
 	}
 
 	if manager.IsRunning() {
@@ -424,7 +433,17 @@ func TestManagerRetry(t *testing.T) {
 	}
 
 	// Wait for job to be processed with retries
-	time.Sleep(time.Millisecond * 500)
+	await.Until(t, queueWaitTimeout, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return attempts >= 2
+	}, "the retried job to run twice")
+
+	// Stop manager: it waits for the worker to finish the job, which makes the job state safe to read
+	err = manager.Stop()
+	if err != nil {
+		t.Fatalf("Failed to stop manager: %v", err)
+	}
 
 	mu.Lock()
 	finalAttempts := attempts
@@ -442,12 +461,6 @@ func TestManagerRetry(t *testing.T) {
 
 	if processedJob.Status != queue.StatusCompleted {
 		t.Errorf("Expected job status Completed, got %v", processedJob.Status)
-	}
-
-	// Stop manager
-	err = manager.Stop()
-	if err != nil {
-		t.Fatalf("Failed to stop manager: %v", err)
 	}
 }
 
@@ -476,16 +489,13 @@ func TestManagerScheduled(t *testing.T) {
 	// Schedule a job for near future
 	job := queue.NewJob("scheduled-test").
 		WithID("scheduled-job").
-		WithScheduleAt(time.Now().Add(time.Millisecond * 100)).
+		WithScheduleAt(time.Now().Add(managerScheduleDelay)).
 		Build()
 
 	err = manager.Schedule(ctx, job)
 	if err != nil {
 		t.Fatalf("Failed to schedule job: %v", err)
 	}
-
-	// Job should not be processed immediately
-	time.Sleep(time.Millisecond * 50)
 
 	mu.Lock()
 	called := handlerCalled
@@ -496,7 +506,11 @@ func TestManagerScheduled(t *testing.T) {
 	}
 
 	// Wait for scheduled time
-	time.Sleep(time.Millisecond * 200)
+	await.Until(t, queueWaitTimeout, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return handlerCalled
+	}, "the scheduled job to be processed")
 
 	mu.Lock()
 	called = handlerCalled
@@ -557,7 +571,17 @@ func TestBatchManager(t *testing.T) {
 	}
 
 	// Wait for jobs to be processed
-	time.Sleep(time.Millisecond * 500)
+	await.Until(t, queueWaitTimeout, func() bool {
+		processedMutex.Lock()
+		defer processedMutex.Unlock()
+		return len(processedJobs) == len(jobs)
+	}, "all batch jobs to be processed")
+
+	// Stop manager: it waits for the workers to finish the jobs, which makes the job states safe to read
+	err = manager.Stop()
+	if err != nil {
+		t.Fatalf("Failed to stop manager: %v", err)
+	}
 
 	// Update batch status
 	err = batchManager.UpdateBatchStatus(ctx, batch.ID)
@@ -566,8 +590,11 @@ func TestBatchManager(t *testing.T) {
 	}
 
 	// Check that all jobs were processed
-	if len(processedJobs) != 3 {
-		t.Errorf("Expected 3 processed jobs, got %d", len(processedJobs))
+	processedMutex.Lock()
+	processedCount := len(processedJobs)
+	processedMutex.Unlock()
+	if processedCount != 3 {
+		t.Errorf("Expected 3 processed jobs, got %d", processedCount)
 	}
 
 	// Get updated batch
@@ -578,12 +605,6 @@ func TestBatchManager(t *testing.T) {
 
 	if updatedBatch.Status != queue.StatusCompleted {
 		t.Errorf("Expected batch status Completed, got %v", updatedBatch.Status)
-	}
-
-	// Stop manager
-	err = manager.Stop()
-	if err != nil {
-		t.Fatalf("Failed to stop manager: %v", err)
 	}
 }
 
@@ -608,9 +629,9 @@ func TestMiddleware(t *testing.T) {
 	}
 
 	// Test timeout middleware
-	timeoutHandler := queue.TimeoutMiddleware(time.Millisecond * 100)(func(_ context.Context, _ *queue.Job) error {
-		time.Sleep(time.Millisecond * 200)
-		return nil
+	timeoutHandler := queue.TimeoutMiddleware(time.Millisecond * 100)(func(ctx context.Context, _ *queue.Job) error {
+		<-ctx.Done()
+		return ctx.Err()
 	})
 
 	err = timeoutHandler(ctx, job)
@@ -708,7 +729,10 @@ func BenchmarkMemoryQueueEnqueue(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		job := queue.NewJob("benchmark").WithID(fmt.Sprintf("job-%d", i)).Build()
-		apperror.Handle(q.Enqueue(ctx, job), "failed to enqueue job")
+		err := q.Enqueue(ctx, job)
+		if err != nil {
+			b.Fatalf("failed to enqueue job: %v", err)
+		}
 	}
 }
 
@@ -719,7 +743,10 @@ func BenchmarkMemoryQueueDequeue(b *testing.B) {
 	// Pre-populate queue
 	for i := 0; i < b.N; i++ {
 		job := queue.NewJob("benchmark").WithID(fmt.Sprintf("job-%d", i)).Build()
-		apperror.Handle(q.Enqueue(ctx, job), "failed to enqueue job")
+		err := q.Enqueue(ctx, job)
+		if err != nil {
+			b.Fatalf("failed to enqueue job: %v", err)
+		}
 	}
 
 	b.ResetTimer()

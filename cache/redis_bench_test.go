@@ -1,36 +1,21 @@
+//go:build integration
+
 package cache_test
 
 import (
 	"context"
-	"os"
 	"strconv"
 	"testing"
 	"time"
 
-	"github.com/redis/go-redis/v9"
 	"github.com/valentin-kaiser/go-core/cache"
 )
 
-// Needs a Redis server: REDIS_URL, default redis://localhost:6379. The benchmarks are skipped without one.
+// Needs a Redis server: REDIS_URL, default redis://localhost:6379. The benchmarks fail without one.
 func newBenchRedis(b *testing.B, keys int) *cache.RedisCache {
 	b.Helper()
-	url := os.Getenv("REDIS_URL")
-	if url == "" {
-		url = "redis://localhost:6379"
-	}
-	opt, err := redis.ParseURL(url)
-	if err != nil {
-		b.Skipf("invalid REDIS_URL: %v", err)
-	}
-	client := redis.NewClient(opt)
-	err = client.Ping(context.Background()).Err()
-	if err != nil {
-		err := client.Close()
-		if err != nil {
-			b.Error(err)
-		}
-		b.Skipf("Redis not available: %v", err)
-	}
+
+	client := connectRedis(b)
 
 	cfg := cache.DefaultConfig()
 	cfg.Namespace = "bench:" + strconv.FormatInt(time.Now().UnixNano(), 36)
@@ -57,13 +42,13 @@ func newBenchRedis(b *testing.B, keys int) *cache.RedisCache {
 }
 
 func BenchmarkRedisCacheGet(b *testing.B) {
-	rc := newBenchRedis(b, 1024)
+	rc := newBenchRedis(b, benchKeyCount)
 	ctx := context.Background()
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		var v benchValue
-		_, err := rc.Get(ctx, "key-"+strconv.Itoa(i&1023), &v)
+		_, err := rc.Get(ctx, "key-"+strconv.Itoa(i&(benchKeyCount-1)), &v)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -71,7 +56,7 @@ func BenchmarkRedisCacheGet(b *testing.B) {
 }
 
 func BenchmarkRedisCacheGetParallel(b *testing.B) {
-	rc := newBenchRedis(b, 1024)
+	rc := newBenchRedis(b, benchKeyCount)
 	ctx := context.Background()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -79,7 +64,7 @@ func BenchmarkRedisCacheGetParallel(b *testing.B) {
 		i := 0
 		for pb.Next() {
 			var v benchValue
-			_, err := rc.Get(ctx, "key-"+strconv.Itoa(i&1023), &v)
+			_, err := rc.Get(ctx, "key-"+strconv.Itoa(i&(benchKeyCount-1)), &v)
 			if err != nil {
 				b.Error(err)
 				return
@@ -96,7 +81,7 @@ func BenchmarkRedisCacheSet(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		err := rc.Set(ctx, "key-"+strconv.Itoa(i&1023), val, time.Hour)
+		err := rc.Set(ctx, "key-"+strconv.Itoa(i&(benchKeyCount-1)), val, time.Hour)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -112,7 +97,7 @@ func BenchmarkRedisCacheSetParallel(b *testing.B) {
 	b.RunParallel(func(pb *testing.PB) {
 		i := 0
 		for pb.Next() {
-			err := rc.Set(ctx, "key-"+strconv.Itoa(i&1023), val, time.Hour)
+			err := rc.Set(ctx, "key-"+strconv.Itoa(i&(benchKeyCount-1)), val, time.Hour)
 			if err != nil {
 				b.Error(err)
 				return
@@ -123,9 +108,9 @@ func BenchmarkRedisCacheSetParallel(b *testing.B) {
 }
 
 func BenchmarkRedisCacheGetMulti(b *testing.B) {
-	rc := newBenchRedis(b, 1024)
+	rc := newBenchRedis(b, benchKeyCount)
 	ctx := context.Background()
-	keys := make([]string, 50)
+	keys := make([]string, benchMultiCount)
 	for i := range keys {
 		keys[i] = "key-" + strconv.Itoa(i)
 	}
