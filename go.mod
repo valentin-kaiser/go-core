@@ -14,7 +14,7 @@ require (
 	github.com/kardianos/service v1.3.0
 	github.com/mattn/go-sqlite3 v1.14.53
 	github.com/rabbitmq/amqp091-go v1.17.0
-	github.com/redis/go-redis/v9 v9.23.0
+	github.com/redis/go-redis/v9 v9.24.0
 	github.com/rs/zerolog v1.35.1
 	github.com/spf13/pflag v1.1.0
 	go.etcd.io/etcd/api/v3 v3.7.4
