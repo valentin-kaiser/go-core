@@ -7,19 +7,19 @@ require (
 	github.com/ProtonMail/gopenpgp/v3 v3.5.2
 	github.com/cespare/xxhash/v2 v2.3.0
 	github.com/fsnotify/fsnotify v1.10.1
-	github.com/go-sql-driver/mysql v1.10.1
+	github.com/go-sql-driver/mysql v1.10.2
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/jackc/pgx/v5 v5.13.0
 	github.com/kardianos/service v1.3.0
 	github.com/mattn/go-sqlite3 v1.14.53
-	github.com/rabbitmq/amqp091-go v1.16.0
+	github.com/rabbitmq/amqp091-go v1.17.0
 	github.com/redis/go-redis/v9 v9.23.0
 	github.com/rs/zerolog v1.35.1
 	github.com/spf13/pflag v1.1.0
-	go.etcd.io/etcd/api/v3 v3.7.3
-	go.etcd.io/etcd/client/v3 v3.7.3
-	go.etcd.io/etcd/server/v3 v3.7.3
+	go.etcd.io/etcd/api/v3 v3.7.4
+	go.etcd.io/etcd/client/v3 v3.7.4
+	go.etcd.io/etcd/server/v3 v3.7.4
 	go.uber.org/zap v1.28.0
 	golang.org/x/crypto v0.59.0
 	golang.org/x/sync v0.25.0
@@ -65,8 +65,8 @@ require (
 	github.com/tmc/grpc-websocket-proxy v0.0.0-20220101234140-673ab2c3ae75 // indirect
 	github.com/xiang90/probing v0.0.0-20221125231312-a49e3df8f510 // indirect
 	go.etcd.io/bbolt v1.5.0 // indirect
-	go.etcd.io/etcd/client/pkg/v3 v3.7.3 // indirect
-	go.etcd.io/etcd/pkg/v3 v3.7.3 // indirect
+	go.etcd.io/etcd/client/pkg/v3 v3.7.4 // indirect
+	go.etcd.io/etcd/pkg/v3 v3.7.4 // indirect
 	go.etcd.io/raft/v3 v3.7.0 // indirect
 	go.opentelemetry.io/auto/sdk v1.2.1 // indirect
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.68.0 // indirect
