@@ -100,9 +100,6 @@ const (
 	jsonExtension = ".json"
 )
 
-// Language represents a BCP 47 language code.
-type Language string
-
 const (
 	// English represents the English language.
 	English Language = "en"
@@ -112,29 +109,14 @@ const (
 	Default Language = English
 )
 
-// Supported returns all languages that have translations loaded in the global
-// default bundle. If no translations have been loaded yet the list may be empty.
-func Supported() []Language {
-	return globalBundle.Load().Languages()
-}
+// ---------------------------------------------------------------------------
+// Global default bundle with package-level convenience functions
+// ---------------------------------------------------------------------------
 
-// Valid checks if a language code has translations loaded in the global bundle.
-func Valid(lang string) bool {
-	return globalBundle.Load().HasLanguage(Language(strings.ToLower(strings.TrimSpace(lang))))
-}
+var globalBundle atomic.Pointer[Bundle]
 
-// Parse normalizes a language string. If the language has no translations
-// loaded in the global bundle, Default is returned.
-func Parse(lang string) Language {
-	l := Language(strings.ToLower(strings.TrimSpace(lang)))
-	if l == "" {
-		return Default
-	}
-	if globalBundle.Load().HasLanguage(l) {
-		return l
-	}
-	return Default
-}
+// Language represents a BCP 47 language code.
+type Language string
 
 // Bundle holds loaded translations for one or more languages and provides
 // lookup methods for retrieving translated strings.
@@ -144,61 +126,6 @@ type Bundle struct {
 	// matcher caches the language matcher built from the loaded languages. It is
 	// dropped whenever a language is added, and rebuilt on the next request.
 	matcher atomic.Pointer[languageMatcher]
-}
-
-// Option configures a Bundle during creation.
-type Option func(*Bundle) error
-
-// WithFS loads translation files from an embed.FS (or any fs.FS). It scans the
-// given directory for JSON files named by language code (e.g. "en.json",
-// "fr.json", "ja.json") and loads each one automatically. Any language is
-// supported — the language code is derived from the filename.
-// Files that cannot be read or parsed are reported as joined error after the
-// remaining files have been loaded.
-func WithFS(fsys fs.FS, dir string) Option {
-	return func(b *Bundle) error {
-		err := loadDir(b, fsys, dir)
-		if err != nil {
-			return fmt.Errorf("loading translation directory %q failed: %w", dir, err)
-		}
-		return nil
-	}
-}
-
-// WithEmbedFS is an alias for WithFS that explicitly takes an embed.FS.
-// It reads translation files from the given directory inside the embedded filesystem.
-func WithEmbedFS(fsys embed.FS, dir string) Option {
-	return WithFS(fsys, dir)
-}
-
-// WithJSON registers translations for a language from raw JSON bytes.
-// The JSON must be a nested object; dot-separated lookup keys are derived from
-// the nesting hierarchy (e.g. {"page": {"title": "Home"}} is accessed as
-// "page.title"). If the JSON data is malformed, an error is returned when the
-// bundle is created, as it indicates a programming error that should be caught
-// during development.
-func WithJSON(lang Language, data []byte) Option {
-	return func(b *Bundle) error {
-		err := b.loadJSON(lang, data)
-		if err != nil {
-			return fmt.Errorf("loading JSON of language %q failed: %w", lang, err)
-		}
-		return nil
-	}
-}
-
-// WithMap registers translations for a language from a Go map.
-func WithMap(lang Language, translations map[string]string) Option {
-	return func(b *Bundle) error {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		if b.translations[lang] == nil {
-			b.translations[lang] = make(map[string]string)
-			b.matcher.Store(nil)
-		}
-		maps.Copy(b.translations[lang], translations)
-		return nil
-	}
 }
 
 // New creates a new Bundle and applies the given options to load translations.
@@ -259,28 +186,6 @@ func (b *Bundle) TCTX(ctx context.Context, key string) string {
 // the given context. See [Bundle.TCTX] for the resolution order.
 func (b *Bundle) TfCTX(ctx context.Context, key string, args ...any) string {
 	return b.Tf(b.resolveLanguage(ctx), key, args...)
-}
-
-// resolveLanguage determines the Language from a context using the following
-// priority chain:
-//  1. Direct Language from [WithLanguage]
-//  2. Accept-Language header from an *http.Request stored via [WithRequest]
-//  3. [Default]
-func (b *Bundle) resolveLanguage(ctx context.Context) Language {
-	if lang, ok := LanguageFromContext(ctx); ok && lang != "" {
-		if b.HasLanguage(lang) {
-			return lang
-		}
-	}
-
-	if r, ok := RequestFromContext(ctx); ok && r != nil {
-		lang := resolveFromRequest(b, r)
-		if lang != Default || b.HasLanguage(Default) {
-			return lang
-		}
-	}
-
-	return Default
 }
 
 // Has reports whether a translation exists for the given key and language.
@@ -355,6 +260,28 @@ func (b *Bundle) HasLanguage(lang Language) bool {
 	return ok
 }
 
+// resolveLanguage determines the Language from a context using the following
+// priority chain:
+//  1. Direct Language from [WithLanguage]
+//  2. Accept-Language header from an *http.Request stored via [WithRequest]
+//  3. [Default]
+func (b *Bundle) resolveLanguage(ctx context.Context) Language {
+	if lang, ok := LanguageFromContext(ctx); ok && lang != "" {
+		if b.HasLanguage(lang) {
+			return lang
+		}
+	}
+
+	if r, ok := RequestFromContext(ctx); ok && r != nil {
+		lang := resolveFromRequest(b, r)
+		if lang != Default || b.HasLanguage(Default) {
+			return lang
+		}
+	}
+
+	return Default
+}
+
 // loadJSON parses a nested JSON object, flattens it to dot-separated keys, and
 // merges the result into the bundle for the given language.
 // Returns an error if the JSON cannot be parsed.
@@ -377,6 +304,137 @@ func (b *Bundle) loadJSON(lang Language, data []byte) error {
 	}
 	maps.Copy(b.translations[lang], m)
 	return nil
+}
+
+// Option configures a Bundle during creation.
+type Option func(*Bundle) error
+
+// WithFS loads translation files from an embed.FS (or any fs.FS). It scans the
+// given directory for JSON files named by language code (e.g. "en.json",
+// "fr.json", "ja.json") and loads each one automatically. Any language is
+// supported — the language code is derived from the filename.
+// Files that cannot be read or parsed are reported as joined error after the
+// remaining files have been loaded.
+func WithFS(fsys fs.FS, dir string) Option {
+	return func(b *Bundle) error {
+		err := loadDir(b, fsys, dir)
+		if err != nil {
+			return fmt.Errorf("loading translation directory %q failed: %w", dir, err)
+		}
+		return nil
+	}
+}
+
+// WithEmbedFS is an alias for WithFS that explicitly takes an embed.FS.
+// It reads translation files from the given directory inside the embedded filesystem.
+func WithEmbedFS(fsys embed.FS, dir string) Option {
+	return WithFS(fsys, dir)
+}
+
+// WithJSON registers translations for a language from raw JSON bytes.
+// The JSON must be a nested object; dot-separated lookup keys are derived from
+// the nesting hierarchy (e.g. {"page": {"title": "Home"}} is accessed as
+// "page.title"). If the JSON data is malformed, an error is returned when the
+// bundle is created, as it indicates a programming error that should be caught
+// during development.
+func WithJSON(lang Language, data []byte) Option {
+	return func(b *Bundle) error {
+		err := b.loadJSON(lang, data)
+		if err != nil {
+			return fmt.Errorf("loading JSON of language %q failed: %w", lang, err)
+		}
+		return nil
+	}
+}
+
+// WithMap registers translations for a language from a Go map.
+func WithMap(lang Language, translations map[string]string) Option {
+	return func(b *Bundle) error {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		if b.translations[lang] == nil {
+			b.translations[lang] = make(map[string]string)
+			b.matcher.Store(nil)
+		}
+		maps.Copy(b.translations[lang], translations)
+		return nil
+	}
+}
+
+// Supported returns all languages that have translations loaded in the global
+// default bundle. If no translations have been loaded yet the list may be empty.
+func Supported() []Language {
+	return globalBundle.Load().Languages()
+}
+
+// Valid checks if a language code has translations loaded in the global bundle.
+func Valid(lang string) bool {
+	return globalBundle.Load().HasLanguage(Language(strings.ToLower(strings.TrimSpace(lang))))
+}
+
+// Parse normalizes a language string. If the language has no translations
+// loaded in the global bundle, Default is returned.
+func Parse(lang string) Language {
+	l := Language(strings.ToLower(strings.TrimSpace(lang)))
+	if l == "" {
+		return Default
+	}
+	if globalBundle.Load().HasLanguage(l) {
+		return l
+	}
+	return Default
+}
+
+// SetDefault replaces the global default bundle. It should be called early
+// during application startup before any T/Tf calls are made.
+// This function is safe for concurrent use.
+func SetDefault(b *Bundle) {
+	globalBundle.Store(b)
+}
+
+// GetDefault returns the global default bundle.
+// This function is safe for concurrent use.
+func GetDefault() *Bundle {
+	return globalBundle.Load()
+}
+
+// Init initialises the global default bundle with the given options, replacing
+// any previously loaded translations.
+// This function is safe for concurrent use.
+func Init(opts ...Option) error {
+	bundle, err := New(opts...)
+	if err != nil {
+		return fmt.Errorf("creating bundle failed: %w", err)
+	}
+	globalBundle.Store(bundle)
+	return nil
+}
+
+// T translates a key using the global default bundle.
+// This function is safe for concurrent use.
+func T(lang Language, key string) string {
+	return globalBundle.Load().T(lang, key)
+}
+
+// Tf translates and formats a key using the global default bundle.
+// This function is safe for concurrent use.
+func Tf(lang Language, key string, args ...any) string {
+	return globalBundle.Load().Tf(lang, key, args...)
+}
+
+// TCTX translates a key using the language resolved from the given context
+// and the global default bundle. See [Bundle.TCTX] for the resolution order.
+// This function is safe for concurrent use.
+func TCTX(ctx context.Context, key string) string {
+	return globalBundle.Load().TCTX(ctx, key)
+}
+
+// TfCTX translates and formats a key using the language resolved from the
+// given context and the global default bundle. See [Bundle.TCTX] for the
+// resolution order.
+// This function is safe for concurrent use.
+func TfCTX(ctx context.Context, key string, args ...any) string {
+	return globalBundle.Load().TfCTX(ctx, key, args...)
 }
 
 // flattenJSON recursively walks a nested map[string]any and writes dot-separated
@@ -443,68 +501,10 @@ func loadDir(b *Bundle, fsys fs.FS, dir string) error {
 	return errors.Join(errs...)
 }
 
-// ---------------------------------------------------------------------------
-// Global default bundle with package-level convenience functions
-// ---------------------------------------------------------------------------
-
-var globalBundle atomic.Pointer[Bundle]
-
 func init() {
 	bundle, err := New()
 	if err != nil {
 		panic(fmt.Sprintf("initializing i18n bundle failed: %v", err))
 	}
 	globalBundle.Store(bundle)
-}
-
-// SetDefault replaces the global default bundle. It should be called early
-// during application startup before any T/Tf calls are made.
-// This function is safe for concurrent use.
-func SetDefault(b *Bundle) {
-	globalBundle.Store(b)
-}
-
-// GetDefault returns the global default bundle.
-// This function is safe for concurrent use.
-func GetDefault() *Bundle {
-	return globalBundle.Load()
-}
-
-// Init initialises the global default bundle with the given options, replacing
-// any previously loaded translations.
-// This function is safe for concurrent use.
-func Init(opts ...Option) error {
-	bundle, err := New(opts...)
-	if err != nil {
-		return fmt.Errorf("creating bundle failed: %w", err)
-	}
-	globalBundle.Store(bundle)
-	return nil
-}
-
-// T translates a key using the global default bundle.
-// This function is safe for concurrent use.
-func T(lang Language, key string) string {
-	return globalBundle.Load().T(lang, key)
-}
-
-// Tf translates and formats a key using the global default bundle.
-// This function is safe for concurrent use.
-func Tf(lang Language, key string, args ...any) string {
-	return globalBundle.Load().Tf(lang, key, args...)
-}
-
-// TCTX translates a key using the language resolved from the given context
-// and the global default bundle. See [Bundle.TCTX] for the resolution order.
-// This function is safe for concurrent use.
-func TCTX(ctx context.Context, key string) string {
-	return globalBundle.Load().TCTX(ctx, key)
-}
-
-// TfCTX translates and formats a key using the language resolved from the
-// given context and the global default bundle. See [Bundle.TCTX] for the
-// resolution order.
-// This function is safe for concurrent use.
-func TfCTX(ctx context.Context, key string, args ...any) string {
-	return globalBundle.Load().TfCTX(ctx, key, args...)
 }

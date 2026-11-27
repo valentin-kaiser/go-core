@@ -138,15 +138,6 @@ func OnSignal(handlers []func() error, signals ...os.Signal) context.Context {
 	return ctx
 }
 
-// runSignalHandler runs the handler so that a panic in it does not stop the remaining handlers.
-func runSignalHandler(handler func() error) {
-	defer Catch()
-	err := handler()
-	if err != nil {
-		logger.Error().Err(err).Msg("running signal handler failed")
-	}
-}
-
 // WaitForShutdown waits for the provided context to be done, enabling graceful shutdown.
 // This function is designed to be used with defer to ensure the application waits for
 // signal handlers to complete before exiting.
@@ -217,6 +208,15 @@ func SetupGracefulShutdown(handlers []func() error, signals ...os.Signal) func()
 	ctx := OnSignal(handlers, signals...)
 	return func() {
 		WaitForShutdown(ctx)
+	}
+}
+
+// runSignalHandler runs the handler so that a panic in it does not stop the remaining handlers.
+func runSignalHandler(handler func() error) {
+	defer Catch()
+	err := handler()
+	if err != nil {
+		logger.Error().Err(err).Msg("running signal handler failed")
 	}
 }
 

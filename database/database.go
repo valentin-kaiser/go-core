@@ -178,9 +178,6 @@ import (
 	"github.com/valentin-kaiser/go-core/logging"
 )
 
-// Driver is the name of a supported database/sql driver.
-type Driver string
-
 // The supported database drivers.
 const (
 	DriverSQLite   Driver = "sqlite3"
@@ -216,6 +213,9 @@ const (
 	pingTimeout                    = 2 * time.Second
 	pingRetryPause                 = 100 * time.Millisecond
 )
+
+// Driver is the name of a supported database/sql driver.
+type Driver string
 
 // Database represents a database connection instance with its own state and configuration.
 // Multiple instances can be created to manage connections to different databases.

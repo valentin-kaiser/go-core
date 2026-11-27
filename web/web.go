@@ -106,6 +106,13 @@ const (
 	httpsAltPort    = 8443
 )
 
+const (
+	// ProtocolHTTP represents HTTP protocol
+	ProtocolHTTP Protocol = "http"
+	// ProtocolHTTPS represents HTTPS protocol
+	ProtocolHTTPS Protocol = "https"
+)
+
 var (
 	mutex    sync.Mutex
 	instance *Server
@@ -114,13 +121,6 @@ var (
 
 // Protocol represents the protocol type for a server port
 type Protocol string
-
-const (
-	// ProtocolHTTP represents HTTP protocol
-	ProtocolHTTP Protocol = "http"
-	// ProtocolHTTPS represents HTTPS protocol
-	ProtocolHTTPS Protocol = "https"
-)
 
 // ServerPort represents a port configuration with protocol
 type ServerPort struct {
@@ -168,17 +168,6 @@ type Server struct {
 	grpc                  bool                                     // Whether an xrpc service with gRPC routes is mounted
 }
 
-func init() {
-	New()
-}
-
-// Instance returns the singleton instance of the web server
-func Instance() *Server {
-	mutex.Lock()
-	defer mutex.Unlock()
-	return instance
-}
-
 // New creates a new singleton instance of the web server
 func New() *Server {
 	mutex.Lock()
@@ -201,6 +190,13 @@ func New() *Server {
 		onHTTPCode:        make(map[string]map[int]func(http.ResponseWriter, *http.Request)),
 	}
 
+	return instance
+}
+
+// Instance returns the singleton instance of the web server
+func Instance() *Server {
+	mutex.Lock()
+	defer mutex.Unlock()
 	return instance
 }
 
@@ -243,112 +239,6 @@ func (s *Server) Start() *Server {
 		s.Error = err
 	}
 	return s
-}
-
-// registerServer creates the http server of a configured port and stores it in the server map.
-// The caller must hold the write lock.
-func (s *Server) registerServer(config ServerPort) {
-	server := &http.Server{
-		Addr:              net.JoinHostPort(s.host, strconv.FormatUint(uint64(config.Port), decimalBase)),
-		ErrorLog:          s.errorLog,
-		ReadTimeout:       s.readTimeout,
-		ReadHeaderTimeout: s.readHeaderTimeout,
-		WriteTimeout:      s.writeTimeout,
-		IdleTimeout:       s.idleTimeout,
-	}
-	if s.grpc {
-		// gRPC requires HTTP/2, also without TLS
-		protocols := new(http.Protocols)
-		protocols.SetHTTP1(true)
-		protocols.SetHTTP2(true)
-		protocols.SetUnencryptedHTTP2(true)
-		server.Protocols = protocols
-	}
-
-	serverKey := fmt.Sprintf("%s%s%d", config.Protocol, serverKeySeparator, config.Port)
-	if config.Protocol == ProtocolHTTP {
-		server.Handler = s.redirectHandler(config.Port)
-		s.servers[serverKey] = server
-		return
-	}
-
-	server.Handler = s.router
-	server.TLSConfig = s.tlsConfig
-	s.servers[serverKey] = server
-}
-
-// redirectHandler serves the router and answers requests that match a redirect rule of the port with a redirect.
-func (s *Server) redirectHandler(port uint16) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rule := s.redirect(port, r.URL.Path)
-		if rule == nil || !redirectApplies(rule, r) {
-			s.router.ServeHTTP(w, r)
-			return
-		}
-
-		s.serveRedirect(w, r, rule)
-	})
-}
-
-// redirectApplies reports whether the request is neither an exception of the rule nor fails one of its conditions.
-func redirectApplies(rule *RedirectRule, r *http.Request) bool {
-	for _, exception := range rule.Exceptions {
-		if strings.HasPrefix(r.URL.Path, exception) {
-			return false
-		}
-	}
-
-	for _, condition := range rule.Conditions {
-		if !condition(r) {
-			return false
-		}
-	}
-	return true
-}
-
-// serveRedirect redirects the request to the target of the rule and keeps the requested host.
-func (s *Server) serveRedirect(w http.ResponseWriter, r *http.Request, rule *RedirectRule) {
-	h, _, err := net.SplitHostPort(r.Host)
-	if err != nil {
-		logger.Error().Err(err).Msg("splitting host and port from request failed")
-		http.Error(w, "Bad Request", http.StatusBadRequest)
-		return
-	}
-	ip := net.ParseIP(h)
-	if ip != nil && ip.To16() != nil && ip.To4() == nil {
-		h = "[" + ip.String() + "]"
-	}
-
-	targetProtocol := s.getProtocolForPort(rule.TargetPort)
-	targetURL := fmt.Sprintf("%s://%s:%d%s", targetProtocol, h, rule.TargetPort, rule.TargetRoute)
-
-	logger.Trace().Fields(
-		logging.F("source_path", r.URL.Path),
-		logging.F("target_url", targetURL),
-		logging.F("redirect_code", rule.Code),
-	).Msg("redirecting request")
-
-	http.Redirect(w, r, targetURL, rule.Code) //nolint:gosec // target is built from the configured redirect rule, the host is only re-used from the request itself
-}
-
-// runServer runs the server until it is closed. The protocol is read from the server key.
-func runServer(key string, server *http.Server) error {
-	protocol, _, _ := strings.Cut(key, serverKeySeparator)
-	logger.Info().Fields(logging.F("addr", server.Addr), logging.F("protocol", protocol)).Msg("listening")
-
-	if protocol == string(ProtocolHTTPS) {
-		err := server.ListenAndServeTLS("", "")
-		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			return apperror.NewError("starting https server failed").AddError(err)
-		}
-		return nil
-	}
-
-	err := server.ListenAndServe()
-	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		return apperror.NewError("starting http server failed").AddError(err)
-	}
-	return nil
 }
 
 // StartAsync starts the web server asynchronously
@@ -437,29 +327,6 @@ func (s *Server) RestartAsync(done chan error) {
 	}
 
 	s.StartAsync(done)
-}
-
-// shutdownServers gracefully shuts down all running servers and logs the given message first.
-// The caller must hold the read lock.
-func (s *Server) shutdownServers(message string) error {
-	if len(s.servers) == 0 {
-		return nil
-	}
-
-	logger.Trace().Msg(message)
-	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), shutdownTimeout)
-	defer shutdownRelease()
-
-	for key, server := range s.servers {
-		if server == nil {
-			continue
-		}
-		err := server.Shutdown(shutdownCtx)
-		if err != nil {
-			return apperror.NewErrorf("shutting down %s server failed", key).AddError(err)
-		}
-	}
-	return nil
 }
 
 // WithHandler adds a custom handler to the server
@@ -805,35 +672,6 @@ func (s *Server) Redirect(sourcePort uint16, targetPort uint16, sourceRoute stri
 		TargetRoute: targetRoute,
 		Code:        http.StatusMovedPermanently,
 	})
-}
-
-// getRedirectTarget finds a matching redirect rule for the given port and path
-func (s *Server) redirect(sourcePort uint16, path string) *RedirectRule {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-
-	for _, rule := range s.redirectRules {
-		if rule.SourcePort == sourcePort && strings.HasPrefix(path, rule.SourceRoute) {
-			return &rule
-		}
-	}
-	return nil
-}
-
-// getProtocolForPort returns the protocol (http/https) for a given port
-func (s *Server) getProtocolForPort(port uint16) string {
-	s.mutex.RLock()
-	defer s.mutex.RUnlock()
-
-	for _, p := range s.ports {
-		if p.Port == port {
-			return string(p.Protocol)
-		}
-	}
-	if port == httpsPort || port == httpsAltPort {
-		return string(ProtocolHTTPS)
-	}
-	return string(ProtocolHTTP)
 }
 
 // WithTLS sets the TLS configuration for the web server
@@ -1288,4 +1126,166 @@ func (s *Server) WithOnHTTPCode(code int, pattern []string, handler func(http.Re
 		s.router.OnStatus(p, code, handler)
 	}
 	return s
+}
+
+// registerServer creates the http server of a configured port and stores it in the server map.
+// The caller must hold the write lock.
+func (s *Server) registerServer(config ServerPort) {
+	server := &http.Server{
+		Addr:              net.JoinHostPort(s.host, strconv.FormatUint(uint64(config.Port), decimalBase)),
+		ErrorLog:          s.errorLog,
+		ReadTimeout:       s.readTimeout,
+		ReadHeaderTimeout: s.readHeaderTimeout,
+		WriteTimeout:      s.writeTimeout,
+		IdleTimeout:       s.idleTimeout,
+	}
+	if s.grpc {
+		// gRPC requires HTTP/2, also without TLS
+		protocols := new(http.Protocols)
+		protocols.SetHTTP1(true)
+		protocols.SetHTTP2(true)
+		protocols.SetUnencryptedHTTP2(true)
+		server.Protocols = protocols
+	}
+
+	serverKey := fmt.Sprintf("%s%s%d", config.Protocol, serverKeySeparator, config.Port)
+	if config.Protocol == ProtocolHTTP {
+		server.Handler = s.redirectHandler(config.Port)
+		s.servers[serverKey] = server
+		return
+	}
+
+	server.Handler = s.router
+	server.TLSConfig = s.tlsConfig
+	s.servers[serverKey] = server
+}
+
+// redirectHandler serves the router and answers requests that match a redirect rule of the port with a redirect.
+func (s *Server) redirectHandler(port uint16) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rule := s.redirect(port, r.URL.Path)
+		if rule == nil || !redirectApplies(rule, r) {
+			s.router.ServeHTTP(w, r)
+			return
+		}
+
+		s.serveRedirect(w, r, rule)
+	})
+}
+
+// serveRedirect redirects the request to the target of the rule and keeps the requested host.
+func (s *Server) serveRedirect(w http.ResponseWriter, r *http.Request, rule *RedirectRule) {
+	h, _, err := net.SplitHostPort(r.Host)
+	if err != nil {
+		logger.Error().Err(err).Msg("splitting host and port from request failed")
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
+	}
+	ip := net.ParseIP(h)
+	if ip != nil && ip.To16() != nil && ip.To4() == nil {
+		h = "[" + ip.String() + "]"
+	}
+
+	targetProtocol := s.getProtocolForPort(rule.TargetPort)
+	targetURL := fmt.Sprintf("%s://%s:%d%s", targetProtocol, h, rule.TargetPort, rule.TargetRoute)
+
+	logger.Trace().Fields(
+		logging.F("source_path", r.URL.Path),
+		logging.F("target_url", targetURL),
+		logging.F("redirect_code", rule.Code),
+	).Msg("redirecting request")
+
+	http.Redirect(w, r, targetURL, rule.Code) //nolint:gosec // target is built from the configured redirect rule, the host is only re-used from the request itself
+}
+
+// shutdownServers gracefully shuts down all running servers and logs the given message first.
+// The caller must hold the read lock.
+func (s *Server) shutdownServers(message string) error {
+	if len(s.servers) == 0 {
+		return nil
+	}
+
+	logger.Trace().Msg(message)
+	shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer shutdownRelease()
+
+	for key, server := range s.servers {
+		if server == nil {
+			continue
+		}
+		err := server.Shutdown(shutdownCtx)
+		if err != nil {
+			return apperror.NewErrorf("shutting down %s server failed", key).AddError(err)
+		}
+	}
+	return nil
+}
+
+// getRedirectTarget finds a matching redirect rule for the given port and path
+func (s *Server) redirect(sourcePort uint16, path string) *RedirectRule {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	for _, rule := range s.redirectRules {
+		if rule.SourcePort == sourcePort && strings.HasPrefix(path, rule.SourceRoute) {
+			return &rule
+		}
+	}
+	return nil
+}
+
+// getProtocolForPort returns the protocol (http/https) for a given port
+func (s *Server) getProtocolForPort(port uint16) string {
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+
+	for _, p := range s.ports {
+		if p.Port == port {
+			return string(p.Protocol)
+		}
+	}
+	if port == httpsPort || port == httpsAltPort {
+		return string(ProtocolHTTPS)
+	}
+	return string(ProtocolHTTP)
+}
+
+func init() {
+	New()
+}
+
+// redirectApplies reports whether the request is neither an exception of the rule nor fails one of its conditions.
+func redirectApplies(rule *RedirectRule, r *http.Request) bool {
+	for _, exception := range rule.Exceptions {
+		if strings.HasPrefix(r.URL.Path, exception) {
+			return false
+		}
+	}
+
+	for _, condition := range rule.Conditions {
+		if !condition(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// runServer runs the server until it is closed. The protocol is read from the server key.
+func runServer(key string, server *http.Server) error {
+	protocol, _, _ := strings.Cut(key, serverKeySeparator)
+	logger.Info().Fields(logging.F("addr", server.Addr), logging.F("protocol", protocol)).Msg("listening")
+
+	if protocol == string(ProtocolHTTPS) {
+		err := server.ListenAndServeTLS("", "")
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return apperror.NewError("starting https server failed").AddError(err)
+		}
+		return nil
+	}
+
+	err := server.ListenAndServe()
+	if err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return apperror.NewError("starting http server failed").AddError(err)
+	}
+	return nil
 }

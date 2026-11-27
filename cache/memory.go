@@ -16,16 +16,17 @@ const (
 	fnvPrime32       = 16777619
 )
 
-// MemoryCache implements an in-memory cache with LRU eviction support
-type MemoryCache struct {
-	*BaseCache
-
-	// shards split the keys, each with its own lock and LRU list. With Config.Shards of 0 or 1
-	// there is one shard and the cache behaves as one exact LRU.
-	shards    []*memShard
-	native    InMemorySerializer // set when the serializer keeps values without encoding them
-	stopChan  chan struct{}
-	cleanupWg sync.WaitGroup
+// memoryItem represents an item stored in memory cache
+type memoryItem struct {
+	item     *Item
+	dataSize int64
+	// accessed is the time of the last read in unix nanoseconds. Readers only set this
+	// atomic and hold the shared lock; the LRU list is reordered lazily when an item is
+	// about to be evicted (see evictLRU), so reads never need the exclusive lock.
+	accessed atomic.Int64
+	// promoted is the value of accessed the last time it was applied to the LRU list.
+	// Guarded by the exclusive lock.
+	promoted int64
 }
 
 // memShard is one slice of the key space
@@ -40,17 +41,16 @@ func newMemShard(index int) *memShard {
 	return &memShard{index: index, items: make(map[string]*list.Element), lruList: list.New()}
 }
 
-// memoryItem represents an item stored in memory cache
-type memoryItem struct {
-	item     *Item
-	dataSize int64
-	// accessed is the time of the last read in unix nanoseconds. Readers only set this
-	// atomic and hold the shared lock; the LRU list is reordered lazily when an item is
-	// about to be evicted (see evictLRU), so reads never need the exclusive lock.
-	accessed atomic.Int64
-	// promoted is the value of accessed the last time it was applied to the LRU list.
-	// Guarded by the exclusive lock.
-	promoted int64
+// MemoryCache implements an in-memory cache with LRU eviction support
+type MemoryCache struct {
+	*BaseCache
+
+	// shards split the keys, each with its own lock and LRU list. With Config.Shards of 0 or 1
+	// there is one shard and the cache behaves as one exact LRU.
+	shards    []*memShard
+	native    InMemorySerializer // set when the serializer keeps values without encoding them
+	stopChan  chan struct{}
+	cleanupWg sync.WaitGroup
 }
 
 // NewMemoryCache creates a new in-memory cache with default configuration.
@@ -99,36 +99,6 @@ func NewMemoryCacheWithConfig(config Config) *MemoryCache {
 	}
 
 	return mc
-}
-
-// shardFor returns the shard that holds the key
-func (mc *MemoryCache) shardFor(formattedKey string) *memShard {
-	if len(mc.shards) == 1 {
-		return mc.shards[0]
-	}
-	// FNV-1a
-	h := uint32(fnvOffsetBasis32)
-	for i := 0; i < len(formattedKey); i++ {
-		h ^= uint32(formattedKey[i])
-		h *= fnvPrime32
-	}
-	return mc.shards[h%uint32(len(mc.shards))]
-}
-
-// shardLimit is the number of items the shard may hold. The second result is false when the
-// cache has no size limit. MaxSize is divided exactly: the first MaxSize%n shards hold one item
-// more than the others, so the limits add up to MaxSize. A shard can have a limit of 0 when
-// MaxSize is smaller than the number of shards, and then it holds nothing.
-func (mc *MemoryCache) shardLimit(sh *memShard) (int64, bool) {
-	if mc.config.MaxSize <= 0 {
-		return 0, false
-	}
-	n := int64(len(mc.shards))
-	limit := mc.config.MaxSize / n
-	if int64(sh.index) < mc.config.MaxSize%n {
-		limit++
-	}
-	return limit, true
 }
 
 // WithMaxSize sets the maximum number of items in the cache
@@ -323,18 +293,6 @@ func (mc *MemoryCache) Delete(_ context.Context, key string) error {
 	mc.updateStats(func(s *Stats) { s.Deletes++ })
 	mc.emitEvent(EventDelete, key, nil, nil)
 	return nil
-}
-
-// removeIfExpired removes the key if it is still expired. The caller must not hold the lock:
-// the entry may have been removed or replaced by a fresh value since it was seen.
-func (mc *MemoryCache) removeIfExpired(sh *memShard, formattedKey string) {
-	sh.mutex.Lock()
-	defer sh.mutex.Unlock()
-	if element, exists := sh.items[formattedKey]; exists {
-		if memItem, ok := element.Value.(*memoryItem); ok && memItem.item.IsExpired() {
-			mc.removeElement(sh, element, formattedKey)
-		}
-	}
 }
 
 // Exists checks if a key exists in the cache
@@ -535,6 +493,48 @@ func (mc *MemoryCache) GetMemoryUsage() int64 {
 	mc.mutex.RLock()
 	defer mc.mutex.RUnlock()
 	return mc.stats.Memory
+}
+
+// shardFor returns the shard that holds the key
+func (mc *MemoryCache) shardFor(formattedKey string) *memShard {
+	if len(mc.shards) == 1 {
+		return mc.shards[0]
+	}
+	// FNV-1a
+	h := uint32(fnvOffsetBasis32)
+	for i := 0; i < len(formattedKey); i++ {
+		h ^= uint32(formattedKey[i])
+		h *= fnvPrime32
+	}
+	return mc.shards[h%uint32(len(mc.shards))]
+}
+
+// shardLimit is the number of items the shard may hold. The second result is false when the
+// cache has no size limit. MaxSize is divided exactly: the first MaxSize%n shards hold one item
+// more than the others, so the limits add up to MaxSize. A shard can have a limit of 0 when
+// MaxSize is smaller than the number of shards, and then it holds nothing.
+func (mc *MemoryCache) shardLimit(sh *memShard) (int64, bool) {
+	if mc.config.MaxSize <= 0 {
+		return 0, false
+	}
+	n := int64(len(mc.shards))
+	limit := mc.config.MaxSize / n
+	if int64(sh.index) < mc.config.MaxSize%n {
+		limit++
+	}
+	return limit, true
+}
+
+// removeIfExpired removes the key if it is still expired. The caller must not hold the lock:
+// the entry may have been removed or replaced by a fresh value since it was seen.
+func (mc *MemoryCache) removeIfExpired(sh *memShard, formattedKey string) {
+	sh.mutex.Lock()
+	defer sh.mutex.Unlock()
+	if element, exists := sh.items[formattedKey]; exists {
+		if memItem, ok := element.Value.(*memoryItem); ok && memItem.item.IsExpired() {
+			mc.removeElement(sh, element, formattedKey)
+		}
+	}
 }
 
 // removeElement removes an element from the shard (must be called with the shard lock held)

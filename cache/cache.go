@@ -99,6 +99,21 @@ const (
 	namespaceSeparator = ":"
 )
 
+const (
+	// EventSet represents a cache set event
+	EventSet EventType = iota
+	// EventGet represents a cache get event
+	EventGet
+	// EventDelete represents a cache delete event
+	EventDelete
+	// EventEvict represents a cache eviction event
+	EventEvict
+	// EventExpire represents a cache expiration event
+	EventExpire
+	// EventClear represents a cache clear event
+	EventClear
+)
+
 // Cache defines the interface for cache implementations
 type Cache interface {
 	// Get retrieves a value from the cache and deserializes it into the provided destination
@@ -174,21 +189,6 @@ func (i *Item) IsExpired() bool {
 
 // EventType represents cache event types
 type EventType int
-
-const (
-	// EventSet represents a cache set event
-	EventSet EventType = iota
-	// EventGet represents a cache get event
-	EventGet
-	// EventDelete represents a cache delete event
-	EventDelete
-	// EventEvict represents a cache eviction event
-	EventEvict
-	// EventExpire represents a cache expiration event
-	EventExpire
-	// EventClear represents a cache clear event
-	EventClear
-)
 
 // String returns the string representation of the event type
 func (e EventType) String() string {
@@ -350,23 +350,33 @@ func (s *NoOpSerializer) Deserialize(data []byte, dest any) error {
 	}
 }
 
-// DefaultConfig returns a default cache configuration
-func DefaultConfig() Config {
-	const (
-		defaultMaxSize         = 1000
-		defaultTTL             = time.Hour
-		defaultCleanupInterval = 5 * time.Minute
-	)
+// Error represents a cache-specific error
+type Error struct {
+	Op  string
+	Key string
+	Err error
+}
 
-	return Config{
-		MaxSize:         defaultMaxSize,
-		DefaultTTL:      defaultTTL,
-		CleanupInterval: defaultCleanupInterval,
-		EnableLRU:       true,
-		EnableStats:     true,
-		EnableEvents:    false,
-		Serializer:      &JSONSerializer{},
+// NewCacheError creates a new cache error
+func NewCacheError(op, key string, err error) *Error {
+	return &Error{
+		Op:  op,
+		Key: key,
+		Err: err,
 	}
+}
+
+// Error implements the error interface
+func (e *Error) Error() string {
+	if e.Key != "" {
+		return fmt.Sprintf("cache %s failed for key '%s': %v", e.Op, e.Key, e.Err)
+	}
+	return fmt.Sprintf("cache %s failed: %v", e.Op, e.Err)
+}
+
+// Unwrap returns the underlying error
+func (e *Error) Unwrap() error {
+	return e.Err
 }
 
 // BaseCache provides common functionality for cache implementations
@@ -485,31 +495,21 @@ func (bc *BaseCache) calculateTTL(ttl time.Duration) time.Duration {
 	return ttl
 }
 
-// Error represents a cache-specific error
-type Error struct {
-	Op  string
-	Key string
-	Err error
-}
+// DefaultConfig returns a default cache configuration
+func DefaultConfig() Config {
+	const (
+		defaultMaxSize         = 1000
+		defaultTTL             = time.Hour
+		defaultCleanupInterval = 5 * time.Minute
+	)
 
-// NewCacheError creates a new cache error
-func NewCacheError(op, key string, err error) *Error {
-	return &Error{
-		Op:  op,
-		Key: key,
-		Err: err,
+	return Config{
+		MaxSize:         defaultMaxSize,
+		DefaultTTL:      defaultTTL,
+		CleanupInterval: defaultCleanupInterval,
+		EnableLRU:       true,
+		EnableStats:     true,
+		EnableEvents:    false,
+		Serializer:      &JSONSerializer{},
 	}
-}
-
-// Error implements the error interface
-func (e *Error) Error() string {
-	if e.Key != "" {
-		return fmt.Sprintf("cache %s failed for key '%s': %v", e.Op, e.Key, e.Err)
-	}
-	return fmt.Sprintf("cache %s failed: %v", e.Op, e.Err)
-}
-
-// Unwrap returns the underlying error
-func (e *Error) Unwrap() error {
-	return e.Err
 }

@@ -58,6 +58,29 @@ const (
 	ipv6PrefixSuffix     = "/128"
 )
 
+const (
+	// MiddlewareOrderDefault is the default execution order for middlewares.
+	// It is invoked at the same level as the original handler.
+	MiddlewareOrderDefault MiddlewareOrder = 0
+	// MiddlewareOrderLow represents the lowest execution order.
+	// Middlewares with negative values (-128 to -1) are called before the original handler.
+	MiddlewareOrderLow MiddlewareOrder = -128
+	// MiddlewareOrderHigh represents the highest execution order.
+	// Middlewares with positive values (1 to 127) are called after the original handler.
+	MiddlewareOrderHigh MiddlewareOrder = 127
+	// MiddlewareOrderSecurity is a specific order typically used for security-related middlewares.
+	// It is called before the handler.
+	MiddlewareOrderSecurity MiddlewareOrder = -127
+	// MiddlewareOrderCors is a specific order typically used for CORS-related middlewares.
+	// It is called before the handler.
+	MiddlewareOrderCors MiddlewareOrder = -126
+	// MiddlewareOrderLog is a specific order typically used for logging middlewares.
+	// It is called after the handler.
+	MiddlewareOrderLog MiddlewareOrder = 126
+	// MiddlewareOrderGzip is a specific order typically used for gzip compression middlewares.
+	MiddlewareOrderGzip MiddlewareOrder = 127
+)
+
 var (
 	securityHeaders = map[string]string{
 		headerETag:               version.GitCommit,
@@ -81,28 +104,27 @@ type Middleware func(http.Handler) http.Handler
 // MiddlewareOrder defines the order in which middlewares are executed.
 type MiddlewareOrder int8
 
-const (
-	// MiddlewareOrderDefault is the default execution order for middlewares.
-	// It is invoked at the same level as the original handler.
-	MiddlewareOrderDefault MiddlewareOrder = 0
-	// MiddlewareOrderLow represents the lowest execution order.
-	// Middlewares with negative values (-128 to -1) are called before the original handler.
-	MiddlewareOrderLow MiddlewareOrder = -128
-	// MiddlewareOrderHigh represents the highest execution order.
-	// Middlewares with positive values (1 to 127) are called after the original handler.
-	MiddlewareOrderHigh MiddlewareOrder = 127
-	// MiddlewareOrderSecurity is a specific order typically used for security-related middlewares.
-	// It is called before the handler.
-	MiddlewareOrderSecurity MiddlewareOrder = -127
-	// MiddlewareOrderCors is a specific order typically used for CORS-related middlewares.
-	// It is called before the handler.
-	MiddlewareOrderCors MiddlewareOrder = -126
-	// MiddlewareOrderLog is a specific order typically used for logging middlewares.
-	// It is called after the handler.
-	MiddlewareOrderLog MiddlewareOrder = 126
-	// MiddlewareOrderGzip is a specific order typically used for gzip compression middlewares.
-	MiddlewareOrderGzip MiddlewareOrder = 127
-)
+// CORSConfig defines custom CORS rules for the server.
+// When passed as nil to WithCORSHeaders, the default permissive CORS headers are used.
+type CORSConfig struct {
+	// AllowOrigin sets the Access-Control-Allow-Origin header. Ignored if AllowOrigins is set.
+	AllowOrigin string
+	// AllowOrigins lists multiple exact origins that are allowed. When set, it takes
+	// precedence over AllowOrigin. Unlike AllowOrigin, this is never treated as a
+	// static header value: the request Origin is validated against the list and
+	// reflected back on a match, same as the single-origin credentialed path.
+	AllowOrigins []string
+	// AllowMethods sets the Access-Control-Allow-Methods header.
+	AllowMethods []string
+	// AllowHeaders sets the Access-Control-Allow-Headers header.
+	AllowHeaders []string
+	// AllowCredentials sets the Access-Control-Allow-Credentials header.
+	AllowCredentials bool
+	// MaxAge sets the Access-Control-Max-Age header in seconds. Omitted if 0.
+	MaxAge int
+	// ExposeHeaders sets the Access-Control-Expose-Headers header. Omitted if empty.
+	ExposeHeaders []string
+}
 
 // securityHeaderMiddlewareWithServer creates a security header middleware with access to server configuration
 func securityHeaderMiddlewareWithServer(server *Server) func(http.Handler) http.Handler {
@@ -143,28 +165,6 @@ func setSecurityHeaders(w http.ResponseWriter, cacheControl string) {
 	if cacheControl != "" {
 		w.Header().Set(headerCacheControl, cacheControl)
 	}
-}
-
-// CORSConfig defines custom CORS rules for the server.
-// When passed as nil to WithCORSHeaders, the default permissive CORS headers are used.
-type CORSConfig struct {
-	// AllowOrigin sets the Access-Control-Allow-Origin header. Ignored if AllowOrigins is set.
-	AllowOrigin string
-	// AllowOrigins lists multiple exact origins that are allowed. When set, it takes
-	// precedence over AllowOrigin. Unlike AllowOrigin, this is never treated as a
-	// static header value: the request Origin is validated against the list and
-	// reflected back on a match, same as the single-origin credentialed path.
-	AllowOrigins []string
-	// AllowMethods sets the Access-Control-Allow-Methods header.
-	AllowMethods []string
-	// AllowHeaders sets the Access-Control-Allow-Headers header.
-	AllowHeaders []string
-	// AllowCredentials sets the Access-Control-Allow-Credentials header.
-	AllowCredentials bool
-	// MaxAge sets the Access-Control-Max-Age header in seconds. Omitted if 0.
-	MaxAge int
-	// ExposeHeaders sets the Access-Control-Expose-Headers header. Omitted if empty.
-	ExposeHeaders []string
 }
 
 // corsHeaderMiddleware is a middleware that adds CORS headers to the response

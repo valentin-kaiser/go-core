@@ -46,35 +46,6 @@ type Client struct {
 	nextID    atomic.Uint64
 }
 
-// ClientOption configures a Client.
-type ClientOption func(*Client)
-
-// WithProtocol selects the JSON or XML encoding. The default is JSON.
-func WithProtocol(p Protocol) ClientOption { return func(c *Client) { c.protocol = p } }
-
-// WithHTTPClient sets the HTTP client used for unary JSON and XML calls.
-func WithHTTPClient(h *http.Client) ClientOption { return func(c *Client) { c.http = h } }
-
-// WithUserAgent sets the User-Agent header of HTTP and WebSocket requests.
-func WithUserAgent(agent string) ClientOption { return func(c *Client) { c.userAgent = agent } }
-
-// WithHeader adds headers to every HTTP and WebSocket request, or metadata to gRPC calls.
-func WithHeader(h http.Header) ClientOption { return func(c *Client) { c.header = h.Clone() } }
-
-// WithTLSConfig sets the TLS configuration for WebSocket connections.
-func WithTLSConfig(cfg *tls.Config) ClientOption { return func(c *Client) { c.tls = cfg } }
-
-// WithClientFieldNames makes the client send field names instead of field numbers.
-func WithClientFieldNames() ClientOption { return func(c *Client) { c.codec.names = true } }
-
-// WithGRPCConn makes the client use gRPC over conn; the endpoint is ignored.
-func WithGRPCConn(conn *grpc.ClientConn) ClientOption {
-	return func(c *Client) {
-		c.conn = conn
-		c.protocol = ProtocolGRPC
-	}
-}
-
 // NewClient creates a client for the given endpoint URL, e.g. "http://localhost:8080/rpc".
 func NewClient(endpoint string, opts ...ClientOption) (*Client, error) {
 	c := &Client{
@@ -104,29 +75,6 @@ func NewClient(endpoint string, opts ...ClientOption) (*Client, error) {
 		return nil, apperror.NewErrorf("unsupported protocol %q", c.protocol)
 	}
 	return c, nil
-}
-
-func grpcPath(method string) string {
-	if strings.Contains(method, pathSeparator) {
-		return pathSeparator + strings.TrimPrefix(method, pathSeparator)
-	}
-	if before, after, ok := strings.CutLast(method, "."); ok {
-		return pathSeparator + before + pathSeparator + after
-	}
-	return pathSeparator + method
-}
-
-func (c *Client) grpcContext(ctx context.Context) context.Context {
-	var pairs []string
-	for k, vs := range c.header {
-		for _, v := range vs {
-			pairs = append(pairs, strings.ToLower(k), v)
-		}
-	}
-	if len(pairs) == 0 {
-		return ctx
-	}
-	return metadata.AppendToOutgoingContext(ctx, pairs...)
 }
 
 // Call performs a unary call.
@@ -186,22 +134,18 @@ func (c *Client) Call(ctx context.Context, method string, in, out proto.Message)
 	return envs[0].bind(out)
 }
 
-// sameID reports whether got matches want. XML ids are attributes and carry no numeric type.
-func sameID(got, want rpcID, textOnly bool) bool {
-	if textOnly {
-		return got.set && got.text == want.text
+func (c *Client) grpcContext(ctx context.Context) context.Context {
+	var pairs []string
+	for k, vs := range c.header {
+		for _, v := range vs {
+			pairs = append(pairs, strings.ToLower(k), v)
+		}
 	}
-	return got.key() == want.key()
-}
-
-func truncate(b []byte, n int) string {
-	if len(b) > n {
-		b = b[:n]
+	if len(pairs) == 0 {
+		return ctx
 	}
-	return strings.TrimSpace(string(b))
+	return metadata.AppendToOutgoingContext(ctx, pairs...)
 }
-
-type nextFunc func(context.Context) (proto.Message, bool)
 
 // stream runs a streaming call. first is the request of a server stream, next
 // supplies the messages of client and bidirectional streams, deliver receives
@@ -255,22 +199,6 @@ func (c *Client) streamGRPC(ctx context.Context, method string, k kind, first pr
 		err = deliver(msg)
 		if err != nil {
 			return apperror.NewError("delivering grpc message failed").AddError(err)
-		}
-	}
-}
-
-// sendGRPCMessages forwards the messages of next to the stream and closes the send side when next is exhausted.
-func sendGRPCMessages(ctx context.Context, cs grpc.ClientStream, next nextFunc) {
-	for {
-		msg, ok := next(ctx)
-		if !ok {
-			apperror.Catch(cs.CloseSend, "closing client stream failed")
-			return
-		}
-		err := cs.SendMsg(msg)
-		if err != nil {
-			logger.Trace().Err(err).Msg("sending grpc message failed")
-			return
 		}
 	}
 }
@@ -400,6 +328,11 @@ func (c *Client) streamWS(ctx context.Context, method string, first proto.Messag
 	}
 }
 
+// ClientOption configures a Client.
+type ClientOption func(*Client)
+
+type nextFunc func(context.Context) (proto.Message, bool)
+
 // wsSender is the sending side of a websocket stream.
 type wsSender struct {
 	w       wire
@@ -448,29 +381,29 @@ func (s *wsSender) sendClose(ctx context.Context) {
 	}
 }
 
-func chanNext[T proto.Message](in <-chan T) nextFunc {
-	return func(ctx context.Context) (proto.Message, bool) {
-		select {
-		case m, ok := <-in:
-			return m, ok
-		case <-ctx.Done():
-			return nil, false
-		}
-	}
-}
+// WithProtocol selects the JSON or XML encoding. The default is JSON.
+func WithProtocol(p Protocol) ClientOption { return func(c *Client) { c.protocol = p } }
 
-func chanDeliver[T proto.Message](ctx context.Context, out chan<- T) func(proto.Message) error {
-	return func(m proto.Message) error {
-		v, ok := m.(T)
-		if !ok {
-			return apperror.NewError("unexpected message type")
-		}
-		select {
-		case out <- v:
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+// WithHTTPClient sets the HTTP client used for unary JSON and XML calls.
+func WithHTTPClient(h *http.Client) ClientOption { return func(c *Client) { c.http = h } }
+
+// WithUserAgent sets the User-Agent header of HTTP and WebSocket requests.
+func WithUserAgent(agent string) ClientOption { return func(c *Client) { c.userAgent = agent } }
+
+// WithHeader adds headers to every HTTP and WebSocket request, or metadata to gRPC calls.
+func WithHeader(h http.Header) ClientOption { return func(c *Client) { c.header = h.Clone() } }
+
+// WithTLSConfig sets the TLS configuration for WebSocket connections.
+func WithTLSConfig(cfg *tls.Config) ClientOption { return func(c *Client) { c.tls = cfg } }
+
+// WithClientFieldNames makes the client send field names instead of field numbers.
+func WithClientFieldNames() ClientOption { return func(c *Client) { c.codec.names = true } }
+
+// WithGRPCConn makes the client use gRPC over conn; the endpoint is ignored.
+func WithGRPCConn(conn *grpc.ClientConn) ClientOption {
+	return func(c *Client) {
+		c.conn = conn
+		c.protocol = ProtocolGRPC
 	}
 }
 
@@ -498,6 +431,73 @@ func BidiStream[In, Out proto.Message](ctx context.Context, c *Client, method st
 	}
 	defer close(out)
 	return c.stream(ctx, method, kindBidi, nil, chanNext(in), func() proto.Message { return newOut() }, chanDeliver(ctx, out), nil)
+}
+
+func grpcPath(method string) string {
+	if strings.Contains(method, pathSeparator) {
+		return pathSeparator + strings.TrimPrefix(method, pathSeparator)
+	}
+	if before, after, ok := strings.CutLast(method, "."); ok {
+		return pathSeparator + before + pathSeparator + after
+	}
+	return pathSeparator + method
+}
+
+// sameID reports whether got matches want. XML ids are attributes and carry no numeric type.
+func sameID(got, want rpcID, textOnly bool) bool {
+	if textOnly {
+		return got.set && got.text == want.text
+	}
+	return got.key() == want.key()
+}
+
+func truncate(b []byte, n int) string {
+	if len(b) > n {
+		b = b[:n]
+	}
+	return strings.TrimSpace(string(b))
+}
+
+// sendGRPCMessages forwards the messages of next to the stream and closes the send side when next is exhausted.
+func sendGRPCMessages(ctx context.Context, cs grpc.ClientStream, next nextFunc) {
+	for {
+		msg, ok := next(ctx)
+		if !ok {
+			apperror.Catch(cs.CloseSend, "closing client stream failed")
+			return
+		}
+		err := cs.SendMsg(msg)
+		if err != nil {
+			logger.Trace().Err(err).Msg("sending grpc message failed")
+			return
+		}
+	}
+}
+
+func chanNext[T proto.Message](in <-chan T) nextFunc {
+	return func(ctx context.Context) (proto.Message, bool) {
+		select {
+		case m, ok := <-in:
+			return m, ok
+		case <-ctx.Done():
+			return nil, false
+		}
+	}
+}
+
+func chanDeliver[T proto.Message](ctx context.Context, out chan<- T) func(proto.Message) error {
+	return func(m proto.Message) error {
+		v, ok := m.(T)
+		if !ok {
+			return apperror.NewError("unexpected message type")
+		}
+		select {
+		case out <- v:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 }
 
 // closeOnce wraps c so that closing it repeatedly is safe: the first call closes

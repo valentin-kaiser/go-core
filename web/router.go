@@ -43,24 +43,6 @@ type Router struct {
 	state atomic.Pointer[routeState]
 }
 
-type limitStore struct {
-	mutex sync.Mutex
-	limit rate.Limit
-	burst int
-	state map[string]*rate.Limiter
-}
-
-func (ls *limitStore) limiter(ip string) *rate.Limiter {
-	ls.mutex.Lock()
-	defer ls.mutex.Unlock()
-	if limiter, exists := ls.state[ip]; exists {
-		return limiter
-	}
-	limiter := rate.NewLimiter(ls.limit, ls.burst)
-	ls.state[ip] = limiter
-	return limiter
-}
-
 // NewRouter creates a new Router instance
 // It initializes the ServeMux and the middlewares map
 func NewRouter() *Router {
@@ -84,35 +66,6 @@ func NewRouter() *Router {
 
 	r.publish()
 	return r
-}
-
-// routeState is the part of the router a request reads before dispatching
-type routeState struct {
-	mux              *http.ServeMux
-	sorted           [][]Middleware
-	onStatusPatterns map[string]struct{}
-	limitedPatterns  map[string]struct{}
-	// limits is a copy published together with limitedPatterns, so a request that matched a
-	// pattern in this snapshot always finds the store that belongs to it
-	limits    map[string]*limitStore
-	whitelist map[string]*net.IPNet
-	blacklist map[string]*net.IPNet
-}
-
-// publish makes the current mux, middlewares and pattern sets visible to requests.
-// Must be called with the mutex held after any of them changed.
-func (router *Router) publish() {
-	limits := make(map[string]*limitStore, len(router.limits))
-	maps.Copy(limits, router.limits)
-	router.state.Store(&routeState{
-		limits:           limits,
-		mux:              router.mux,
-		sorted:           router.sorted,
-		onStatusPatterns: router.onStatusPatterns,
-		limitedPatterns:  router.limitedPatterns,
-		whitelist:        router.whitelist,
-		blacklist:        router.blacklist,
-	})
 }
 
 // ServeHTTP implements the http.Handler interface for the Router
@@ -238,6 +191,22 @@ func (router *Router) GetRegisteredRoutes() []string {
 		patterns = append(patterns, pattern)
 	}
 	return patterns
+}
+
+// publish makes the current mux, middlewares and pattern sets visible to requests.
+// Must be called with the mutex held after any of them changed.
+func (router *Router) publish() {
+	limits := make(map[string]*limitStore, len(router.limits))
+	maps.Copy(limits, router.limits)
+	router.state.Store(&routeState{
+		limits:           limits,
+		mux:              router.mux,
+		sorted:           router.sorted,
+		onStatusPatterns: router.onStatusPatterns,
+		limitedPatterns:  router.limitedPatterns,
+		whitelist:        router.whitelist,
+		blacklist:        router.blacklist,
+	})
 }
 
 // rebuildMux recreates the ServeMux and re-registers all remaining routes
@@ -366,28 +335,6 @@ func (router *Router) wrapWith(sorted [][]Middleware, handler http.Handler) http
 	}
 
 	return handler
-}
-
-// withPattern returns a copy of the set with the pattern added.
-// The sets are read by requests without a lock, so they are replaced instead of modified.
-func withPattern(set map[string]struct{}, pattern string) map[string]struct{} {
-	copied := make(map[string]struct{}, len(set)+1)
-	for k := range set {
-		copied[k] = struct{}{}
-	}
-	copied[pattern] = struct{}{}
-	return copied
-}
-
-// withoutPattern returns a copy of the set without the pattern
-func withoutPattern(set map[string]struct{}, pattern string) map[string]struct{} {
-	copied := make(map[string]struct{}, len(set))
-	for k := range set {
-		if k != pattern {
-			copied[k] = struct{}{}
-		}
-	}
-	return copied
 }
 
 func (router *Router) sort() {
@@ -619,12 +566,6 @@ func (router *Router) clientIP(r *http.Request) string {
 	return ""
 }
 
-// validClientIP reports whether net.ParseIP would accept the address, without allocating
-func validClientIP(s string) bool {
-	addr, err := netip.ParseAddr(s)
-	return err == nil && addr.Zone() == ""
-}
-
 func (router *Router) ipInList(ip net.IP, list map[string]*net.IPNet) bool {
 	for _, network := range list {
 		if network.Contains(ip) {
@@ -645,6 +586,65 @@ func (router *Router) parseIPList(entries []string) ([]*net.IPNet, error) {
 		list = append(list, network)
 	}
 	return list, nil
+}
+
+type limitStore struct {
+	mutex sync.Mutex
+	limit rate.Limit
+	burst int
+	state map[string]*rate.Limiter
+}
+
+func (ls *limitStore) limiter(ip string) *rate.Limiter {
+	ls.mutex.Lock()
+	defer ls.mutex.Unlock()
+	if limiter, exists := ls.state[ip]; exists {
+		return limiter
+	}
+	limiter := rate.NewLimiter(ls.limit, ls.burst)
+	ls.state[ip] = limiter
+	return limiter
+}
+
+// routeState is the part of the router a request reads before dispatching
+type routeState struct {
+	mux              *http.ServeMux
+	sorted           [][]Middleware
+	onStatusPatterns map[string]struct{}
+	limitedPatterns  map[string]struct{}
+	// limits is a copy published together with limitedPatterns, so a request that matched a
+	// pattern in this snapshot always finds the store that belongs to it
+	limits    map[string]*limitStore
+	whitelist map[string]*net.IPNet
+	blacklist map[string]*net.IPNet
+}
+
+// withPattern returns a copy of the set with the pattern added.
+// The sets are read by requests without a lock, so they are replaced instead of modified.
+func withPattern(set map[string]struct{}, pattern string) map[string]struct{} {
+	copied := make(map[string]struct{}, len(set)+1)
+	for k := range set {
+		copied[k] = struct{}{}
+	}
+	copied[pattern] = struct{}{}
+	return copied
+}
+
+// withoutPattern returns a copy of the set without the pattern
+func withoutPattern(set map[string]struct{}, pattern string) map[string]struct{} {
+	copied := make(map[string]struct{}, len(set))
+	for k := range set {
+		if k != pattern {
+			copied[k] = struct{}{}
+		}
+	}
+	return copied
+}
+
+// validClientIP reports whether net.ParseIP would accept the address, without allocating
+func validClientIP(s string) bool {
+	addr, err := netip.ParseAddr(s)
+	return err == nil && addr.Zone() == ""
 }
 
 // withHostPrefix appends the single host prefix (/32 for IPv4, /128 for IPv6) to a plain IP address.

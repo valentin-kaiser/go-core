@@ -9,6 +9,39 @@ import (
 	"golang.org/x/text/language"
 )
 
+// maxCachedHeaders bounds the Accept-Language values remembered per language set
+const (
+	maxCachedHeaders     = 256
+	acceptLanguageHeader = "Accept-Language"
+)
+
+// languageMatcher wraps language.Matcher so it can be held in an atomic.Pointer
+type languageMatcher struct {
+	matcher language.Matcher
+	// results remembers the language resolved for an Accept-Language value
+	results sync.Map
+	cached  atomic.Int64
+}
+
+// resolve parses the header and picks the best supported language, or Default
+func (m *languageMatcher) resolve(b *Bundle, accept string) Language {
+	tags, _, err := language.ParseAcceptLanguage(accept)
+	if err != nil || len(tags) == 0 {
+		return Default
+	}
+	matched, _, _ := m.matcher.Match(tags...)
+
+	// Use the base language to normalize (e.g. "en-US" → "en").
+	base, _ := matched.Base()
+	lang := Language(strings.ToLower(base.String()))
+
+	if b.HasLanguage(lang) {
+		return lang
+	}
+
+	return Default
+}
+
 // Middleware returns an HTTP middleware that resolves the caller's preferred
 // language from the request's Accept-Language header, stores the resolved
 // [Language] in the request context (retrievable via [LanguageFromContext]),
@@ -83,31 +116,6 @@ func resolveFromRequest(b *Bundle, r *http.Request) Language {
 	return lang
 }
 
-// maxCachedHeaders bounds the Accept-Language values remembered per language set
-const (
-	maxCachedHeaders     = 256
-	acceptLanguageHeader = "Accept-Language"
-)
-
-// resolve parses the header and picks the best supported language, or Default
-func (m *languageMatcher) resolve(b *Bundle, accept string) Language {
-	tags, _, err := language.ParseAcceptLanguage(accept)
-	if err != nil || len(tags) == 0 {
-		return Default
-	}
-	matched, _, _ := m.matcher.Match(tags...)
-
-	// Use the base language to normalize (e.g. "en-US" → "en").
-	base, _ := matched.Base()
-	lang := Language(strings.ToLower(base.String()))
-
-	if b.HasLanguage(lang) {
-		return lang
-	}
-
-	return Default
-}
-
 // languageMatcher returns the matcher for the languages loaded in the bundle, or
 // nil if there are none. Building a matcher parses every supported language and
 // is by far the most expensive part of resolving a request, so it is built once
@@ -145,12 +153,4 @@ func (b *Bundle) languageMatcher() *languageMatcher {
 	m := &languageMatcher{matcher: language.NewMatcher(supported)}
 	b.matcher.Store(m)
 	return m
-}
-
-// languageMatcher wraps language.Matcher so it can be held in an atomic.Pointer
-type languageMatcher struct {
-	matcher language.Matcher
-	// results remembers the language resolved for an Accept-Language value
-	results sync.Map
-	cached  atomic.Int64
 }

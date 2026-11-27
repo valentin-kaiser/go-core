@@ -12,6 +12,8 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
+const defaultRegisterTTL = 15 * time.Second
+
 // Descriptor describes a single service instance registered in etcd. Name
 // groups related instances; ID uniquely identifies one instance within a
 // name. Address is the dial target (typically host:port). Metadata holds
@@ -52,8 +54,6 @@ type Registration struct {
 	deregErr error
 	closed   bool
 }
-
-const defaultRegisterTTL = 15 * time.Second
 
 // Register stores the service info in etcd under a freshly granted lease and
 // starts a background keep-alive routine. The lease is automatically revoked
@@ -110,35 +110,6 @@ func (c *Client) Register(ctx context.Context, info Descriptor, ttl time.Duratio
 	return reg, nil
 }
 
-// keepAlive drains the keep-alive responses until the lease is lost, and deregisters the
-// service when the parent context is cancelled.
-func (r *Registration) keepAlive(ctx, keepAliveCtx context.Context, ka <-chan *clientv3.LeaseKeepAliveResponse) {
-	defer close(r.done)
-	for {
-		select {
-		case <-keepAliveCtx.Done():
-			return
-		case <-ctx.Done():
-			apperror.Catch(func() error { return r.Deregister(context.WithoutCancel(ctx)) }, "deregistering service after context cancellation failed")
-			return
-		case _, ok := <-ka:
-			if !ok {
-				return
-			}
-		}
-	}
-}
-
-// abortRegistration revokes the lease of a registration that did not complete and
-// returns cause, extended by the revoke error if revoking failed as well.
-func (c *Client) abortRegistration(ctx context.Context, leaseID clientv3.LeaseID, cause apperror.Error) error {
-	_, err := c.raw.Revoke(context.WithoutCancel(ctx), leaseID)
-	if err != nil {
-		return cause.AddError(err)
-	}
-	return cause
-}
-
 // Info returns the service info backing this registration.
 func (r *Registration) Info() Descriptor { return r.info }
 
@@ -166,4 +137,33 @@ func (r *Registration) Deregister(ctx context.Context) error {
 		r.deregErr = apperror.NewError("revoking etcd lease failed").AddError(err)
 	}
 	return r.deregErr
+}
+
+// keepAlive drains the keep-alive responses until the lease is lost, and deregisters the
+// service when the parent context is cancelled.
+func (r *Registration) keepAlive(ctx, keepAliveCtx context.Context, ka <-chan *clientv3.LeaseKeepAliveResponse) {
+	defer close(r.done)
+	for {
+		select {
+		case <-keepAliveCtx.Done():
+			return
+		case <-ctx.Done():
+			apperror.Catch(func() error { return r.Deregister(context.WithoutCancel(ctx)) }, "deregistering service after context cancellation failed")
+			return
+		case _, ok := <-ka:
+			if !ok {
+				return
+			}
+		}
+	}
+}
+
+// abortRegistration revokes the lease of a registration that did not complete and
+// returns cause, extended by the revoke error if revoking failed as well.
+func (c *Client) abortRegistration(ctx context.Context, leaseID clientv3.LeaseID, cause apperror.Error) error {
+	_, err := c.raw.Revoke(context.WithoutCancel(ctx), leaseID)
+	if err != nil {
+		return cause.AddError(err)
+	}
+	return cause
 }

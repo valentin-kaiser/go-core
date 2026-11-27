@@ -28,6 +28,18 @@ const (
 	dictPairSize = 2
 )
 
+// TemplateData represents data passed to email templates
+type TemplateData struct {
+	// Subject is the email subject
+	Subject string `json:"subject"`
+
+	// Data is the custom data for the template
+	Data any `json:"data"`
+
+	// Metadata contains additional metadata
+	Metadata map[string]any `json:"metadata,omitempty"`
+}
+
 // TemplateManager implements the TemplateManager interface
 type TemplateManager struct {
 	config    TemplateConfig
@@ -175,6 +187,77 @@ func (tm *TemplateManager) RenderTemplate(name string, data any, funcs ...templa
 	return buf.String(), nil
 }
 
+// RenderTemplateContent renders template content directly with the given data and optional custom functions
+func (tm *TemplateManager) RenderTemplateContent(content string, data any, funcs ...template.FuncMap) (string, error) {
+	if tm.Error != nil {
+		return "", tm.Error
+	}
+
+	if content == "" {
+		return "", apperror.NewError("template content cannot be empty")
+	}
+
+	tmpl, err := template.New("inline-template").Funcs(tm.mergedFuncs(funcs)).Parse(content)
+	if err != nil {
+		return "", apperror.NewError("parsing template content failed").AddError(err)
+	}
+
+	var buf bytes.Buffer
+	err = tmpl.Execute(&buf, data)
+	if err != nil {
+		return "", apperror.NewError("executing template content failed").AddError(err)
+	}
+
+	return buf.String(), nil
+}
+
+// ReloadTemplates reloads all templates
+func (tm *TemplateManager) ReloadTemplates() error {
+	if tm.Error != nil {
+		return tm.Error
+	}
+
+	tm.mutex.Lock()
+	defer tm.mutex.Unlock()
+
+	tm.templates = make(map[string]*template.Template)
+	if tm.config.FileSystem != nil {
+		err := tm.loadTemplatesFromFS(tm.config.FileSystem)
+		if err != nil {
+			return apperror.NewError("loading templates from filesystem failed").AddError(err)
+		}
+	}
+
+	if tm.config.TemplatesPath != "" {
+		err := tm.loadTemplatesFromPath(tm.config.TemplatesPath)
+		if err != nil {
+			return apperror.NewError("loading templates from path failed").AddError(err)
+		}
+	}
+
+	return nil
+}
+
+// WithDefaultFuncs adds default template functions to the manager
+func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
+	if tm.Error != nil {
+		return tm
+	}
+
+	if tm.funcs == nil {
+		tm.funcs = make(template.FuncMap)
+	}
+
+	tm.mutex.Lock()
+	defer tm.mutex.Unlock()
+	for key, fn := range DefaultFuncs() {
+		if _, exists := tm.funcs[key]; !exists {
+			tm.funcs[key] = fn
+		}
+	}
+	return tm
+}
+
 // readTemplateSource reads the template from TemplatesPath and falls back to the FileSystem
 func (tm *TemplateManager) readTemplateSource(name string) ([]byte, error) {
 	if tm.config.TemplatesPath != "" {
@@ -253,57 +336,6 @@ func (tm *TemplateManager) mergedFuncs(funcs []template.FuncMap) template.FuncMa
 		maps.Copy(funcMap, customFunc)
 	}
 	return funcMap
-}
-
-// RenderTemplateContent renders template content directly with the given data and optional custom functions
-func (tm *TemplateManager) RenderTemplateContent(content string, data any, funcs ...template.FuncMap) (string, error) {
-	if tm.Error != nil {
-		return "", tm.Error
-	}
-
-	if content == "" {
-		return "", apperror.NewError("template content cannot be empty")
-	}
-
-	tmpl, err := template.New("inline-template").Funcs(tm.mergedFuncs(funcs)).Parse(content)
-	if err != nil {
-		return "", apperror.NewError("parsing template content failed").AddError(err)
-	}
-
-	var buf bytes.Buffer
-	err = tmpl.Execute(&buf, data)
-	if err != nil {
-		return "", apperror.NewError("executing template content failed").AddError(err)
-	}
-
-	return buf.String(), nil
-}
-
-// ReloadTemplates reloads all templates
-func (tm *TemplateManager) ReloadTemplates() error {
-	if tm.Error != nil {
-		return tm.Error
-	}
-
-	tm.mutex.Lock()
-	defer tm.mutex.Unlock()
-
-	tm.templates = make(map[string]*template.Template)
-	if tm.config.FileSystem != nil {
-		err := tm.loadTemplatesFromFS(tm.config.FileSystem)
-		if err != nil {
-			return apperror.NewError("loading templates from filesystem failed").AddError(err)
-		}
-	}
-
-	if tm.config.TemplatesPath != "" {
-		err := tm.loadTemplatesFromPath(tm.config.TemplatesPath)
-		if err != nil {
-			return apperror.NewError("loading templates from path failed").AddError(err)
-		}
-	}
-
-	return nil
 }
 
 // loadTemplatesFromFS loads templates from a filesystem
@@ -429,26 +461,6 @@ func (tm *TemplateManager) parseTemplate(name, content string) (*template.Templa
 	}
 
 	return tmpl, nil
-}
-
-// WithDefaultFuncs adds default template functions to the manager
-func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
-	if tm.Error != nil {
-		return tm
-	}
-
-	if tm.funcs == nil {
-		tm.funcs = make(template.FuncMap)
-	}
-
-	tm.mutex.Lock()
-	defer tm.mutex.Unlock()
-	for key, fn := range DefaultFuncs() {
-		if _, exists := tm.funcs[key]; !exists {
-			tm.funcs[key] = fn
-		}
-	}
-	return tm
 }
 
 // DefaultFuncs returns the template functions that are available to every template.

@@ -94,6 +94,26 @@ func (rw *ResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 	return conn, rwbuf, nil
 }
 
+// Flush sends the buffered response so far to the client, enabling streaming responses such as gRPC.
+func (rw *ResponseWriter) Flush() {
+	if rw.hijacked {
+		return
+	}
+	rw.flush()
+	if rw.buf.Len() > 0 {
+		rw.history = append(rw.history, append([]byte(nil), rw.buf.Bytes()...))
+		rw.buf.Reset()
+	}
+	if f, ok := rw.w.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Unwrap returns the underlying http.ResponseWriter for http.ResponseController.
+func (rw *ResponseWriter) Unwrap() http.ResponseWriter {
+	return rw.w
+}
+
 // flush writes the buffered response to the original ResponseWriter
 func (rw *ResponseWriter) flush() {
 	if rw.hijacked {
@@ -132,26 +152,6 @@ func (rw *ResponseWriter) copyTrailers() {
 			rw.w.Header()[k] = append([]string(nil), vv...)
 		}
 	}
-}
-
-// Flush sends the buffered response so far to the client, enabling streaming responses such as gRPC.
-func (rw *ResponseWriter) Flush() {
-	if rw.hijacked {
-		return
-	}
-	rw.flush()
-	if rw.buf.Len() > 0 {
-		rw.history = append(rw.history, append([]byte(nil), rw.buf.Bytes()...))
-		rw.buf.Reset()
-	}
-	if f, ok := rw.w.(http.Flusher); ok {
-		f.Flush()
-	}
-}
-
-// Unwrap returns the underlying http.ResponseWriter for http.ResponseController.
-func (rw *ResponseWriter) Unwrap() http.ResponseWriter {
-	return rw.w
 }
 
 func (rw *ResponseWriter) clear() {

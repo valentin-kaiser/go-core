@@ -33,10 +33,37 @@ const (
 	loginSecondPromptBase64 = "UGFzc3dvcmQ6"
 )
 
-// smtpSender implements the Sender interface using internal email package
-type smtpSender struct {
-	config          ClientConfig
-	templateManager *TemplateManager
+// LoginAuth implements LOGIN authentication for SMTP
+type LoginAuth struct {
+	username, password string
+}
+
+// Start begins the LOGIN authentication
+func (a *LoginAuth) Start(_ *smtp.ServerInfo) (string, []byte, error) {
+	return string(AuthMethodLogin), []byte(a.username), nil
+}
+
+// Next handles the LOGIN authentication process
+func (a *LoginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
+	if more {
+		switch string(fromServer) {
+		case loginFirstPrompt, loginFirstPromptBase64:
+			return []byte(a.username), nil
+		case loginSecondPrompt, loginSecondPromptBase64:
+			return []byte(a.password), nil
+		default:
+			return nil, apperror.NewError("unexpected server challenge: " + string(fromServer))
+		}
+	}
+	return nil, nil
+}
+
+// Sender is the interface for sending emails
+type Sender interface {
+	// Send sends an email message
+	Send(ctx context.Context, message *Message) error
+	// SendAsync sends an email message asynchronously using the queue
+	SendAsync(ctx context.Context, message *Message) error
 }
 
 // NewSMTPSender creates a new SMTP sender with configurable security
@@ -49,6 +76,12 @@ func NewSMTPSender(config ClientConfig, templateManager *TemplateManager) Sender
 		config:          config,
 		templateManager: templateManager,
 	}
+}
+
+// smtpSender implements the Sender interface using internal email package
+type smtpSender struct {
+	config          ClientConfig
+	templateManager *TemplateManager
 }
 
 // Send sends an email message via SMTP
@@ -280,32 +313,7 @@ func (s *smtpSender) getPriorityHeader(priority Priority) string {
 	}
 }
 
-// LoginAuth implements LOGIN authentication for SMTP
-type LoginAuth struct {
-	username, password string
-}
-
 // NewLoginAuth creates a new LOGIN authenticator
 func NewLoginAuth(username, password string) smtp.Auth {
 	return &LoginAuth{username: username, password: password}
-}
-
-// Start begins the LOGIN authentication
-func (a *LoginAuth) Start(_ *smtp.ServerInfo) (string, []byte, error) {
-	return string(AuthMethodLogin), []byte(a.username), nil
-}
-
-// Next handles the LOGIN authentication process
-func (a *LoginAuth) Next(fromServer []byte, more bool) ([]byte, error) {
-	if more {
-		switch string(fromServer) {
-		case loginFirstPrompt, loginFirstPromptBase64:
-			return []byte(a.username), nil
-		case loginSecondPrompt, loginSecondPromptBase64:
-			return []byte(a.password), nil
-		default:
-			return nil, apperror.NewError("unexpected server challenge: " + string(fromServer))
-		}
-	}
-	return nil, nil
 }

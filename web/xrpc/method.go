@@ -24,8 +24,6 @@ const (
 	streamOutArgIndex = 2
 )
 
-type kind int
-
 const (
 	kindUnary kind = iota
 	kindServerStream
@@ -39,7 +37,10 @@ var (
 	messageType = reflect.TypeFor[proto.Message]()
 )
 
+type kind int
+
 type recvFunc func() (proto.Message, error)
+
 type sendFunc func(proto.Message) error
 
 // method is a cached, validated service method.
@@ -53,8 +54,103 @@ type method struct {
 	in, out reflect.Type // pointer-to-message types
 }
 
-func (m *method) newIn() proto.Message  { return newMessage(m.in) }
+func (m *method) newIn() proto.Message { return newMessage(m.in) }
+
 func (m *method) newOut() proto.Message { return newMessage(m.out) }
+
+// call invokes the method and converts panics to errors.
+func (m *method) call(args []reflect.Value) (res proto.Message, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logger.Error().Field("method", m.full+pathSeparator+m.name).Field("panic", fmt.Sprint(r)).Field("stack", string(debug.Stack())).Msg("handler panicked")
+			res, err = nil, NewError(CodeInternalError, "internal error")
+		}
+	}()
+
+	outs := m.fn.Call(args)
+	last := outs[len(outs)-1]
+	if !last.IsNil() {
+		return nil, last.Interface().(error) //nolint:forcetypeassert // validated at registration
+	}
+	if len(outs) == callResultCount && !outs[0].IsNil() {
+		return outs[0].Interface().(proto.Message), nil //nolint:forcetypeassert // validated at registration
+	}
+	return nil, nil //nolint:nilnil // a nil message means the handler has no response body
+}
+
+// invoke runs the method regardless of its streaming kind.
+//
+// first is the request for unary and server streaming methods, recv supplies
+// the request messages for client and bidirectional streams, and send receives
+// the messages emitted by server and bidirectional streams. The returned
+// message is the response of unary and client streaming methods.
+func (m *method) invoke(ctx context.Context, first proto.Message, recv recvFunc, send sendFunc) (proto.Message, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	args := []reflect.Value{reflect.ValueOf(ctx)}
+	var recvErr func() error
+	switch m.kind {
+	case kindUnary, kindServerStream:
+		args = append(args, reflect.ValueOf(first))
+	default:
+		in := reflect.MakeChan(reflect.ChanOf(reflect.BothDir, m.in), 0)
+		recvErr = feed(ctx, cancel, in, recv)
+		args = append(args, in)
+	}
+
+	var out reflect.Value
+	if m.kind == kindServerStream || m.kind == kindBidi {
+		out = reflect.MakeChan(reflect.ChanOf(reflect.BothDir, m.out), 0)
+		args = append(args, out)
+	}
+
+	type result struct {
+		msg proto.Message
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		msg, err := m.call(args)
+		if out.IsValid() {
+			closeSafe(out)
+		}
+		done <- result{msg: msg, err: err}
+	}()
+
+	var sendErr error
+	if out.IsValid() {
+		for {
+			v, ok := out.Recv()
+			if !ok {
+				break
+			}
+			if sendErr != nil || v.IsNil() {
+				continue // keep draining so the handler never blocks
+			}
+			msg := v.Interface().(proto.Message) //nolint:forcetypeassert // validated at registration
+			err := send(msg)
+			if err != nil {
+				sendErr = err
+				cancel()
+			}
+		}
+	}
+
+	r := <-done
+	switch {
+	case sendErr != nil:
+		return nil, sendErr
+	case r.err != nil:
+		return nil, r.err
+	case recvErr != nil && recvErr() != nil:
+		return nil, recvErr()
+	}
+	if r.msg == nil && (m.kind == kindUnary || m.kind == kindClientStream) {
+		return m.newOut(), nil
+	}
+	return r.msg, nil
+}
 
 func newMessage(t reflect.Type) proto.Message {
 	return reflect.New(t.Elem()).Interface().(proto.Message) //nolint:forcetypeassert // validated at registration
@@ -135,26 +231,6 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 	return m, nil
 }
 
-// call invokes the method and converts panics to errors.
-func (m *method) call(args []reflect.Value) (res proto.Message, err error) {
-	defer func() {
-		if r := recover(); r != nil {
-			logger.Error().Field("method", m.full+pathSeparator+m.name).Field("panic", fmt.Sprint(r)).Field("stack", string(debug.Stack())).Msg("handler panicked")
-			res, err = nil, NewError(CodeInternalError, "internal error")
-		}
-	}()
-
-	outs := m.fn.Call(args)
-	last := outs[len(outs)-1]
-	if !last.IsNil() {
-		return nil, last.Interface().(error) //nolint:forcetypeassert // validated at registration
-	}
-	if len(outs) == callResultCount && !outs[0].IsNil() {
-		return outs[0].Interface().(proto.Message), nil //nolint:forcetypeassert // validated at registration
-	}
-	return nil, nil //nolint:nilnil // a nil message means the handler has no response body
-}
-
 func closeSafe(ch reflect.Value) {
 	defer func() { _ = recover() }() // handlers may already have closed the channel
 	ch.Close()
@@ -194,78 +270,4 @@ func feed(ctx context.Context, cancel context.CancelFunc, ch reflect.Value, recv
 		defer mu.Unlock()
 		return res
 	}
-}
-
-// invoke runs the method regardless of its streaming kind.
-//
-// first is the request for unary and server streaming methods, recv supplies
-// the request messages for client and bidirectional streams, and send receives
-// the messages emitted by server and bidirectional streams. The returned
-// message is the response of unary and client streaming methods.
-func (m *method) invoke(ctx context.Context, first proto.Message, recv recvFunc, send sendFunc) (proto.Message, error) {
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-
-	args := []reflect.Value{reflect.ValueOf(ctx)}
-	var recvErr func() error
-	switch m.kind {
-	case kindUnary, kindServerStream:
-		args = append(args, reflect.ValueOf(first))
-	default:
-		in := reflect.MakeChan(reflect.ChanOf(reflect.BothDir, m.in), 0)
-		recvErr = feed(ctx, cancel, in, recv)
-		args = append(args, in)
-	}
-
-	var out reflect.Value
-	if m.kind == kindServerStream || m.kind == kindBidi {
-		out = reflect.MakeChan(reflect.ChanOf(reflect.BothDir, m.out), 0)
-		args = append(args, out)
-	}
-
-	type result struct {
-		msg proto.Message
-		err error
-	}
-	done := make(chan result, 1)
-	go func() {
-		msg, err := m.call(args)
-		if out.IsValid() {
-			closeSafe(out)
-		}
-		done <- result{msg: msg, err: err}
-	}()
-
-	var sendErr error
-	if out.IsValid() {
-		for {
-			v, ok := out.Recv()
-			if !ok {
-				break
-			}
-			if sendErr != nil || v.IsNil() {
-				continue // keep draining so the handler never blocks
-			}
-			msg := v.Interface().(proto.Message) //nolint:forcetypeassert // validated at registration
-			err := send(msg)
-			if err != nil {
-				sendErr = err
-				cancel()
-			}
-		}
-	}
-
-	r := <-done
-	switch {
-	case sendErr != nil:
-		return nil, sendErr
-	case r.err != nil:
-		return nil, r.err
-	case recvErr != nil && recvErr() != nil:
-		return nil, recvErr()
-	}
-	if r.msg == nil && (m.kind == kindUnary || m.kind == kindClientStream) {
-		return m.newOut(), nil
-	}
-	return r.msg, nil
 }

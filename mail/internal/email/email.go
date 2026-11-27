@@ -83,22 +83,6 @@ const (
 
 var maxBigInt = big.NewInt(math.MaxInt64)
 
-// Email is the type used for email messages
-type Email struct {
-	ReplyTo     []string
-	From        string
-	To          []string
-	Bcc         []string
-	Cc          []string
-	Subject     string
-	Text        []byte
-	HTML        []byte
-	Sender      string
-	Headers     textproto.MIMEHeader
-	Attachments []*Attachment
-	ReadReceipt []string
-}
-
 // Attachment is a struct representing an email attachment.
 // Based on the mime/multipart.FileHeader struct, Attachment contains the name, MIMEHeader, and content of the attachment in question
 type Attachment struct {
@@ -107,6 +91,28 @@ type Attachment struct {
 	Header      textproto.MIMEHeader
 	Content     []byte
 	HTMLRelated bool
+}
+
+func (a *Attachment) setDefaultHeaders() {
+	contentType := mediaTypeOctetStream
+	if len(a.ContentType) > 0 {
+		contentType = a.ContentType
+	}
+	a.Header.Set(headerContentType, contentType)
+
+	if len(a.Header.Get(headerContentDisposition)) == 0 {
+		disposition := dispositionAttachment
+		if a.HTMLRelated {
+			disposition = dispositionInline
+		}
+		a.Header.Set(headerContentDisposition, fmt.Sprintf("%s;\r\n filename=\"%s\"", disposition, a.Filename))
+	}
+	if len(a.Header.Get(headerContentID)) == 0 {
+		a.Header.Set(headerContentID, fmt.Sprintf("<%s>", a.Filename))
+	}
+	if len(a.Header.Get(headerContentTransferEncoding)) == 0 {
+		a.Header.Set(headerContentTransferEncoding, encodingBase64)
+	}
 }
 
 // part is a copyable representation of a multipart.Part
@@ -124,6 +130,43 @@ type multipartLayout struct {
 
 func (l multipartLayout) isMultipart() bool {
 	return l.mixed || l.alternative || l.related
+}
+
+// trimReader is a custom io.Reader that will trim any leading
+// whitespace, as this can cause email imports to fail.
+type trimReader struct {
+	rd      io.Reader
+	trimmed bool
+}
+
+// Read trims off any unicode whitespace from the originating reader
+func (tr *trimReader) Read(buf []byte) (int, error) {
+	n, err := tr.rd.Read(buf)
+	if err != nil {
+		return n, err
+	}
+	if !tr.trimmed {
+		t := bytes.TrimLeftFunc(buf[:n], unicode.IsSpace)
+		tr.trimmed = true
+		n = copy(buf, t)
+	}
+	return n, nil
+}
+
+// Email is the type used for email messages
+type Email struct {
+	ReplyTo     []string
+	From        string
+	To          []string
+	Bcc         []string
+	Cc          []string
+	Subject     string
+	Text        []byte
+	HTML        []byte
+	Sender      string
+	Headers     textproto.MIMEHeader
+	Attachments []*Attachment
+	ReadReceipt []string
 }
 
 // New creates an Email, and returns the pointer to it.
@@ -188,54 +231,6 @@ func NewFromReader(r io.Reader) (*Email, error) {
 		}
 	}
 	return msg, nil
-}
-
-// addPart attaches the part when its Content-Disposition marks it as an attachment and uses it as text or HTML body otherwise.
-func (e *Email) addPart(p *part) error {
-	contentType := p.header.Get(headerContentType)
-	if contentType == "" {
-		return apperror.NewError("no Content-Type found for MIME entity")
-	}
-
-	contentType, _, err := mime.ParseMediaType(p.header.Get(headerContentType))
-	if err != nil {
-		return apperror.NewErrorf("parsing Content-Type header with value %q failed", p.header.Get(headerContentType)).AddError(err)
-	}
-
-	attached, err := e.attachPart(p, contentType)
-	if err != nil || attached {
-		return err
-	}
-
-	switch contentType {
-	case mediaTypeTextPlain:
-		e.Text = p.body
-	case mediaTypeTextHTML:
-		e.HTML = p.body
-	}
-	return nil
-}
-
-// attachPart attaches the part if it is an attachment or an inline part with a file name and reports whether it did.
-func (e *Email) attachPart(p *part, contentType string) (bool, error) {
-	if p.header.Get(headerContentDisposition) == "" {
-		return false, nil
-	}
-
-	cd, params, err := mime.ParseMediaType(p.header.Get(headerContentDisposition))
-	if err != nil {
-		return false, apperror.NewErrorf("parsing Content-Disposition header with value %q failed", p.header.Get(headerContentDisposition)).AddError(err)
-	}
-	filename, filenameDefined := params[paramFilename]
-	if cd != dispositionAttachment && (cd != dispositionInline || !filenameDefined) {
-		return false, nil
-	}
-
-	_, err = e.Attach(bytes.NewReader(p.body), filename, contentType)
-	if err != nil {
-		return false, apperror.NewErrorf("attaching MIME part %s failed", filename).AddError(err)
-	}
-	return true, nil
 }
 
 // Attach is used to attach content from an io.Reader to the email.
@@ -328,121 +323,6 @@ func (e *Email) Bytes() ([]byte, error) {
 		}
 	}
 	return buf.Bytes(), nil
-}
-
-// setContentHeaders sets the content type of the message, w provides the boundary of a multipart message.
-func (e *Email) setContentHeaders(headers textproto.MIMEHeader, layout multipartLayout, w *multipart.Writer) {
-	switch {
-	case layout.mixed:
-		headers.Set(headerContentType, multipartMixedBoundary+w.Boundary())
-	case layout.alternative:
-		headers.Set(headerContentType, multipartAlternativeBoundary+w.Boundary())
-	case layout.related:
-		headers.Set(headerContentType, multipartRelatedBoundary+w.Boundary())
-	case len(e.HTML) > 0:
-		headers.Set(headerContentType, textHTMLUTF8)
-		headers.Set(headerContentTransferEncoding, encodingQuotedPrintable)
-	default:
-		headers.Set(headerContentType, textPlainUTF8)
-		headers.Set(headerContentTransferEncoding, encodingQuotedPrintable)
-	}
-}
-
-// writeBody writes the text and HTML parts, w is the outermost multipart writer of the message.
-func (e *Email) writeBody(buf io.Writer, w *multipart.Writer, layout multipartLayout, htmlAttachments []*Attachment) error {
-	subWriter := w
-	if layout.mixed && layout.alternative {
-		subWriter = multipart.NewWriter(buf)
-		header := textproto.MIMEHeader{
-			headerContentType: {multipartAlternativeBoundary + subWriter.Boundary()},
-		}
-		_, err := w.CreatePart(header)
-		if err != nil {
-			return apperror.NewError("creating multipart/alternative part failed").AddError(err)
-		}
-	}
-
-	if len(e.Text) > 0 {
-		err := writeMessage(buf, e.Text, layout.mixed || layout.alternative, mediaTypeTextPlain, subWriter)
-		if err != nil {
-			return apperror.NewError("writing text part failed").AddError(err)
-		}
-	}
-
-	if len(e.HTML) > 0 {
-		err := e.writeHTMLPart(buf, w, subWriter, layout, htmlAttachments)
-		if err != nil {
-			return err
-		}
-	}
-
-	if layout.mixed && layout.alternative {
-		err := subWriter.Close()
-		if err != nil {
-			return apperror.NewError("closing multipart/alternative part failed").AddError(err)
-		}
-	}
-	return nil
-}
-
-// writeHTMLPart writes the HTML body followed by its inline attachments, w is the outermost multipart writer
-// and subWriter the one the HTML part belongs to.
-func (e *Email) writeHTMLPart(buf io.Writer, w, subWriter *multipart.Writer, layout multipartLayout, htmlAttachments []*Attachment) error {
-	messageWriter := subWriter
-	var relatedWriter *multipart.Writer
-	if (layout.mixed || layout.alternative) && len(htmlAttachments) > 0 {
-		relatedWriter = multipart.NewWriter(buf)
-		header := textproto.MIMEHeader{
-			headerContentType: {multipartRelatedBoundary + relatedWriter.Boundary()},
-		}
-		_, err := subWriter.CreatePart(header)
-		if err != nil {
-			return apperror.NewError("creating multipart/related part failed").AddError(err)
-		}
-		messageWriter = relatedWriter
-	}
-	if layout.related && len(htmlAttachments) > 0 {
-		relatedWriter = w
-		messageWriter = w
-	}
-
-	err := writeMessage(buf, e.HTML, layout.mixed || layout.alternative || layout.related, mediaTypeTextHTML, messageWriter)
-	if err != nil {
-		return apperror.NewError("writing HTML part failed").AddError(err)
-	}
-
-	if len(htmlAttachments) == 0 {
-		return nil
-	}
-
-	err = writeAttachmentParts(relatedWriter, htmlAttachments, "HTML attachment")
-	if err != nil {
-		return err
-	}
-
-	if layout.mixed || layout.alternative {
-		err = relatedWriter.Close()
-		if err != nil {
-			return apperror.NewError("closing multipart/related part failed").AddError(err)
-		}
-	}
-	return nil
-}
-
-// writeAttachmentParts writes every attachment as a part of w, kind names the attachments in error messages.
-func writeAttachmentParts(w *multipart.Writer, attachments []*Attachment, kind string) error {
-	for _, a := range attachments {
-		a.setDefaultHeaders()
-		ap, err := w.CreatePart(a.Header)
-		if err != nil {
-			return apperror.NewErrorf("creating %s part failed", kind).AddError(err)
-		}
-		err = base64Wrap(ap, a.Content)
-		if err != nil {
-			return apperror.NewErrorf("writing %s content failed", kind).AddError(err)
-		}
-	}
-	return nil
 }
 
 // Send an email using the given host and SMTP auth (optional), returns any error thrown by smtp.SendMail
@@ -691,6 +571,153 @@ func (e *Email) SendWithStartTLS(address string, auth smtp.Auth, config *tls.Con
 	return nil
 }
 
+// addPart attaches the part when its Content-Disposition marks it as an attachment and uses it as text or HTML body otherwise.
+func (e *Email) addPart(p *part) error {
+	contentType := p.header.Get(headerContentType)
+	if contentType == "" {
+		return apperror.NewError("no Content-Type found for MIME entity")
+	}
+
+	contentType, _, err := mime.ParseMediaType(p.header.Get(headerContentType))
+	if err != nil {
+		return apperror.NewErrorf("parsing Content-Type header with value %q failed", p.header.Get(headerContentType)).AddError(err)
+	}
+
+	attached, err := e.attachPart(p, contentType)
+	if err != nil || attached {
+		return err
+	}
+
+	switch contentType {
+	case mediaTypeTextPlain:
+		e.Text = p.body
+	case mediaTypeTextHTML:
+		e.HTML = p.body
+	}
+	return nil
+}
+
+// attachPart attaches the part if it is an attachment or an inline part with a file name and reports whether it did.
+func (e *Email) attachPart(p *part, contentType string) (bool, error) {
+	if p.header.Get(headerContentDisposition) == "" {
+		return false, nil
+	}
+
+	cd, params, err := mime.ParseMediaType(p.header.Get(headerContentDisposition))
+	if err != nil {
+		return false, apperror.NewErrorf("parsing Content-Disposition header with value %q failed", p.header.Get(headerContentDisposition)).AddError(err)
+	}
+	filename, filenameDefined := params[paramFilename]
+	if cd != dispositionAttachment && (cd != dispositionInline || !filenameDefined) {
+		return false, nil
+	}
+
+	_, err = e.Attach(bytes.NewReader(p.body), filename, contentType)
+	if err != nil {
+		return false, apperror.NewErrorf("attaching MIME part %s failed", filename).AddError(err)
+	}
+	return true, nil
+}
+
+// setContentHeaders sets the content type of the message, w provides the boundary of a multipart message.
+func (e *Email) setContentHeaders(headers textproto.MIMEHeader, layout multipartLayout, w *multipart.Writer) {
+	switch {
+	case layout.mixed:
+		headers.Set(headerContentType, multipartMixedBoundary+w.Boundary())
+	case layout.alternative:
+		headers.Set(headerContentType, multipartAlternativeBoundary+w.Boundary())
+	case layout.related:
+		headers.Set(headerContentType, multipartRelatedBoundary+w.Boundary())
+	case len(e.HTML) > 0:
+		headers.Set(headerContentType, textHTMLUTF8)
+		headers.Set(headerContentTransferEncoding, encodingQuotedPrintable)
+	default:
+		headers.Set(headerContentType, textPlainUTF8)
+		headers.Set(headerContentTransferEncoding, encodingQuotedPrintable)
+	}
+}
+
+// writeBody writes the text and HTML parts, w is the outermost multipart writer of the message.
+func (e *Email) writeBody(buf io.Writer, w *multipart.Writer, layout multipartLayout, htmlAttachments []*Attachment) error {
+	subWriter := w
+	if layout.mixed && layout.alternative {
+		subWriter = multipart.NewWriter(buf)
+		header := textproto.MIMEHeader{
+			headerContentType: {multipartAlternativeBoundary + subWriter.Boundary()},
+		}
+		_, err := w.CreatePart(header)
+		if err != nil {
+			return apperror.NewError("creating multipart/alternative part failed").AddError(err)
+		}
+	}
+
+	if len(e.Text) > 0 {
+		err := writeMessage(buf, e.Text, layout.mixed || layout.alternative, mediaTypeTextPlain, subWriter)
+		if err != nil {
+			return apperror.NewError("writing text part failed").AddError(err)
+		}
+	}
+
+	if len(e.HTML) > 0 {
+		err := e.writeHTMLPart(buf, w, subWriter, layout, htmlAttachments)
+		if err != nil {
+			return err
+		}
+	}
+
+	if layout.mixed && layout.alternative {
+		err := subWriter.Close()
+		if err != nil {
+			return apperror.NewError("closing multipart/alternative part failed").AddError(err)
+		}
+	}
+	return nil
+}
+
+// writeHTMLPart writes the HTML body followed by its inline attachments, w is the outermost multipart writer
+// and subWriter the one the HTML part belongs to.
+func (e *Email) writeHTMLPart(buf io.Writer, w, subWriter *multipart.Writer, layout multipartLayout, htmlAttachments []*Attachment) error {
+	messageWriter := subWriter
+	var relatedWriter *multipart.Writer
+	if (layout.mixed || layout.alternative) && len(htmlAttachments) > 0 {
+		relatedWriter = multipart.NewWriter(buf)
+		header := textproto.MIMEHeader{
+			headerContentType: {multipartRelatedBoundary + relatedWriter.Boundary()},
+		}
+		_, err := subWriter.CreatePart(header)
+		if err != nil {
+			return apperror.NewError("creating multipart/related part failed").AddError(err)
+		}
+		messageWriter = relatedWriter
+	}
+	if layout.related && len(htmlAttachments) > 0 {
+		relatedWriter = w
+		messageWriter = w
+	}
+
+	err := writeMessage(buf, e.HTML, layout.mixed || layout.alternative || layout.related, mediaTypeTextHTML, messageWriter)
+	if err != nil {
+		return apperror.NewError("writing HTML part failed").AddError(err)
+	}
+
+	if len(htmlAttachments) == 0 {
+		return nil
+	}
+
+	err = writeAttachmentParts(relatedWriter, htmlAttachments, "HTML attachment")
+	if err != nil {
+		return err
+	}
+
+	if layout.mixed || layout.alternative {
+		err = relatedWriter.Close()
+		if err != nil {
+			return apperror.NewError("closing multipart/related part failed").AddError(err)
+		}
+	}
+	return nil
+}
+
 // msgHeaders merges the Email's various fields and custom headers together in a
 // standards compliant way to create a MIMEHeader to be used in the resulting
 // message. It does not alter e.Headers.
@@ -796,26 +823,20 @@ func (e *Email) estimateSize() int {
 	return size
 }
 
-func (a *Attachment) setDefaultHeaders() {
-	contentType := mediaTypeOctetStream
-	if len(a.ContentType) > 0 {
-		contentType = a.ContentType
-	}
-	a.Header.Set(headerContentType, contentType)
-
-	if len(a.Header.Get(headerContentDisposition)) == 0 {
-		disposition := dispositionAttachment
-		if a.HTMLRelated {
-			disposition = dispositionInline
+// writeAttachmentParts writes every attachment as a part of w, kind names the attachments in error messages.
+func writeAttachmentParts(w *multipart.Writer, attachments []*Attachment, kind string) error {
+	for _, a := range attachments {
+		a.setDefaultHeaders()
+		ap, err := w.CreatePart(a.Header)
+		if err != nil {
+			return apperror.NewErrorf("creating %s part failed", kind).AddError(err)
 		}
-		a.Header.Set(headerContentDisposition, fmt.Sprintf("%s;\r\n filename=\"%s\"", disposition, a.Filename))
+		err = base64Wrap(ap, a.Content)
+		if err != nil {
+			return apperror.NewErrorf("writing %s content failed", kind).AddError(err)
+		}
 	}
-	if len(a.Header.Get(headerContentID)) == 0 {
-		a.Header.Set(headerContentID, fmt.Sprintf("<%s>", a.Filename))
-	}
-	if len(a.Header.Get(headerContentTransferEncoding)) == 0 {
-		a.Header.Set(headerContentTransferEncoding, encodingBase64)
-	}
+	return nil
 }
 
 func writeMessage(buf io.Writer, msg []byte, multipart bool, mediaType string, w *multipart.Writer) error {
@@ -1031,25 +1052,4 @@ func handleAddressList(v []string) []string {
 		}
 	}
 	return res
-}
-
-// trimReader is a custom io.Reader that will trim any leading
-// whitespace, as this can cause email imports to fail.
-type trimReader struct {
-	rd      io.Reader
-	trimmed bool
-}
-
-// Read trims off any unicode whitespace from the originating reader
-func (tr *trimReader) Read(buf []byte) (int, error) {
-	n, err := tr.rd.Read(buf)
-	if err != nil {
-		return n, err
-	}
-	if !tr.trimmed {
-		t := bytes.TrimLeftFunc(buf[:n], unicode.IsSpace)
-		tr.trimmed = true
-		n = copy(buf, t)
-	}
-	return n, nil
 }

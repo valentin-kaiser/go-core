@@ -11,9 +11,6 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
-// ServiceEventType enumerates the kinds of service-registry change events.
-type ServiceEventType int
-
 const (
 	// ServiceAdded indicates a new service instance was registered.
 	ServiceAdded ServiceEventType = iota + 1
@@ -23,6 +20,9 @@ const (
 	// lease expired.
 	ServiceRemoved
 )
+
+// ServiceEventType enumerates the kinds of service-registry change events.
+type ServiceEventType int
 
 // String returns a human-readable name for the event type.
 func (t ServiceEventType) String() string {

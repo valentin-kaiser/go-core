@@ -112,6 +112,36 @@ const (
 	maxCloseReasonBytes = 123
 )
 
+const (
+	// ContextKeyResponseWriter key for http.ResponseWriter
+	ContextKeyResponseWriter ContextKey = "response"
+	// ContextKeyRequest key for *http.Request
+	ContextKeyRequest ContextKey = "request"
+	// ContextKeyWebSocketConn key for *websocket.Conn
+	ContextKeyWebSocketConn ContextKey = "websocket"
+)
+
+// Windows socket error codes, which do not map to the portable syscall constants.
+const (
+	errWSAEConnAborted syscall.Errno = 10053
+	errWSAEConnReset   syscall.Errno = 10054
+	errWSAEShutdown    syscall.Errno = 10058
+	errWSAEConnRefused syscall.Errno = 10061
+)
+
+const (
+	// StreamingTypeUnary represents a unary (non-streaming) method
+	StreamingTypeUnary StreamingType = iota
+	// StreamingTypeBidirectional represents a bidirectional streaming method
+	StreamingTypeBidirectional
+	// StreamingTypeServerStream represents a server streaming method
+	StreamingTypeServerStream
+	// StreamingTypeClientStream represents a client streaming method
+	StreamingTypeClientStream
+	// StreamingTypeInvalid represents an invalid method signature
+	StreamingTypeInvalid
+)
+
 // Common error messages to avoid repeated allocations
 var (
 	logger = logging.GetPackageLogger("jrpc")
@@ -149,15 +179,6 @@ var bufferPool = sync.Pool{
 // ContextKey represents keys for context values
 type ContextKey string
 
-const (
-	// ContextKeyResponseWriter key for http.ResponseWriter
-	ContextKeyResponseWriter ContextKey = "response"
-	// ContextKeyRequest key for *http.Request
-	ContextKeyRequest ContextKey = "request"
-	// ContextKeyWebSocketConn key for *websocket.Conn
-	ContextKeyWebSocketConn ContextKey = "websocket"
-)
-
 // Service implements the API server with support for both
 // HTTP and WebSocket endpoints. It provides automatic method dispatch,
 // protocol buffer message handling, and context enrichment.
@@ -170,84 +191,6 @@ type Service struct {
 	allowedHTTPMethods map[string]bool                         // allowed HTTP methods for API calls
 	marshalOpts        protojson.MarshalOptions                // custom marshal options for protocol buffers
 	unmarshalOpts      protojson.UnmarshalOptions              // custom unmarshal options for protocol buffers
-}
-
-// Server represents a jRPC service implementation.
-type Server interface {
-	// Descriptor returns the protocol buffer file descriptor for the service.
-	Descriptor() protoreflect.FileDescriptor
-}
-
-// methodInfo holds cached reflection and protobuf information for a method
-type methodInfo struct {
-	descriptor  protoreflect.MethodDescriptor
-	method      reflect.Value
-	reflectType reflect.Type
-	inputType   reflect.Type
-	outputType  reflect.Type
-	messageType proto.Message
-	validated   atomic.Bool // set once the method signature was checked; requests run concurrently
-}
-
-// Register creates a new jrpc service instance and registers the provided
-// service implementation. The service implementation has to implement the Descriptor method.
-// This function builds a method cache for improved lookup performance.
-func Register(s Server) *Service {
-	service := &Service{
-		Server:  s,
-		methods: make(map[string]*methodInfo),
-		types:   make(map[protoreflect.FullName]proto.Message),
-		marshalOpts: protojson.MarshalOptions{
-			EmitUnpopulated: true,
-			UseEnumNumbers:  true,
-		},
-		unmarshalOpts: protojson.UnmarshalOptions{
-			DiscardUnknown: true,
-		},
-	}
-
-	sv := reflect.ValueOf(s)
-	services := s.Descriptor().Services()
-	for i := 0; i < services.Len(); i++ {
-		sd := services.Get(i)
-		methods := sd.Methods()
-		for j := 0; j < methods.Len(); j++ {
-			md := methods.Get(j)
-			mn := string(md.Name())
-			sn := string(sd.Name())
-			key := sn + methodSeparator + mn
-			rm := sv.MethodByName(mn)
-			if !rm.IsValid() {
-				continue
-			}
-
-			mt := rm.Type()
-			var pm proto.Message = dynamicpb.NewMessage(md.Input())
-			pmt, err := protoregistry.GlobalTypes.FindMessageByName(md.Input().FullName())
-			if err == nil {
-				pm = pmt.New().Interface()
-			}
-			service.types[md.Input().FullName()] = pm
-			var it, ot reflect.Type
-			if mt.NumIn() >= unaryArgCount {
-				it = mt.In(1)
-			}
-			if mt.NumOut() >= 1 {
-				ot = mt.Out(0)
-			}
-
-			service.methods[key] = &methodInfo{
-				descriptor:  md,
-				method:      rm,
-				reflectType: mt,
-				inputType:   it,
-				outputType:  ot,
-				messageType: pm,
-			}
-		}
-	}
-
-	return service
 }
 
 // WithCaseInsensitiveMethods configures the service to perform case-insensitive method lookups.
@@ -290,11 +233,6 @@ func (s *Service) WithMarshalOptions(opts protojson.MarshalOptions) *Service {
 func (s *Service) WithUnmarshalOptions(opts protojson.UnmarshalOptions) *Service {
 	s.unmarshalOpts = opts
 	return s
-}
-
-// SetUpgrader allows setting a custom WebSocket upgrader with specific options.
-func SetUpgrader(u websocket.Upgrader) {
-	upgrader = u
 }
 
 // HandlerFunc processes both HTTP and WebSocket requests to API endpoints.
@@ -491,86 +429,6 @@ func (s *Service) websocket(w http.ResponseWriter, r *http.Request, conn *websoc
 	default:
 		s.closeWS(conn, websocket.CloseInternalServerErr, apperror.NewError("unsupported streaming type"))
 	}
-}
-
-// WithHTTPContext enriches the provided context with HTTP request components.
-// It adds the ResponseWriter and Request to the context, making them available
-// throughout the request processing pipeline for logging, middleware, and
-// other cross-cutting concerns.
-//
-// Parameters:
-//   - ctx: The base context to enrich
-//   - w: The HTTP ResponseWriter for the current request
-//   - r: The HTTP Request being processed
-//
-// Returns the enriched context containing the HTTP components.
-func WithHTTPContext(ctx context.Context, w http.ResponseWriter, r *http.Request) context.Context {
-	ctx = context.WithValue(ctx, ContextKeyResponseWriter, w)
-	ctx = context.WithValue(ctx, ContextKeyRequest, r)
-	return ctx
-}
-
-// WithWebSocketContext adds a WebSocket connection to the context.
-// This enables WebSocket-specific operations and connection management
-// from within streaming service methods.
-//
-// Parameters:
-//   - ctx: The base context to enrich
-//   - conn: The WebSocket connection for the current session
-//
-// Returns the enriched context containing the WebSocket connection.
-func WithWebSocketContext(ctx context.Context, w http.ResponseWriter, r *http.Request, conn *websocket.Conn) context.Context {
-	ctx = context.WithValue(ctx, ContextKeyWebSocketConn, conn)
-	ctx = context.WithValue(ctx, ContextKeyResponseWriter, w)
-	ctx = context.WithValue(ctx, ContextKeyRequest, r)
-	return ctx
-}
-
-// GetResponseWriter extracts the HTTP ResponseWriter from the context.
-// This allows service methods to access the original response writer for
-// setting custom headers, status codes, or other HTTP-specific operations.
-//
-// Parameters:
-//   - ctx: The context containing the ResponseWriter
-//
-// Returns:
-//   - http.ResponseWriter: The response writer if found
-//   - bool: True if the ResponseWriter was found in the context
-func GetResponseWriter(ctx context.Context) (http.ResponseWriter, bool) {
-	w, ok := ctx.Value(ContextKeyResponseWriter).(http.ResponseWriter)
-	return w, ok
-}
-
-// GetRequest extracts the HTTP Request from the context.
-// This provides access to request metadata such as headers, URL parameters,
-// authentication information, and other request-specific data for logging,
-// authorization, and business logic purposes.
-//
-// Parameters:
-//   - ctx: The context containing the HTTP Request
-//
-// Returns:
-//   - *http.Request: The HTTP request if found
-//   - bool: True if the Request was found in the context
-func GetRequest(ctx context.Context) (*http.Request, bool) {
-	r, ok := ctx.Value(ContextKeyRequest).(*http.Request)
-	return r, ok
-}
-
-// GetWebSocketConn extracts the WebSocket connection from the context.
-// This enables streaming service methods to access connection properties,
-// configure timeouts, handle connection-specific operations, and manage
-// the WebSocket lifecycle.
-//
-// Parameters:
-//   - ctx: The context containing the WebSocket connection
-//
-// Returns:
-//   - *websocket.Conn: The WebSocket connection if found
-//   - bool: True if the connection was found in the context
-func GetWebSocketConn(ctx context.Context) (*websocket.Conn, bool) {
-	conn, ok := ctx.Value(ContextKeyWebSocketConn).(*websocket.Conn)
-	return conn, ok
 }
 
 // invoke calls an already resolved method
@@ -886,6 +744,7 @@ func (s *Service) handleClientStream(ctx context.Context, conn *websocket.Conn, 
 	}
 	s.closeWS(conn, websocket.CloseNormalClosure, nil)
 }
+
 func (s *Service) readWSMessage(conn *websocket.Conn, msgPtr reflect.Value) error {
 	messageType, payload, err := conn.ReadMessage()
 	if err != nil {
@@ -1002,44 +861,6 @@ func (s *Service) startMessageWriter(ctx context.Context, conn *websocket.Conn, 
 	return write
 }
 
-// Windows socket error codes, which do not map to the portable syscall constants.
-const (
-	errWSAEConnAborted syscall.Errno = 10053
-	errWSAEConnReset   syscall.Errno = 10054
-	errWSAEShutdown    syscall.Errno = 10058
-	errWSAEConnRefused syscall.Errno = 10061
-)
-
-// isExpectedCloseError checks if an error is an expected websocket close error
-// that should not be logged as it indicates normal client disconnection
-func isExpectedCloseError(err error) bool {
-	if err == nil {
-		return false
-	}
-
-	if websocket.IsCloseError(err,
-		websocket.CloseNormalClosure,
-		websocket.CloseGoingAway,
-		websocket.CloseNoStatusReceived) {
-		return true
-	}
-
-	// Check for network errors that occur during normal disconnection
-	if errors.Is(err, net.ErrClosed) {
-		return true
-	}
-
-	if errno, ok := errors.AsType[syscall.Errno](err); ok {
-		switch errno {
-		case syscall.EPIPE, syscall.ECONNRESET, syscall.ECONNABORTED, syscall.ECONNREFUSED,
-			errWSAEConnAborted, errWSAEConnReset, errWSAEShutdown, errWSAEConnRefused:
-			return true
-		}
-	}
-
-	return false
-}
-
 func (s *Service) closeWS(conn *websocket.Conn, code int, err error) {
 	var reason string
 	if err != nil && !errors.Is(err, websocket.ErrCloseSent) && !errors.Is(err, net.ErrClosed) && !isExpectedCloseError(err) {
@@ -1058,22 +879,6 @@ func (s *Service) closeWS(conn *websocket.Conn, code int, err error) {
 		log.Trace().Err(err).Msg("closing websocket connection failed")
 	}
 }
-
-// StreamingType represents the type of streaming for a method
-type StreamingType int
-
-const (
-	// StreamingTypeUnary represents a unary (non-streaming) method
-	StreamingTypeUnary StreamingType = iota
-	// StreamingTypeBidirectional represents a bidirectional streaming method
-	StreamingTypeBidirectional
-	// StreamingTypeServerStream represents a server streaming method
-	StreamingTypeServerStream
-	// StreamingTypeClientStream represents a client streaming method
-	StreamingTypeClientStream
-	// StreamingTypeInvalid represents an invalid method signature
-	StreamingTypeInvalid
-)
 
 // validateMethodSignature validates and determines the streaming type of a method
 func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.MethodDescriptor) (StreamingType, error) {
@@ -1223,4 +1028,200 @@ func (s *Service) typesMatch(actual, expected reflect.Type) bool {
 	expectedParts := expected.Name()
 
 	return actualParts == expectedParts
+}
+
+// Server represents a jRPC service implementation.
+type Server interface {
+	// Descriptor returns the protocol buffer file descriptor for the service.
+	Descriptor() protoreflect.FileDescriptor
+}
+
+// methodInfo holds cached reflection and protobuf information for a method
+type methodInfo struct {
+	descriptor  protoreflect.MethodDescriptor
+	method      reflect.Value
+	reflectType reflect.Type
+	inputType   reflect.Type
+	outputType  reflect.Type
+	messageType proto.Message
+	validated   atomic.Bool // set once the method signature was checked; requests run concurrently
+}
+
+// StreamingType represents the type of streaming for a method
+type StreamingType int
+
+// Register creates a new jrpc service instance and registers the provided
+// service implementation. The service implementation has to implement the Descriptor method.
+// This function builds a method cache for improved lookup performance.
+func Register(s Server) *Service {
+	service := &Service{
+		Server:  s,
+		methods: make(map[string]*methodInfo),
+		types:   make(map[protoreflect.FullName]proto.Message),
+		marshalOpts: protojson.MarshalOptions{
+			EmitUnpopulated: true,
+			UseEnumNumbers:  true,
+		},
+		unmarshalOpts: protojson.UnmarshalOptions{
+			DiscardUnknown: true,
+		},
+	}
+
+	sv := reflect.ValueOf(s)
+	services := s.Descriptor().Services()
+	for i := 0; i < services.Len(); i++ {
+		sd := services.Get(i)
+		methods := sd.Methods()
+		for j := 0; j < methods.Len(); j++ {
+			md := methods.Get(j)
+			mn := string(md.Name())
+			sn := string(sd.Name())
+			key := sn + methodSeparator + mn
+			rm := sv.MethodByName(mn)
+			if !rm.IsValid() {
+				continue
+			}
+
+			mt := rm.Type()
+			var pm proto.Message = dynamicpb.NewMessage(md.Input())
+			pmt, err := protoregistry.GlobalTypes.FindMessageByName(md.Input().FullName())
+			if err == nil {
+				pm = pmt.New().Interface()
+			}
+			service.types[md.Input().FullName()] = pm
+			var it, ot reflect.Type
+			if mt.NumIn() >= unaryArgCount {
+				it = mt.In(1)
+			}
+			if mt.NumOut() >= 1 {
+				ot = mt.Out(0)
+			}
+
+			service.methods[key] = &methodInfo{
+				descriptor:  md,
+				method:      rm,
+				reflectType: mt,
+				inputType:   it,
+				outputType:  ot,
+				messageType: pm,
+			}
+		}
+	}
+
+	return service
+}
+
+// SetUpgrader allows setting a custom WebSocket upgrader with specific options.
+func SetUpgrader(u websocket.Upgrader) {
+	upgrader = u
+}
+
+// WithHTTPContext enriches the provided context with HTTP request components.
+// It adds the ResponseWriter and Request to the context, making them available
+// throughout the request processing pipeline for logging, middleware, and
+// other cross-cutting concerns.
+//
+// Parameters:
+//   - ctx: The base context to enrich
+//   - w: The HTTP ResponseWriter for the current request
+//   - r: The HTTP Request being processed
+//
+// Returns the enriched context containing the HTTP components.
+func WithHTTPContext(ctx context.Context, w http.ResponseWriter, r *http.Request) context.Context {
+	ctx = context.WithValue(ctx, ContextKeyResponseWriter, w)
+	ctx = context.WithValue(ctx, ContextKeyRequest, r)
+	return ctx
+}
+
+// WithWebSocketContext adds a WebSocket connection to the context.
+// This enables WebSocket-specific operations and connection management
+// from within streaming service methods.
+//
+// Parameters:
+//   - ctx: The base context to enrich
+//   - conn: The WebSocket connection for the current session
+//
+// Returns the enriched context containing the WebSocket connection.
+func WithWebSocketContext(ctx context.Context, w http.ResponseWriter, r *http.Request, conn *websocket.Conn) context.Context {
+	ctx = context.WithValue(ctx, ContextKeyWebSocketConn, conn)
+	ctx = context.WithValue(ctx, ContextKeyResponseWriter, w)
+	ctx = context.WithValue(ctx, ContextKeyRequest, r)
+	return ctx
+}
+
+// GetResponseWriter extracts the HTTP ResponseWriter from the context.
+// This allows service methods to access the original response writer for
+// setting custom headers, status codes, or other HTTP-specific operations.
+//
+// Parameters:
+//   - ctx: The context containing the ResponseWriter
+//
+// Returns:
+//   - http.ResponseWriter: The response writer if found
+//   - bool: True if the ResponseWriter was found in the context
+func GetResponseWriter(ctx context.Context) (http.ResponseWriter, bool) {
+	w, ok := ctx.Value(ContextKeyResponseWriter).(http.ResponseWriter)
+	return w, ok
+}
+
+// GetRequest extracts the HTTP Request from the context.
+// This provides access to request metadata such as headers, URL parameters,
+// authentication information, and other request-specific data for logging,
+// authorization, and business logic purposes.
+//
+// Parameters:
+//   - ctx: The context containing the HTTP Request
+//
+// Returns:
+//   - *http.Request: The HTTP request if found
+//   - bool: True if the Request was found in the context
+func GetRequest(ctx context.Context) (*http.Request, bool) {
+	r, ok := ctx.Value(ContextKeyRequest).(*http.Request)
+	return r, ok
+}
+
+// GetWebSocketConn extracts the WebSocket connection from the context.
+// This enables streaming service methods to access connection properties,
+// configure timeouts, handle connection-specific operations, and manage
+// the WebSocket lifecycle.
+//
+// Parameters:
+//   - ctx: The context containing the WebSocket connection
+//
+// Returns:
+//   - *websocket.Conn: The WebSocket connection if found
+//   - bool: True if the connection was found in the context
+func GetWebSocketConn(ctx context.Context) (*websocket.Conn, bool) {
+	conn, ok := ctx.Value(ContextKeyWebSocketConn).(*websocket.Conn)
+	return conn, ok
+}
+
+// isExpectedCloseError checks if an error is an expected websocket close error
+// that should not be logged as it indicates normal client disconnection
+func isExpectedCloseError(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	if websocket.IsCloseError(err,
+		websocket.CloseNormalClosure,
+		websocket.CloseGoingAway,
+		websocket.CloseNoStatusReceived) {
+		return true
+	}
+
+	// Check for network errors that occur during normal disconnection
+	if errors.Is(err, net.ErrClosed) {
+		return true
+	}
+
+	if errno, ok := errors.AsType[syscall.Errno](err); ok {
+		switch errno {
+		case syscall.EPIPE, syscall.ECONNRESET, syscall.ECONNABORTED, syscall.ECONNREFUSED,
+			errWSAEConnAborted, errWSAEConnReset, errWSAEShutdown, errWSAEConnRefused:
+			return true
+		}
+	}
+
+	return false
 }

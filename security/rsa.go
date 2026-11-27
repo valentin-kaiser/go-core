@@ -33,6 +33,37 @@ const (
 	pbkdf2KeyBytes = 32
 )
 
+// OIDs for PKCS#5 PBES2 and related algorithms
+var (
+	oidPBES2      = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 5, 13}     // PBES2
+	oidPBKDF2     = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 5, 12}     // PBKDF2
+	oidHMACSHA256 = asn1.ObjectIdentifier{1, 2, 840, 113549, 2, 9}         // HMAC-SHA256
+	oidAES256CBC  = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 1, 42} // AES-256-CBC
+)
+
+// PKCS#5 v2.0 (PBES2) ASN.1 structures for standard-compliant PKCS#8 encryption
+type pbes2Params struct {
+	KeyDerivationFunc algorithmIdentifier
+	EncryptionScheme  algorithmIdentifier
+}
+
+type algorithmIdentifier struct {
+	Algorithm  asn1.ObjectIdentifier
+	Parameters asn1.RawValue
+}
+
+type pbkdf2Params struct {
+	Salt           []byte
+	IterationCount int
+	KeyLength      int                 `asn1:"optional"`
+	PRF            algorithmIdentifier `asn1:"optional"`
+}
+
+type encryptedPrivateKeyInfo struct {
+	EncryptionAlgorithm algorithmIdentifier
+	EncryptedData       []byte
+}
+
 // RSACipher provides RSA encryption, decryption, signing, and verification operations.
 // It supports key sizes from 2048 to 4096 bits and uses SHA-256 for hashing.
 type RSACipher struct {
@@ -393,37 +424,6 @@ func (r *RSACipher) GetKeySize() int {
 	}
 	return 0
 }
-
-// PKCS#5 v2.0 (PBES2) ASN.1 structures for standard-compliant PKCS#8 encryption
-type pbes2Params struct {
-	KeyDerivationFunc algorithmIdentifier
-	EncryptionScheme  algorithmIdentifier
-}
-
-type algorithmIdentifier struct {
-	Algorithm  asn1.ObjectIdentifier
-	Parameters asn1.RawValue
-}
-
-type pbkdf2Params struct {
-	Salt           []byte
-	IterationCount int
-	KeyLength      int                 `asn1:"optional"`
-	PRF            algorithmIdentifier `asn1:"optional"`
-}
-
-type encryptedPrivateKeyInfo struct {
-	EncryptionAlgorithm algorithmIdentifier
-	EncryptedData       []byte
-}
-
-// OIDs for PKCS#5 PBES2 and related algorithms
-var (
-	oidPBES2      = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 5, 13}     // PBES2
-	oidPBKDF2     = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 5, 12}     // PBKDF2
-	oidHMACSHA256 = asn1.ObjectIdentifier{1, 2, 840, 113549, 2, 9}         // HMAC-SHA256
-	oidAES256CBC  = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 1, 42} // AES-256-CBC
-)
 
 // encryptPKCS8PrivateKey encrypts a PKCS#8 private key using standard PBES2 (PKCS#5 v2.0).
 // This produces encrypted keys compatible with OpenSSL and other standard tools.

@@ -10,9 +10,6 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
-// Priority defines the priority levels for jobs
-type Priority int
-
 const (
 	// PriorityLow represents the lowest priority level
 	PriorityLow Priority = iota
@@ -23,6 +20,26 @@ const (
 	// PriorityCritical represents the critical priority level
 	PriorityCritical
 )
+
+const (
+	// StatusPending indicates the job is pending execution
+	StatusPending Status = iota
+	// StatusRunning indicates the job is currently being executed
+	StatusRunning
+	// StatusCompleted indicates the job has completed successfully
+	StatusCompleted
+	// StatusFailed indicates the job has failed
+	StatusFailed
+	// StatusRetrying indicates the job is scheduled for retry
+	StatusRetrying
+	// StatusScheduled indicates the job is scheduled for future execution
+	StatusScheduled
+	// StatusDeadLetter indicates the job has been moved to dead letter queue
+	StatusDeadLetter
+)
+
+// Priority defines the priority levels for jobs
+type Priority int
 
 // String returns the string representation of the priority
 func (p Priority) String() string {
@@ -42,23 +59,6 @@ func (p Priority) String() string {
 
 // Status represents the status of a job
 type Status int
-
-const (
-	// StatusPending indicates the job is pending execution
-	StatusPending Status = iota
-	// StatusRunning indicates the job is currently being executed
-	StatusRunning
-	// StatusCompleted indicates the job has completed successfully
-	StatusCompleted
-	// StatusFailed indicates the job has failed
-	StatusFailed
-	// StatusRetrying indicates the job is scheduled for retry
-	StatusRetrying
-	// StatusScheduled indicates the job is scheduled for future execution
-	StatusScheduled
-	// StatusDeadLetter indicates the job has been moved to dead letter queue
-	StatusDeadLetter
-)
 
 // String returns the string representation of the status
 func (s Status) String() string {
@@ -134,6 +134,97 @@ type Batch struct {
 	CreatedAt   time.Time         `json:"created_at"`
 	CompletedAt time.Time         `json:"completed_at"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
+}
+
+// JobContext provides context for job execution
+type JobContext struct {
+	Job *Job
+}
+
+// NewJobContext creates a new job context that provides access to job information
+// and progress reporting capabilities within job handlers. The context allows handlers
+// to update job progress and access job metadata during execution.
+//
+// Example usage in a job handler:
+//
+//	func myHandler(ctx *queue.JobContext) error {
+//		ctx.ReportProgress(0.5) // 50% complete
+//		// do work...
+//		ctx.ReportProgress(1.0) // 100% complete
+//		return nil
+//	}
+func NewJobContext(_ context.Context, job *Job) *JobContext {
+	return &JobContext{
+		Job: job,
+	}
+}
+
+// ReportProgress reports job progress
+func (jc *JobContext) ReportProgress(progress float64) {
+	jc.Job.Progress = progress
+	jc.Job.UpdatedAt = time.Now()
+}
+
+// GetPayload gets a value from the job payload
+func (jc *JobContext) GetPayload(key string) (any, bool) {
+	if jc.Job.Payload == nil {
+		return nil, false
+	}
+
+	var payload map[string]any
+	err := json.Unmarshal(jc.Job.Payload, &payload)
+	if err != nil {
+		return nil, false
+	}
+
+	value, exists := payload[key]
+	return value, exists
+}
+
+// GetPayloadString gets a string value from the job payload
+func (jc *JobContext) GetPayloadString(key string) (string, bool) {
+	value, exists := jc.GetPayload(key)
+	if !exists {
+		return "", false
+	}
+	str, ok := value.(string)
+	return str, ok
+}
+
+// GetPayloadInt gets an int value from the job payload
+func (jc *JobContext) GetPayloadInt(key string) (int, bool) {
+	value, exists := jc.GetPayload(key)
+	if !exists {
+		return 0, false
+	}
+
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case float64:
+		return int(v), true
+	default:
+		return 0, false
+	}
+}
+
+// GetPayloadBool gets a bool value from the job payload
+func (jc *JobContext) GetPayloadBool(key string) (bool, bool) {
+	value, exists := jc.GetPayload(key)
+	if !exists {
+		return false, false
+	}
+	b, ok := value.(bool)
+	return b, ok
+}
+
+// GetMetadata gets a metadata value
+func (jc *JobContext) GetMetadata(key string) (string, bool) {
+	if jc.Job.Metadata == nil {
+		return "", false
+	}
+	value, exists := jc.Job.Metadata[key]
+	return value, exists
 }
 
 // BatchManager manages job batches
@@ -290,97 +381,6 @@ func (bm *BatchManager) DeleteBatch(ctx context.Context, id string) error {
 // generateBatchID generates a unique batch ID
 func (bm *BatchManager) generateBatchID() string {
 	return fmt.Sprintf("batch_%d_%d", time.Now().UnixNano(), time.Now().Nanosecond())
-}
-
-// JobContext provides context for job execution
-type JobContext struct {
-	Job *Job
-}
-
-// NewJobContext creates a new job context that provides access to job information
-// and progress reporting capabilities within job handlers. The context allows handlers
-// to update job progress and access job metadata during execution.
-//
-// Example usage in a job handler:
-//
-//	func myHandler(ctx *queue.JobContext) error {
-//		ctx.ReportProgress(0.5) // 50% complete
-//		// do work...
-//		ctx.ReportProgress(1.0) // 100% complete
-//		return nil
-//	}
-func NewJobContext(_ context.Context, job *Job) *JobContext {
-	return &JobContext{
-		Job: job,
-	}
-}
-
-// ReportProgress reports job progress
-func (jc *JobContext) ReportProgress(progress float64) {
-	jc.Job.Progress = progress
-	jc.Job.UpdatedAt = time.Now()
-}
-
-// GetPayload gets a value from the job payload
-func (jc *JobContext) GetPayload(key string) (any, bool) {
-	if jc.Job.Payload == nil {
-		return nil, false
-	}
-
-	var payload map[string]any
-	err := json.Unmarshal(jc.Job.Payload, &payload)
-	if err != nil {
-		return nil, false
-	}
-
-	value, exists := payload[key]
-	return value, exists
-}
-
-// GetPayloadString gets a string value from the job payload
-func (jc *JobContext) GetPayloadString(key string) (string, bool) {
-	value, exists := jc.GetPayload(key)
-	if !exists {
-		return "", false
-	}
-	str, ok := value.(string)
-	return str, ok
-}
-
-// GetPayloadInt gets an int value from the job payload
-func (jc *JobContext) GetPayloadInt(key string) (int, bool) {
-	value, exists := jc.GetPayload(key)
-	if !exists {
-		return 0, false
-	}
-
-	switch v := value.(type) {
-	case int:
-		return v, true
-	case float64:
-		return int(v), true
-	default:
-		return 0, false
-	}
-}
-
-// GetPayloadBool gets a bool value from the job payload
-func (jc *JobContext) GetPayloadBool(key string) (bool, bool) {
-	value, exists := jc.GetPayload(key)
-	if !exists {
-		return false, false
-	}
-	b, ok := value.(bool)
-	return b, ok
-}
-
-// GetMetadata gets a metadata value
-func (jc *JobContext) GetMetadata(key string) (string, bool) {
-	if jc.Job.Metadata == nil {
-		return "", false
-	}
-	value, exists := jc.Job.Metadata[key]
-	return value, exists
 }
 
 // IsRetryable checks if an error is a retryable error that should trigger job retry.

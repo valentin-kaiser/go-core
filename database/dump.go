@@ -16,6 +16,9 @@ const (
 	commentPrefix  = "--"
 )
 
+// backupFileMode is the mode of restored and copied database files.
+const backupFileMode os.FileMode = 0o640
+
 // forEachStatement reads an SQL dump line by line and calls fn with every complete statement, in
 // order. Blank lines and lines starting with "--" are skipped, and a statement ends at a line that
 // ends with a semicolon. Text after the last semicolon is not a statement and is dropped.
@@ -62,9 +65,6 @@ func forEachStatement(r io.Reader, fn func(stmt string) error) error {
 		}
 	}
 }
-
-// backupFileMode is the mode of restored and copied database files.
-const backupFileMode os.FileMode = 0o640
 
 // copyFile copies a file without reading it into memory
 func copyFile(src, dst string) error {

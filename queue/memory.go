@@ -9,6 +9,38 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
+// jobHeap implements a priority queue for jobs
+type jobHeap []*Job
+
+func (h *jobHeap) Len() int { return len(*h) }
+
+func (h *jobHeap) Less(i, j int) bool {
+	// Higher priority values come first
+	if (*h)[i].Priority != (*h)[j].Priority {
+		return (*h)[i].Priority > (*h)[j].Priority
+	}
+	// If priorities are equal, earlier created jobs come first
+	return (*h)[i].CreatedAt.Before((*h)[j].CreatedAt)
+}
+
+func (h *jobHeap) Swap(i, j int) { (*h)[i], (*h)[j] = (*h)[j], (*h)[i] }
+
+func (h *jobHeap) Push(x any) {
+	job, ok := x.(*Job)
+	if !ok {
+		panic("expected *Job type")
+	}
+	*h = append(*h, job)
+}
+
+func (h *jobHeap) Pop() any {
+	old := *h
+	n := len(old)
+	item := old[n-1]
+	*h = old[0 : n-1]
+	return item
+}
+
 // MemoryQueue implements an in-memory job queue with priority support
 type MemoryQueue struct {
 	jobs          map[string]*Job
@@ -91,26 +123,6 @@ func (mq *MemoryQueue) Dequeue(ctx context.Context, timeout time.Duration) (*Job
 			}
 		}
 	}
-}
-
-// popPending removes the next pending job and reports whether there was one.
-func (mq *MemoryQueue) popPending() (*Job, bool, error) {
-	mq.mutex.Lock()
-	defer mq.mutex.Unlock()
-
-	if mq.closed {
-		return nil, false, apperror.NewError("queue is closed")
-	}
-
-	if mq.pendingJobs.Len() == 0 {
-		return nil, false, nil
-	}
-
-	job, ok := heap.Pop(mq.pendingJobs).(*Job)
-	if !ok {
-		return nil, false, apperror.NewError("invalid job type in queue")
-	}
-	return job, true, nil
 }
 
 // Schedule adds a scheduled job to the queue
@@ -266,6 +278,26 @@ func (mq *MemoryQueue) Close() error {
 	return nil
 }
 
+// popPending removes the next pending job and reports whether there was one.
+func (mq *MemoryQueue) popPending() (*Job, bool, error) {
+	mq.mutex.Lock()
+	defer mq.mutex.Unlock()
+
+	if mq.closed {
+		return nil, false, apperror.NewError("queue is closed")
+	}
+
+	if mq.pendingJobs.Len() == 0 {
+		return nil, false, nil
+	}
+
+	job, ok := heap.Pop(mq.pendingJobs).(*Job)
+	if !ok {
+		return nil, false, apperror.NewError("invalid job type in queue")
+	}
+	return job, true, nil
+}
+
 // notify sends a notification to waiting dequeuers
 func (mq *MemoryQueue) notify() {
 	select {
@@ -273,36 +305,4 @@ func (mq *MemoryQueue) notify() {
 	default:
 		// Channel is full, notification already pending
 	}
-}
-
-// jobHeap implements a priority queue for jobs
-type jobHeap []*Job
-
-func (h *jobHeap) Len() int { return len(*h) }
-
-func (h *jobHeap) Less(i, j int) bool {
-	// Higher priority values come first
-	if (*h)[i].Priority != (*h)[j].Priority {
-		return (*h)[i].Priority > (*h)[j].Priority
-	}
-	// If priorities are equal, earlier created jobs come first
-	return (*h)[i].CreatedAt.Before((*h)[j].CreatedAt)
-}
-
-func (h *jobHeap) Swap(i, j int) { (*h)[i], (*h)[j] = (*h)[j], (*h)[i] }
-
-func (h *jobHeap) Push(x any) {
-	job, ok := x.(*Job)
-	if !ok {
-		panic("expected *Job type")
-	}
-	*h = append(*h, job)
-}
-
-func (h *jobHeap) Pop() any {
-	old := *h
-	n := len(old)
-	item := old[n-1]
-	*h = old[0 : n-1]
-	return item
 }

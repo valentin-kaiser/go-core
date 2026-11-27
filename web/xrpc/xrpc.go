@@ -45,11 +45,6 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
-var (
-	logger             = logging.GetPackageLogger("xrpc")
-	errMissingStreamID = apperror.NewError("missing stream id")
-)
-
 const (
 	defaultMaxBody = 4 << 20
 
@@ -70,6 +65,19 @@ const (
 	allowedMethods     = "POST, OPTIONS"
 	acceptedMediaTypes = "application/json, application/xml, application/grpc"
 	http2Major         = 2
+)
+
+const (
+	keyRequest contextKey = iota
+	keyWriter
+	keyConn
+	keyProtocol
+	keyStatus
+)
+
+var (
+	logger             = logging.GetPackageLogger("xrpc")
+	errMissingStreamID = apperror.NewError("missing stream id")
 )
 
 // Server is a service implementation; Descriptor is provided by the generated code.
@@ -94,26 +102,102 @@ type Service struct {
 	grpcSrv  *grpc.Server
 }
 
-// Register creates a Service from one or more implementations. Methods are
-// addressed as "Service.Method", "pkg.Service.Method" or "pkg.Service/Method".
-func Register(servers ...Server) *Service {
-	s := &Service{
-		methods: make(map[string]*method),
-		maxBody: defaultMaxBody,
-	}
+// WithFieldNames makes JSON and XML output use field names instead of field numbers.
+func (s *Service) WithFieldNames() *Service {
+	s.codec.names = true
+	return s
+}
 
-	// Short aliases are added after all canonical keys so they can never shadow one.
-	candidates := make(map[string]int)
-	for _, srv := range servers {
-		s.addServer(srv, candidates)
-	}
+// WithFieldNamesHeader lets a request header choose the encoding of its response:
+// a boolean value selects field names (true) or field numbers (false), overriding
+// the service default. On a WebSocket the header of the handshake applies to the whole connection.
+func (s *Service) WithFieldNamesHeader(name string) *Service {
+	s.namesHdr = http.CanonicalHeaderKey(name)
+	return s
+}
+
+// WithFieldNamesQuery lets the query string of a WebSocket handshake choose the encoding like
+// WithFieldNamesHeader does, for clients that cannot set handshake headers (browsers).
+// A configured header takes precedence.
+func (s *Service) WithFieldNamesQuery(param string) *Service {
+	s.namesQry = param
+	return s
+}
+
+// WithMaxBodySize limits the size of request bodies and WebSocket messages. The default is 4 MiB.
+func (s *Service) WithMaxBodySize(n int64) *Service {
+	s.maxBody = n
+	return s
+}
+
+// WithCheckOrigin sets the WebSocket origin check. By default only same-origin browser requests are accepted.
+func (s *Service) WithCheckOrigin(check func(*http.Request) bool) *Service {
+	s.upgrader.CheckOrigin = check
+	return s
+}
+
+// WithGRPCOptions sets options for the embedded gRPC server, e.g. interceptors.
+func (s *Service) WithGRPCOptions(opts ...grpc.ServerOption) *Service {
+	s.grpcOpts = append(s.grpcOpts, opts...)
+	return s
+}
+
+// WithGRPCReflection enables the gRPC server reflection service (v1 and v1alpha), so tools such as
+// grpcurl, grpcui and Postman can discover the services. It exposes the full API surface, so enable it
+// deliberately.
+func (s *Service) WithGRPCReflection() *Service {
+	s.reflect = true
+	return s
+}
+
+// WithCaseInsensitiveMethods makes method names match regardless of case.
+func (s *Service) WithCaseInsensitiveMethods() *Service {
+	s.fold = true
+	return s
+}
+
+// Handles reports whether the service has a handler for the given service and method name.
+func (s *Service) Handles(service, method string) bool {
+	return s.find(service+nameSeparator+method) != nil || s.find(service+pathSeparator+method) != nil
+}
+
+// Paths returns the gRPC request paths ("/pkg.Service/Method") served by this service.
+func (s *Service) Paths() []string {
+	paths := make([]string, 0, len(s.list))
 	for _, m := range s.list {
-		short := m.service + "." + m.name
-		if _, taken := s.methods[short]; !taken && candidates[short] == 1 {
-			s.methods[short] = m
+		paths = append(paths, pathSeparator+m.full+pathSeparator+m.name)
+	}
+	if s.reflect {
+		paths = append(paths, reflectionPaths...)
+	}
+	return paths
+}
+
+// ServeHTTP selects the protocol from the request and serves it.
+func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	defer interruption.Catch()
+
+	switch {
+	case websocket.IsWebSocketUpgrade(r):
+		s.serveWS(w, r)
+	case r.Method == http.MethodOptions:
+		w.WriteHeader(http.StatusNoContent)
+	case isGRPC(r):
+		s.serveGRPC(w, r)
+	case r.Method != http.MethodPost:
+		w.Header().Set(headerAllow, allowedMethods)
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	default:
+		switch mediaType(r) {
+		case mediaTypeJSON, mediaTypeJSONRPC, mediaTypeJSONRequest:
+			s.serveHTTP(w, r, newWire(ProtocolJSON, s.codecFor(w, r)))
+		case mediaTypeXML, mediaTypeTextXML:
+			s.serveHTTP(w, r, newWire(ProtocolXML, s.codecFor(w, r)))
+		default:
+			w.Header().Set(headerAcceptPost, acceptedMediaTypes)
+			http.Error(w, "unsupported content type", http.StatusUnsupportedMediaType)
 		}
 	}
-	return s
 }
 
 // addServer registers the methods of all services of srv and counts the short names in candidates.
@@ -154,28 +238,6 @@ func (s *Service) addServiceMethods(sv reflect.Value, sd protoreflect.ServiceDes
 	}
 }
 
-// WithFieldNames makes JSON and XML output use field names instead of field numbers.
-func (s *Service) WithFieldNames() *Service {
-	s.codec.names = true
-	return s
-}
-
-// WithFieldNamesHeader lets a request header choose the encoding of its response:
-// a boolean value selects field names (true) or field numbers (false), overriding
-// the service default. On a WebSocket the header of the handshake applies to the whole connection.
-func (s *Service) WithFieldNamesHeader(name string) *Service {
-	s.namesHdr = http.CanonicalHeaderKey(name)
-	return s
-}
-
-// WithFieldNamesQuery lets the query string of a WebSocket handshake choose the encoding like
-// WithFieldNamesHeader does, for clients that cannot set handshake headers (browsers).
-// A configured header takes precedence.
-func (s *Service) WithFieldNamesQuery(param string) *Service {
-	s.namesQry = param
-	return s
-}
-
 func (s *Service) codecFor(w http.ResponseWriter, r *http.Request) codec {
 	c := s.codec
 	if s.namesHdr != "" {
@@ -196,38 +258,6 @@ func (s *Service) codecFor(w http.ResponseWriter, r *http.Request) codec {
 	return c
 }
 
-// WithMaxBodySize limits the size of request bodies and WebSocket messages. The default is 4 MiB.
-func (s *Service) WithMaxBodySize(n int64) *Service {
-	s.maxBody = n
-	return s
-}
-
-// WithCheckOrigin sets the WebSocket origin check. By default only same-origin browser requests are accepted.
-func (s *Service) WithCheckOrigin(check func(*http.Request) bool) *Service {
-	s.upgrader.CheckOrigin = check
-	return s
-}
-
-// WithGRPCOptions sets options for the embedded gRPC server, e.g. interceptors.
-func (s *Service) WithGRPCOptions(opts ...grpc.ServerOption) *Service {
-	s.grpcOpts = append(s.grpcOpts, opts...)
-	return s
-}
-
-// WithGRPCReflection enables the gRPC server reflection service (v1 and v1alpha), so tools such as
-// grpcurl, grpcui and Postman can discover the services. It exposes the full API surface, so enable it
-// deliberately.
-func (s *Service) WithGRPCReflection() *Service {
-	s.reflect = true
-	return s
-}
-
-// WithCaseInsensitiveMethods makes method names match regardless of case.
-func (s *Service) WithCaseInsensitiveMethods() *Service {
-	s.fold = true
-	return s
-}
-
 func (s *Service) find(name string) *method {
 	if m := s.methods[name]; m != nil || !s.fold {
 		return m
@@ -238,123 +268,6 @@ func (s *Service) find(name string) *method {
 		}
 	}
 	return nil
-}
-
-// Handles reports whether the service has a handler for the given service and method name.
-func (s *Service) Handles(service, method string) bool {
-	return s.find(service+nameSeparator+method) != nil || s.find(service+pathSeparator+method) != nil
-}
-
-// Paths returns the gRPC request paths ("/pkg.Service/Method") served by this service.
-func (s *Service) Paths() []string {
-	paths := make([]string, 0, len(s.list))
-	for _, m := range s.list {
-		paths = append(paths, pathSeparator+m.full+pathSeparator+m.name)
-	}
-	if s.reflect {
-		paths = append(paths, reflectionPaths...)
-	}
-	return paths
-}
-
-type contextKey int
-
-const (
-	keyRequest contextKey = iota
-	keyWriter
-	keyConn
-	keyProtocol
-	keyStatus
-)
-
-type statusBox struct{ code int }
-
-// SetStatus lets a handler choose the HTTP status of the response, e.g. 401 for a failed authentication.
-// It only applies to single (non-batch) HTTP calls; for other calls it does nothing and returns false.
-func SetStatus(ctx context.Context, code int) bool {
-	b, ok := ctx.Value(keyStatus).(*statusBox)
-	if ok {
-		b.code = code
-	}
-	return ok
-}
-
-// WithHTTPContext adds the HTTP request and response writer to ctx.
-func WithHTTPContext(ctx context.Context, w http.ResponseWriter, r *http.Request) context.Context {
-	ctx = context.WithValue(ctx, keyWriter, w)
-	return context.WithValue(ctx, keyRequest, r)
-}
-
-// WithWebSocketContext adds the HTTP upgrade request, response writer and WebSocket connection to ctx.
-func WithWebSocketContext(ctx context.Context, w http.ResponseWriter, r *http.Request, conn *websocket.Conn) context.Context {
-	return context.WithValue(WithHTTPContext(ctx, w, r), keyConn, conn)
-}
-
-// GetRequest returns the HTTP request that started the call.
-func GetRequest(ctx context.Context) (*http.Request, bool) {
-	r, ok := ctx.Value(keyRequest).(*http.Request)
-	return r, ok
-}
-
-// GetResponseWriter returns the HTTP response writer of the call. It is unavailable on WebSocket and gRPC streams after the upgrade.
-func GetResponseWriter(ctx context.Context) (http.ResponseWriter, bool) {
-	w, ok := ctx.Value(keyWriter).(http.ResponseWriter)
-	return w, ok
-}
-
-// GetWebSocketConn returns the WebSocket connection of the call.
-func GetWebSocketConn(ctx context.Context) (*websocket.Conn, bool) {
-	c, ok := ctx.Value(keyConn).(*websocket.Conn)
-	return c, ok
-}
-
-// GetProtocol returns the wire protocol of the call.
-func GetProtocol(ctx context.Context) (Protocol, bool) {
-	p, ok := ctx.Value(keyProtocol).(Protocol)
-	return p, ok
-}
-
-func withProtocol(ctx context.Context, p Protocol) context.Context {
-	return context.WithValue(ctx, keyProtocol, p)
-}
-
-func mediaType(r *http.Request) string {
-	mt, _, err := mime.ParseMediaType(r.Header.Get(headerContentType))
-	if err != nil {
-		return ""
-	}
-	return mt
-}
-
-func isGRPC(r *http.Request) bool {
-	return r.ProtoMajor == http2Major && strings.HasPrefix(mediaType(r), mediaTypeGRPC)
-}
-
-// ServeHTTP selects the protocol from the request and serves it.
-func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	defer interruption.Catch()
-
-	switch {
-	case websocket.IsWebSocketUpgrade(r):
-		s.serveWS(w, r)
-	case r.Method == http.MethodOptions:
-		w.WriteHeader(http.StatusNoContent)
-	case isGRPC(r):
-		s.serveGRPC(w, r)
-	case r.Method != http.MethodPost:
-		w.Header().Set(headerAllow, allowedMethods)
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	default:
-		switch mediaType(r) {
-		case mediaTypeJSON, mediaTypeJSONRPC, mediaTypeJSONRequest:
-			s.serveHTTP(w, r, newWire(ProtocolJSON, s.codecFor(w, r)))
-		case mediaTypeXML, mediaTypeTextXML:
-			s.serveHTTP(w, r, newWire(ProtocolXML, s.codecFor(w, r)))
-		default:
-			w.Header().Set(headerAcceptPost, acceptedMediaTypes)
-			http.Error(w, "unsupported content type", http.StatusUnsupportedMediaType)
-		}
-	}
 }
 
 func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request, wr wire) {
@@ -463,4 +376,91 @@ func (s *Service) handle(ctx context.Context, e *envelope) *reply {
 		return nil
 	}
 	return &reply{id: e.id, result: out}
+}
+
+type contextKey int
+
+type statusBox struct{ code int }
+
+// Register creates a Service from one or more implementations. Methods are
+// addressed as "Service.Method", "pkg.Service.Method" or "pkg.Service/Method".
+func Register(servers ...Server) *Service {
+	s := &Service{
+		methods: make(map[string]*method),
+		maxBody: defaultMaxBody,
+	}
+
+	// Short aliases are added after all canonical keys so they can never shadow one.
+	candidates := make(map[string]int)
+	for _, srv := range servers {
+		s.addServer(srv, candidates)
+	}
+	for _, m := range s.list {
+		short := m.service + "." + m.name
+		if _, taken := s.methods[short]; !taken && candidates[short] == 1 {
+			s.methods[short] = m
+		}
+	}
+	return s
+}
+
+// SetStatus lets a handler choose the HTTP status of the response, e.g. 401 for a failed authentication.
+// It only applies to single (non-batch) HTTP calls; for other calls it does nothing and returns false.
+func SetStatus(ctx context.Context, code int) bool {
+	b, ok := ctx.Value(keyStatus).(*statusBox)
+	if ok {
+		b.code = code
+	}
+	return ok
+}
+
+// WithHTTPContext adds the HTTP request and response writer to ctx.
+func WithHTTPContext(ctx context.Context, w http.ResponseWriter, r *http.Request) context.Context {
+	ctx = context.WithValue(ctx, keyWriter, w)
+	return context.WithValue(ctx, keyRequest, r)
+}
+
+// WithWebSocketContext adds the HTTP upgrade request, response writer and WebSocket connection to ctx.
+func WithWebSocketContext(ctx context.Context, w http.ResponseWriter, r *http.Request, conn *websocket.Conn) context.Context {
+	return context.WithValue(WithHTTPContext(ctx, w, r), keyConn, conn)
+}
+
+// GetRequest returns the HTTP request that started the call.
+func GetRequest(ctx context.Context) (*http.Request, bool) {
+	r, ok := ctx.Value(keyRequest).(*http.Request)
+	return r, ok
+}
+
+// GetResponseWriter returns the HTTP response writer of the call. It is unavailable on WebSocket and gRPC streams after the upgrade.
+func GetResponseWriter(ctx context.Context) (http.ResponseWriter, bool) {
+	w, ok := ctx.Value(keyWriter).(http.ResponseWriter)
+	return w, ok
+}
+
+// GetWebSocketConn returns the WebSocket connection of the call.
+func GetWebSocketConn(ctx context.Context) (*websocket.Conn, bool) {
+	c, ok := ctx.Value(keyConn).(*websocket.Conn)
+	return c, ok
+}
+
+// GetProtocol returns the wire protocol of the call.
+func GetProtocol(ctx context.Context) (Protocol, bool) {
+	p, ok := ctx.Value(keyProtocol).(Protocol)
+	return p, ok
+}
+
+func withProtocol(ctx context.Context, p Protocol) context.Context {
+	return context.WithValue(ctx, keyProtocol, p)
+}
+
+func mediaType(r *http.Request) string {
+	mt, _, err := mime.ParseMediaType(r.Header.Get(headerContentType))
+	if err != nil {
+		return ""
+	}
+	return mt
+}
+
+func isGRPC(r *http.Request) bool {
+	return r.ProtoMajor == http2Major && strings.HasPrefix(mediaType(r), mediaTypeGRPC)
 }

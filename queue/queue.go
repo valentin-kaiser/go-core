@@ -160,6 +160,46 @@ type Stats struct {
 	DeadLetter    int64 `json:"dead_letter"`
 }
 
+// RetryableError represents an error that should trigger a retry
+type RetryableError struct {
+	Err error
+}
+
+// NewRetryableError wraps an error to indicate that a job should be retried.
+// When a job handler returns a RetryableError, the job manager will automatically
+// retry the job according to the configured retry policy, instead of marking it as failed.
+//
+// Example usage:
+//
+//	func myJobHandler(job *queue.Job) error {
+//		if err := doSomething(); err != nil {
+//			if isTemporaryError(err) {
+//				return queue.NewRetryableError(err) // Will retry
+//			}
+//			return err // Will fail permanently
+//		}
+//		return nil
+//	}
+func NewRetryableError(err error) *RetryableError {
+	return &RetryableError{Err: err}
+}
+
+func (e *RetryableError) Error() string {
+	return e.Err.Error()
+}
+
+// JobProgress represents job progress information
+type JobProgress struct {
+	JobID    string  `json:"job_id"`
+	Progress float64 `json:"progress"`
+	Message  string  `json:"message,omitempty"`
+}
+
+type progressUpdate struct {
+	jobID    string
+	progress float64
+}
+
 // Manager manages the job queue and workers
 type Manager struct {
 	queue            Queue
@@ -201,46 +241,6 @@ func NewManager() *Manager {
 		stats:            &Stats{},
 		progressChan:     make(chan progressUpdate, progressChanSize),
 	}
-}
-
-type progressUpdate struct {
-	jobID    string
-	progress float64
-}
-
-// RetryableError represents an error that should trigger a retry
-type RetryableError struct {
-	Err error
-}
-
-// NewRetryableError wraps an error to indicate that a job should be retried.
-// When a job handler returns a RetryableError, the job manager will automatically
-// retry the job according to the configured retry policy, instead of marking it as failed.
-//
-// Example usage:
-//
-//	func myJobHandler(job *queue.Job) error {
-//		if err := doSomething(); err != nil {
-//			if isTemporaryError(err) {
-//				return queue.NewRetryableError(err) // Will retry
-//			}
-//			return err // Will fail permanently
-//		}
-//		return nil
-//	}
-func NewRetryableError(err error) *RetryableError {
-	return &RetryableError{Err: err}
-}
-
-func (e *RetryableError) Error() string {
-	return e.Err.Error()
-}
-
-// JobProgress represents job progress information
-type JobProgress struct {
-	JobID    string  `json:"job_id"`
-	Progress float64 `json:"progress"`
-	Message  string  `json:"message,omitempty"`
 }
 
 // WithRabbitMQ sets the queue to use RabbitMQ with the given configuration

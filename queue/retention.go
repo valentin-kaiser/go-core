@@ -3,6 +3,13 @@ package queue
 // defaultFinishedRetention is how many finished jobs a queue keeps for GetJob and GetJobs
 const defaultFinishedRetention = 10000
 
+// finishedEntry is one completion in the ring. The ID alone is not enough: a job that is retried
+// and finishes again has a newer entry, and the older one must not delete it.
+type finishedEntry struct {
+	id  string
+	seq uint64
+}
+
 // finishedJobs remembers the order in which jobs finished and drops the oldest ones from the
 // queue's job index once more than limit are kept. A queue that is used for years would
 // otherwise hold every job it ever ran. The jobs themselves are not lost, only the index entry
@@ -18,32 +25,8 @@ type finishedJobs struct {
 	evicted map[Status]int64
 }
 
-// finishedEntry is one completion in the ring. The ID alone is not enough: a job that is retried
-// and finishes again has a newer entry, and the older one must not delete it.
-type finishedEntry struct {
-	id  string
-	seq uint64
-}
-
 func newFinishedJobs(limit int) finishedJobs {
 	return finishedJobs{limit: limit, evicted: make(map[Status]int64)}
-}
-
-// retentionLimit maps a configured value to a limit: 0 selects the default, below 0 keeps everything
-func retentionLimit(configured int) int {
-	switch {
-	case configured == 0:
-		return defaultFinishedRetention
-	case configured < 0:
-		return 0
-	default:
-		return configured
-	}
-}
-
-// isFinished reports whether the status is one a job does not leave on its own
-func isFinished(s Status) bool {
-	return s == StatusCompleted || s == StatusFailed || s == StatusDeadLetter
 }
 
 // record notes that the job reached a finished status and drops the oldest finished
@@ -93,4 +76,21 @@ func (f *finishedJobs) addTo(stats *Stats) {
 			stats.DeadLetter += n
 		}
 	}
+}
+
+// retentionLimit maps a configured value to a limit: 0 selects the default, below 0 keeps everything
+func retentionLimit(configured int) int {
+	switch {
+	case configured == 0:
+		return defaultFinishedRetention
+	case configured < 0:
+		return 0
+	default:
+		return configured
+	}
+}
+
+// isFinished reports whether the status is one a job does not leave on its own
+func isFinished(s Status) bool {
+	return s == StatusCompleted || s == StatusFailed || s == StatusDeadLetter
 }

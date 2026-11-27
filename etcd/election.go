@@ -11,6 +11,8 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
+const defaultElectionTTL = 15 * time.Second
+
 // Election represents an ongoing leader election. The election runs in the
 // background until Resign is called or the underlying session is lost.
 type Election struct {
@@ -19,8 +21,6 @@ type Election struct {
 	identity string
 	key      string
 }
-
-const defaultElectionTTL = 15 * time.Second
 
 // Campaign begins campaigning for leadership of the given election key. The
 // returned Election immediately attempts to become leader; callers can use
@@ -96,6 +96,26 @@ func (e *Election) Observe(ctx context.Context) <-chan string {
 	return out
 }
 
+// Resign relinquishes leadership (if held) and closes the underlying
+// session. After Resign the Election must not be used again.
+func (e *Election) Resign(ctx context.Context) error {
+	if e == nil {
+		return nil
+	}
+	resignErr := e.election.Resign(ctx)
+	closeErr := e.session.Close()
+	if resignErr != nil {
+		return apperror.NewError("resigning leadership failed").AddError(resignErr)
+	}
+	if closeErr != nil {
+		return apperror.NewError("closing etcd session failed").AddError(closeErr)
+	}
+	return nil
+}
+
+// Done returns a channel closed when the underlying session is lost.
+func (e *Election) Done() <-chan struct{} { return e.session.Done() }
+
 func (e *Election) forwardLeaders(ctx context.Context, out chan<- string, source <-chan *clientv3.GetResponse) {
 	defer close(out)
 	for {
@@ -119,23 +139,3 @@ func (e *Election) forwardLeaders(ctx context.Context, out chan<- string, source
 		}
 	}
 }
-
-// Resign relinquishes leadership (if held) and closes the underlying
-// session. After Resign the Election must not be used again.
-func (e *Election) Resign(ctx context.Context) error {
-	if e == nil {
-		return nil
-	}
-	resignErr := e.election.Resign(ctx)
-	closeErr := e.session.Close()
-	if resignErr != nil {
-		return apperror.NewError("resigning leadership failed").AddError(resignErr)
-	}
-	if closeErr != nil {
-		return apperror.NewError("closing etcd session failed").AddError(closeErr)
-	}
-	return nil
-}
-
-// Done returns a channel closed when the underlying session is lost.
-func (e *Election) Done() <-chan struct{} { return e.session.Done() }

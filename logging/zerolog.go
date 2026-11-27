@@ -40,43 +40,6 @@ func (e *ZerologEvent) Field(key string, value any) Event {
 	return e
 }
 
-// addField uses the typed zerolog setters for common types. Interface goes through
-// reflection and a JSON marshal, which is several times slower.
-func addField(ev *zerolog.Event, key string, value any) *zerolog.Event {
-	switch v := value.(type) {
-	case string:
-		return ev.Str(key, v)
-	case int:
-		return ev.Int(key, v)
-	case int8:
-		return ev.Int8(key, v)
-	case int16:
-		return ev.Int16(key, v)
-	case int32:
-		return ev.Int32(key, v)
-	case int64:
-		return ev.Int64(key, v)
-	case uint:
-		return ev.Uint(key, v)
-	case uint8:
-		return ev.Uint8(key, v)
-	case uint16:
-		return ev.Uint16(key, v)
-	case uint32:
-		return ev.Uint32(key, v)
-	case uint64:
-		return ev.Uint64(key, v)
-	case float32:
-		return ev.Float32(key, v)
-	case float64:
-		return ev.Float64(key, v)
-	case bool:
-		return ev.Bool(key, v)
-	default:
-		return ev.Interface(key, value)
-	}
-}
-
 // Err adds an error to the event
 func (e *ZerologEvent) Err(err error) Event {
 	e.event = e.event.Err(err)
@@ -93,6 +56,18 @@ func (e *ZerologEvent) Msgf(format string, v ...any) {
 	e.event.Msgf(format, v...)
 }
 
+// zerologState is an immutable snapshot of the logger configuration
+type zerologState struct {
+	logger zerolog.Logger
+	level  Level
+}
+
+// derivedAdapter is a WithPackage result together with the state it was derived from
+type derivedAdapter struct {
+	source  *zerologState
+	adapter *ZerologAdapter
+}
+
 // ZerologAdapter implements LogAdapter using zerolog
 type ZerologAdapter struct {
 	// state holds the logger and level. It is replaced as a whole, never modified, so the
@@ -105,18 +80,6 @@ type ZerologAdapter struct {
 	outputs []io.Writer
 	// packages caches the adapters derived by WithPackage
 	packages sync.Map
-}
-
-// zerologState is an immutable snapshot of the logger configuration
-type zerologState struct {
-	logger zerolog.Logger
-	level  Level
-}
-
-// derivedAdapter is a WithPackage result together with the state it was derived from
-type derivedAdapter struct {
-	source  *zerologState
-	adapter *ZerologAdapter
 }
 
 func newZerologAdapter(logger zerolog.Logger, level Level) *ZerologAdapter {
@@ -133,19 +96,6 @@ func NewZerologAdapter() *ZerologAdapter {
 // NewZerologAdapterWithLogger creates a new zerolog adapter with a custom logger
 func NewZerologAdapterWithLogger(logger zerolog.Logger) Adapter {
 	return newZerologAdapter(logger, InfoLevel)
-}
-
-// event wraps a zerolog event. zerolog returns nil for a disabled level; that case
-// skips the allocation and the caller lookup.
-func (z *ZerologAdapter) event(ev *zerolog.Event) Event {
-	if ev == nil {
-		return &NoOpEvent{}
-	}
-	e := &ZerologEvent{event: ev}
-	if debug.Load() {
-		return e.Field(fieldCaller, callerInfo(callerSkipFrames))
-	}
-	return e
 }
 
 // WithConsole adds a console writer to the logger if in interactive mode
@@ -251,12 +201,6 @@ func (z *ZerologAdapter) Stream() *StreamWriter {
 	return z.stream
 }
 
-func (z *ZerologAdapter) fileLogger() *lumberjack.Logger {
-	z.config.Lock()
-	defer z.config.Unlock()
-	return z.file
-}
-
 // SetLevel sets the log level
 func (z *ZerologAdapter) SetLevel(level Level) Adapter {
 	z.config.Lock()
@@ -334,6 +278,25 @@ func (z *ZerologAdapter) Logger() *l.Logger {
 	return l.New(z.state.Load().logger, "", 0)
 }
 
+// event wraps a zerolog event. zerolog returns nil for a disabled level; that case
+// skips the allocation and the caller lookup.
+func (z *ZerologAdapter) event(ev *zerolog.Event) Event {
+	if ev == nil {
+		return &NoOpEvent{}
+	}
+	e := &ZerologEvent{event: ev}
+	if debug.Load() {
+		return e.Field(fieldCaller, callerInfo(callerSkipFrames))
+	}
+	return e
+}
+
+func (z *ZerologAdapter) fileLogger() *lumberjack.Logger {
+	z.config.Lock()
+	defer z.config.Unlock()
+	return z.file
+}
+
 // convertLevel converts our Level to zerolog.Level
 func (z *ZerologAdapter) convertLevel(level Level) zerolog.Level {
 	if level < VerboseLevel {
@@ -361,5 +324,42 @@ func (z *ZerologAdapter) convertLevel(level Level) zerolog.Level {
 		return zerolog.Disabled
 	default:
 		return zerolog.InfoLevel
+	}
+}
+
+// addField uses the typed zerolog setters for common types. Interface goes through
+// reflection and a JSON marshal, which is several times slower.
+func addField(ev *zerolog.Event, key string, value any) *zerolog.Event {
+	switch v := value.(type) {
+	case string:
+		return ev.Str(key, v)
+	case int:
+		return ev.Int(key, v)
+	case int8:
+		return ev.Int8(key, v)
+	case int16:
+		return ev.Int16(key, v)
+	case int32:
+		return ev.Int32(key, v)
+	case int64:
+		return ev.Int64(key, v)
+	case uint:
+		return ev.Uint(key, v)
+	case uint8:
+		return ev.Uint8(key, v)
+	case uint16:
+		return ev.Uint16(key, v)
+	case uint32:
+		return ev.Uint32(key, v)
+	case uint64:
+		return ev.Uint64(key, v)
+	case float32:
+		return ev.Float32(key, v)
+	case float64:
+		return ev.Float64(key, v)
+	case bool:
+		return ev.Bool(key, v)
+	default:
+		return ev.Interface(key, value)
 	}
 }

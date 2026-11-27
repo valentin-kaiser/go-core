@@ -30,53 +30,6 @@ type wsConn struct {
 	sem    chan struct{}
 }
 
-type wsStream struct {
-	m      *method
-	in     chan proto.Message
-	ctx    context.Context //nolint:containedctx // stream-scoped context that lets recv unblock when the stream is cancelled
-	cancel context.CancelFunc
-	closed bool // only accessed from the read loop
-}
-
-func (st *wsStream) recv() (proto.Message, error) {
-	select {
-	case msg, ok := <-st.in:
-		if !ok {
-			return nil, io.EOF
-		}
-		return msg, nil
-	case <-st.ctx.Done():
-		return nil, st.ctx.Err()
-	}
-}
-
-func (s *Service) serveWS(w http.ResponseWriter, r *http.Request) {
-	up := s.upgrader
-	up.Subprotocols = []string{subprotocolJSON, subprotocolXML}
-	conn, err := up.Upgrade(w, r, nil)
-	if err != nil {
-		logger.Debug().Err(err).Msg("upgrading connection to websocket failed")
-		return
-	}
-
-	p := ProtocolJSON
-	if conn.Subprotocol() == subprotocolXML {
-		p = ProtocolXML
-	}
-
-	ctx, cancel := context.WithCancel(withProtocol(WithWebSocketContext(r.Context(), w, r, conn), p))
-	defer cancel()
-
-	c := &wsConn{
-		svc:    s,
-		conn:   conn,
-		wire:   newWire(p, s.codecFor(w, r)),
-		stream: make(map[string]*wsStream),
-		sem:    make(chan struct{}, maxInflight),
-	}
-	c.serve(ctx)
-}
-
 func (c *wsConn) send(data []byte) error {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
@@ -284,4 +237,51 @@ func (c *wsConn) startStream(parent context.Context, m *method, e *envelope) {
 		}
 		c.sendReplies([]*reply{r}, false)
 	}()
+}
+
+type wsStream struct {
+	m      *method
+	in     chan proto.Message
+	ctx    context.Context //nolint:containedctx // stream-scoped context that lets recv unblock when the stream is cancelled
+	cancel context.CancelFunc
+	closed bool // only accessed from the read loop
+}
+
+func (st *wsStream) recv() (proto.Message, error) {
+	select {
+	case msg, ok := <-st.in:
+		if !ok {
+			return nil, io.EOF
+		}
+		return msg, nil
+	case <-st.ctx.Done():
+		return nil, st.ctx.Err()
+	}
+}
+
+func (s *Service) serveWS(w http.ResponseWriter, r *http.Request) {
+	up := s.upgrader
+	up.Subprotocols = []string{subprotocolJSON, subprotocolXML}
+	conn, err := up.Upgrade(w, r, nil)
+	if err != nil {
+		logger.Debug().Err(err).Msg("upgrading connection to websocket failed")
+		return
+	}
+
+	p := ProtocolJSON
+	if conn.Subprotocol() == subprotocolXML {
+		p = ProtocolXML
+	}
+
+	ctx, cancel := context.WithCancel(withProtocol(WithWebSocketContext(r.Context(), w, r, conn), p))
+	defer cancel()
+
+	c := &wsConn{
+		svc:    s,
+		conn:   conn,
+		wire:   newWire(p, s.codecFor(w, r)),
+		stream: make(map[string]*wsStream),
+		sem:    make(chan struct{}, maxInflight),
+	}
+	c.serve(ctx)
 }

@@ -144,6 +144,27 @@ const (
 
 var logger = logging.GetPackageLogger("mail")
 
+// Stats represents mail statistics
+type Stats struct {
+	// SentCount is the number of emails sent
+	SentCount int64 `json:"sent_count"`
+
+	// FailedCount is the number of emails that failed to send
+	FailedCount int64 `json:"failed_count"`
+
+	// QueuedCount is the number of emails currently queued
+	QueuedCount int64 `json:"queued_count"`
+
+	// ReceivedCount is the number of emails received by the server
+	ReceivedCount int64 `json:"received_count"`
+
+	// LastSent is the timestamp of the last sent email
+	LastSent *time.Time `json:"last_sent,omitempty"`
+
+	// LastReceived is the timestamp of the last received email
+	LastReceived *time.Time `json:"last_received,omitempty"`
+}
+
 // Manager manages email sending and SMTP server functionality
 type Manager struct {
 	config          *Config
@@ -415,6 +436,12 @@ func (m *Manager) SendTestEmail(ctx context.Context, to string) error {
 	return m.Send(ctx, testMessage)
 }
 
+// NotifyMessageReceived notifies that a message was received by the SMTP server
+func (m *Manager) NotifyMessageReceived() {
+	m.incrementReceivedCount()
+	m.updateLastReceived()
+}
+
 // handleMailJob handles queued mail jobs
 func (m *Manager) handleMailJob(ctx context.Context, job *queue.Job) error {
 	logger.Debug().Field("job_id", job.ID).Msg("processing mail job")
@@ -448,12 +475,6 @@ func (m *Manager) handleMailJob(ctx context.Context, job *queue.Job) error {
 		Msg("queued email sent successfully")
 
 	return nil
-}
-
-// NotifyMessageReceived notifies that a message was received by the SMTP server
-func (m *Manager) NotifyMessageReceived() {
-	m.incrementReceivedCount()
-	m.updateLastReceived()
 }
 
 // incrementSentCount increments the sent count

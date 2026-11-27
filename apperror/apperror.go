@@ -103,6 +103,16 @@ var (
 	anonymous atomic.Bool
 )
 
+// traceCache maps a call site to its trace text. It is bounded by the number of call sites
+// in the program that create errors.
+var traceCache sync.Map
+
+// traceKey identifies a cached trace entry
+type traceKey struct {
+	pc        uintptr
+	anonymous bool
+}
+
 // Error represents an application error with a stack trace and additional errors
 // It implements the error interface and can be used to wrap other errors
 type Error struct {
@@ -465,13 +475,3 @@ func Trace(skip int) string {
 	traceCache.Store(key, s)
 	return s
 }
-
-// traceKey identifies a cached trace entry
-type traceKey struct {
-	pc        uintptr
-	anonymous bool
-}
-
-// traceCache maps a call site to its trace text. It is bounded by the number of call sites
-// in the program that create errors.
-var traceCache sync.Map

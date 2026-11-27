@@ -27,29 +27,6 @@ const (
 	errorPrefix  = " error="
 )
 
-// StandardAdapter implements LogAdapter using Go's standard log package
-type StandardAdapter struct {
-	logger *log.Logger
-	level  atomic.Int64
-	pkg    string
-}
-
-func newStandardAdapter(logger *log.Logger, level Level, pkg string) *StandardAdapter {
-	s := &StandardAdapter{logger: logger, pkg: pkg}
-	s.level.Store(int64(level))
-	return s
-}
-
-// NewStandardAdapter creates a new standard log adapter with the default logger
-func NewStandardAdapter() Adapter {
-	return newStandardAdapter(log.Default(), InfoLevel, "")
-}
-
-// NewStandardAdapterWithLogger creates a new standard log adapter with a custom logger
-func NewStandardAdapterWithLogger(logger *log.Logger) Adapter {
-	return newStandardAdapter(logger, InfoLevel, "")
-}
-
 // StandardEvent wraps standard log functionality to implement our Event interface
 type StandardEvent struct {
 	adapter *StandardAdapter
@@ -146,60 +123,27 @@ func (e *StandardEvent) formatMessage(msg string) string {
 	return b.String()
 }
 
-// upperLevelName returns the upper case name of the level without allocating
-func upperLevelName(l Level) string {
-	switch l {
-	case VerboseLevel:
-		return "VERBOSE"
-	case TraceLevel:
-		return "TRACE"
-	case DebugLevel:
-		return "DEBUG"
-	case InfoLevel:
-		return "INFO"
-	case WarnLevel:
-		return "WARN"
-	case ErrorLevel:
-		return "ERROR"
-	case FatalLevel:
-		return "FATAL"
-	case PanicLevel:
-		return "PANIC"
-	case DisabledLevel:
-		return "DISABLED"
-	default:
-		return "UNKNOWN"
-	}
+// StandardAdapter implements LogAdapter using Go's standard log package
+type StandardAdapter struct {
+	logger *log.Logger
+	level  atomic.Int64
+	pkg    string
 }
 
-// writeValue writes the value like fmt.Sprintf("%v") would, without going through fmt for
-// the common types
-func writeValue(b *strings.Builder, v any) {
-	var scratch [scratchBufferBytes]byte
-	switch x := v.(type) {
-	case string:
-		b.WriteString(x)
-	case int:
-		b.Write(strconv.AppendInt(scratch[:0], int64(x), decimalBase))
-	case int64:
-		b.Write(strconv.AppendInt(scratch[:0], x, decimalBase))
-	case int32:
-		b.Write(strconv.AppendInt(scratch[:0], int64(x), decimalBase))
-	case uint:
-		b.Write(strconv.AppendUint(scratch[:0], uint64(x), decimalBase))
-	case uint64:
-		b.Write(strconv.AppendUint(scratch[:0], x, decimalBase))
-	case uint32:
-		b.Write(strconv.AppendUint(scratch[:0], uint64(x), decimalBase))
-	case bool:
-		b.Write(strconv.AppendBool(scratch[:0], x))
-	case float64:
-		b.Write(strconv.AppendFloat(scratch[:0], x, 'g', -1, floatBitSize))
-	case error:
-		b.WriteString(x.Error())
-	default:
-		fmt.Fprintf(b, "%v", v)
-	}
+func newStandardAdapter(logger *log.Logger, level Level, pkg string) *StandardAdapter {
+	s := &StandardAdapter{logger: logger, pkg: pkg}
+	s.level.Store(int64(level))
+	return s
+}
+
+// NewStandardAdapter creates a new standard log adapter with the default logger
+func NewStandardAdapter() Adapter {
+	return newStandardAdapter(log.Default(), InfoLevel, "")
+}
+
+// NewStandardAdapterWithLogger creates a new standard log adapter with a custom logger
+func NewStandardAdapterWithLogger(logger *log.Logger) Adapter {
+	return newStandardAdapter(logger, InfoLevel, "")
 }
 
 // SetLevel sets the log level
@@ -211,15 +155,6 @@ func (s *StandardAdapter) SetLevel(level Level) Adapter {
 // GetLevel returns the current log level
 func (s *StandardAdapter) GetLevel() Level {
 	return Level(s.level.Load())
-}
-
-// event creates an event for the level. The caller lookup is skipped for levels that will not be logged.
-func (s *StandardAdapter) event(level Level) Event {
-	e := &StandardEvent{adapter: s, level: level}
-	if debug.Load() && e.shouldLog() {
-		e.caller = callerInfo(callerSkipFrames)
-	}
-	return e
 }
 
 // Trace returns a trace level event
@@ -275,4 +210,69 @@ func (s *StandardAdapter) Enabled() bool {
 // Logger returns the underlying standard library logger.
 func (s *StandardAdapter) Logger() *log.Logger {
 	return s.logger
+}
+
+// event creates an event for the level. The caller lookup is skipped for levels that will not be logged.
+func (s *StandardAdapter) event(level Level) Event {
+	e := &StandardEvent{adapter: s, level: level}
+	if debug.Load() && e.shouldLog() {
+		e.caller = callerInfo(callerSkipFrames)
+	}
+	return e
+}
+
+// upperLevelName returns the upper case name of the level without allocating
+func upperLevelName(l Level) string {
+	switch l {
+	case VerboseLevel:
+		return "VERBOSE"
+	case TraceLevel:
+		return "TRACE"
+	case DebugLevel:
+		return "DEBUG"
+	case InfoLevel:
+		return "INFO"
+	case WarnLevel:
+		return "WARN"
+	case ErrorLevel:
+		return "ERROR"
+	case FatalLevel:
+		return "FATAL"
+	case PanicLevel:
+		return "PANIC"
+	case DisabledLevel:
+		return "DISABLED"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// writeValue writes the value like fmt.Sprintf("%v") would, without going through fmt for
+// the common types
+func writeValue(b *strings.Builder, v any) {
+	var scratch [scratchBufferBytes]byte
+	switch x := v.(type) {
+	case string:
+		b.WriteString(x)
+	case int:
+		b.Write(strconv.AppendInt(scratch[:0], int64(x), decimalBase))
+	case int64:
+		b.Write(strconv.AppendInt(scratch[:0], x, decimalBase))
+	case int32:
+		b.Write(strconv.AppendInt(scratch[:0], int64(x), decimalBase))
+	case uint:
+		b.Write(strconv.AppendUint(scratch[:0], uint64(x), decimalBase))
+	case uint64:
+		b.Write(strconv.AppendUint(scratch[:0], x, decimalBase))
+	case uint32:
+		b.Write(strconv.AppendUint(scratch[:0], uint64(x), decimalBase))
+	case bool:
+		b.Write(strconv.AppendBool(scratch[:0], x))
+	case float64:
+		b.Write(strconv.AppendFloat(scratch[:0], x, 'g', -1, floatBitSize))
+	case error:
+		b.WriteString(x.Error())
+	default:
+		fmt.Fprintf(b, "%v", v)
+	}
 }

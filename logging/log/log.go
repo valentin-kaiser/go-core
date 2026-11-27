@@ -9,6 +9,9 @@ import (
 	"github.com/valentin-kaiser/go-core/logging"
 )
 
+// noop is returned when the global adapter is unusable, so that case does not allocate
+var noop = logging.NewNoOpAdapter()
+
 // Logger returns the current global logger adapter
 func Logger() logging.Adapter {
 	return global()
@@ -73,9 +76,6 @@ func F(key string, value any) logging.Field {
 func SLogger() *slog.Logger {
 	return logging.SLogger()
 }
-
-// noop is returned when the global adapter is unusable, so that case does not allocate
-var noop = logging.NewNoOpAdapter()
 
 func global() logging.Adapter {
 	adapter := logging.GetGlobalAdapterInterface()

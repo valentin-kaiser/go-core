@@ -1,7 +1,6 @@
 package mail
 
 import (
-	"context"
 	"html/template"
 	"io"
 	"maps"
@@ -72,36 +71,6 @@ type Attachment struct {
 	ContentID string `json:"content_id,omitempty"`
 }
 
-// Priority represents the message priority
-type Priority int
-
-const (
-	// PriorityLow represents low priority
-	PriorityLow Priority = iota
-	// PriorityNormal represents normal priority
-	PriorityNormal
-	// PriorityHigh represents high priority
-	PriorityHigh
-	// PriorityCritical represents critical priority
-	PriorityCritical
-)
-
-// String returns the string representation of the priority
-func (p Priority) String() string {
-	switch p {
-	case PriorityLow:
-		return "low"
-	case PriorityNormal:
-		return "normal"
-	case PriorityHigh:
-		return "high"
-	case PriorityCritical:
-		return "critical"
-	default:
-		return "unknown"
-	}
-}
-
 // Recipient represents an email recipient
 type Recipient struct {
 	// Email is the recipient's email address
@@ -112,18 +81,6 @@ type Recipient struct {
 
 	// Type is the recipient type (to, cc, bcc)
 	Type string `json:"type"`
-}
-
-// TemplateData represents data passed to email templates
-type TemplateData struct {
-	// Subject is the email subject
-	Subject string `json:"subject"`
-
-	// Data is the custom data for the template
-	Data any `json:"data"`
-
-	// Metadata contains additional metadata
-	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
 // MessageBuilder provides a fluent interface for building messages
@@ -380,72 +337,4 @@ func (b *MessageBuilder) Metadata(key, value string) *MessageBuilder {
 // Build returns the built message
 func (b *MessageBuilder) Build() (*Message, error) {
 	return b.message, b.Error
-}
-
-// NotificationHandler is a function that handles incoming SMTP messages
-type NotificationHandler func(ctx context.Context, from string, to []string, data io.Reader) error
-
-// Sender is the interface for sending emails
-type Sender interface {
-	// Send sends an email message
-	Send(ctx context.Context, message *Message) error
-	// SendAsync sends an email message asynchronously using the queue
-	SendAsync(ctx context.Context, message *Message) error
-}
-
-// Server is the interface for SMTP servers
-type Server interface {
-	// Start starts the SMTP server
-	Start(ctx context.Context) error
-	// Stop stops the SMTP server
-	Stop(ctx context.Context) error
-	// AddHandler adds a notification handler
-	AddHandler(handler NotificationHandler)
-	// IsRunning returns true if the server is running
-	IsRunning() bool
-}
-
-// AuthMethod represents SMTP authentication methods
-type AuthMethod string
-
-const (
-	// AuthMethodPlain represents PLAIN authentication
-	AuthMethodPlain AuthMethod = "PLAIN"
-	// AuthMethodCRAMMD5 represents CRAM-MD5 authentication
-	AuthMethodCRAMMD5 AuthMethod = "CRAMMD5"
-	// AuthMethodLogin represents LOGIN authentication
-	AuthMethodLogin AuthMethod = "LOGIN"
-)
-
-// EncryptionMethod represents SMTP encryption methods
-type EncryptionMethod string
-
-const (
-	// EncryptionNone represents no encryption
-	EncryptionNone EncryptionMethod = "NONE"
-	// EncryptionSTARTTLS represents STARTTLS encryption
-	EncryptionSTARTTLS EncryptionMethod = "STARTTLS"
-	// EncryptionTLS represents TLS encryption
-	EncryptionTLS EncryptionMethod = "TLS"
-)
-
-// Stats represents mail statistics
-type Stats struct {
-	// SentCount is the number of emails sent
-	SentCount int64 `json:"sent_count"`
-
-	// FailedCount is the number of emails that failed to send
-	FailedCount int64 `json:"failed_count"`
-
-	// QueuedCount is the number of emails currently queued
-	QueuedCount int64 `json:"queued_count"`
-
-	// ReceivedCount is the number of emails received by the server
-	ReceivedCount int64 `json:"received_count"`
-
-	// LastSent is the timestamp of the last sent email
-	LastSent *time.Time `json:"last_sent,omitempty"`
-
-	// LastReceived is the timestamp of the last received email
-	LastReceived *time.Time `json:"last_received,omitempty"`
 }
