@@ -21,6 +21,7 @@ import (
 
 const (
 	loopbackHost            = "127.0.0.1"
+	loopbackAnyPortAddress  = loopbackHost + ":0"
 	testServerDomain        = "test.local"
 	testSenderAddress       = "sender@example.com"
 	testRcptAddress         = "rcpt@example.com"
@@ -55,6 +56,7 @@ func closeAfterTest(tb testing.TB, c io.Closer) {
 }
 
 type received struct {
+	from string
 	to   []string
 	body []byte
 }
