@@ -290,7 +290,7 @@ func (rq *RabbitMQ) Enqueue(ctx context.Context, job *Job) error {
 		ContentType:     contentTypeJSON,
 		ContentEncoding: "",
 		Body:            jobData,
-		DeliveryMode:    amqp.Persistent, // Make message persistent
+		DeliveryMode:    amqp.Persistent,
 		Priority:        uint8(job.Priority),
 		Timestamp:       time.Now(),
 	}
@@ -367,7 +367,6 @@ func (rq *RabbitMQ) next(ctx context.Context) (amqp.Delivery, error) {
 			return amqp.Delivery{}, ErrNoJobAvailable
 		case <-time.After(pause):
 		}
-
 		msg, ok, err = rq.get()
 		if err != nil {
 			return amqp.Delivery{}, apperror.NewError("receiving job message failed").AddError(err)
@@ -470,30 +469,37 @@ func (rq *RabbitMQ) UpdateJob(_ context.Context, job *Job) error {
 	rq.jobs[job.ID] = job
 	rq.finished.record(rq.jobs, job)
 
-	if job.Metadata != nil {
-		if deliveryTagStr, exists := job.Metadata[metadataDeliveryTag]; exists {
-			deliveryTag, err := strconv.ParseUint(deliveryTagStr, decimalBase, uint64Bits)
-			if err == nil {
-				var settleErr error
-				switch job.Status {
-				case StatusCompleted:
-					settleErr = rq.channel.Ack(deliveryTag, false)
-				case StatusFailed:
-					if job.Attempts >= job.MaxAttempts {
-						settleErr = rq.channel.Ack(deliveryTag, false)
-						break
-					}
-					settleErr = rq.channel.Nack(deliveryTag, false, true)
-				case StatusRetrying:
-					settleErr = rq.channel.Nack(deliveryTag, false, true)
-				}
-				if settleErr != nil {
-					return apperror.NewErrorf("settling delivery of job %s failed", job.ID).AddError(settleErr)
-				}
-			}
-		}
+	return rq.settleDelivery(job)
+}
+
+// settleDelivery acknowledges or requeues the delivery of a job according to its status.
+func (rq *RabbitMQ) settleDelivery(job *Job) error {
+	deliveryTagStr, exists := job.Metadata[metadataDeliveryTag]
+	if !exists {
+		return nil
 	}
 
+	deliveryTag, err := strconv.ParseUint(deliveryTagStr, decimalBase, uint64Bits)
+	if err != nil {
+		return nil
+	}
+
+	var settleErr error
+	switch job.Status {
+	case StatusCompleted:
+		settleErr = rq.channel.Ack(deliveryTag, false)
+	case StatusFailed:
+		if job.Attempts >= job.MaxAttempts {
+			settleErr = rq.channel.Ack(deliveryTag, false)
+			break
+		}
+		settleErr = rq.channel.Nack(deliveryTag, false, true)
+	case StatusRetrying:
+		settleErr = rq.channel.Nack(deliveryTag, false, true)
+	}
+	if settleErr != nil {
+		return apperror.NewErrorf("settling delivery of job %s failed", job.ID).AddError(settleErr)
+	}
 	return nil
 }
 

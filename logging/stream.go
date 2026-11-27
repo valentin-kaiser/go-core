@@ -50,7 +50,6 @@ func (sw *StreamWriter) AddListener(ch chan string) {
 	sw.mu.Lock()
 	defer sw.mu.Unlock()
 
-	// Send buffered entries to new listener
 	sw.sendBufferedEntries(ch)
 	sw.listeners = append(sw.listeners, ch)
 }
@@ -99,7 +98,6 @@ func (sw *StreamWriter) broadcast(entry string) {
 	for i, v := range slices.Backward(sw.listeners) {
 		select {
 		case v <- entry:
-			// Successfully sent
 		default:
 			// Channel is full or closed, remove listener
 			sw.removeListener(i)

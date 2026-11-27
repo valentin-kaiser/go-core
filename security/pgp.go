@@ -342,7 +342,6 @@ func (p *PGPCipher) GenerateKeyPair(name, email string) error {
 		if err != nil {
 			return apperror.NewError("locking private key failed").AddError(err)
 		}
-
 		armored, err = locked.Armor()
 		if err != nil {
 			return apperror.NewError("armoring private key failed").AddError(err)

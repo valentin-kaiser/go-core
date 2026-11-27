@@ -227,7 +227,6 @@ func (b *Bundle) T(lang Language, key string) string {
 			return val
 		}
 	}
-	// Fallback to default language.
 	if lang != Default {
 		if msgs, ok := b.translations[Default]; ok {
 			if val, ok := msgs[key]; ok {
@@ -268,14 +267,12 @@ func (b *Bundle) TfCTX(ctx context.Context, key string, args ...any) string {
 //  2. Accept-Language header from an *http.Request stored via [WithRequest]
 //  3. [Default]
 func (b *Bundle) resolveLanguage(ctx context.Context) Language {
-	// 1. Direct language from context.
 	if lang, ok := LanguageFromContext(ctx); ok && lang != "" {
 		if b.HasLanguage(lang) {
 			return lang
 		}
 	}
 
-	// 2. Accept-Language from request in context.
 	if r, ok := RequestFromContext(ctx); ok && r != nil {
 		lang := resolveFromRequest(b, r)
 		if lang != Default || b.HasLanguage(Default) {
@@ -283,7 +280,6 @@ func (b *Bundle) resolveLanguage(ctx context.Context) Language {
 		}
 	}
 
-	// 3. Fallback.
 	return Default
 }
 

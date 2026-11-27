@@ -169,7 +169,6 @@ func (c *Client) Call(ctx context.Context, u *url.URL, req, resp proto.Message, 
 		return apperror.NewError("response cannot be nil")
 	}
 
-	// Marshal request to JSON
 	c.mutex.RLock()
 	reqBytes, err := c.marshalOpts.Marshal(req)
 	c.mutex.RUnlock()
@@ -177,7 +176,6 @@ func (c *Client) Call(ctx context.Context, u *url.URL, req, resp proto.Message, 
 		return apperror.NewError("marshaling request failed").AddError(err)
 	}
 
-	// Create HTTP request
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), bytes.NewReader(reqBytes))
 	if err != nil {
 		return apperror.NewError("creating HTTP request failed").AddError(err)
@@ -186,7 +184,6 @@ func (c *Client) Call(ctx context.Context, u *url.URL, req, resp proto.Message, 
 	httpReq.Header.Set(headerContentType, mediaTypeJSON)
 	httpReq.Header.Set(headerAccept, mediaTypeJSON)
 
-	// Add custom headers if provided
 	for key, values := range header {
 		for _, value := range values {
 			httpReq.Header.Add(key, value)
@@ -198,7 +195,6 @@ func (c *Client) Call(ctx context.Context, u *url.URL, req, resp proto.Message, 
 		httpReq.Header.Set(headerUserAgent, c.userAgent)
 	}
 
-	// Make HTTP request
 	httpResp, err := c.httpClient.Do(httpReq)
 	c.mutex.RUnlock()
 	if err != nil {
@@ -206,18 +202,15 @@ func (c *Client) Call(ctx context.Context, u *url.URL, req, resp proto.Message, 
 	}
 	defer apperror.Catch(func() error { return httpResp.Body.Close() }, "closing response body failed")
 
-	// Read response body
 	respBytes, err := io.ReadAll(httpResp.Body)
 	if err != nil {
 		return apperror.NewError("reading response body failed").AddError(err)
 	}
 
-	// Check HTTP status
 	if httpResp.StatusCode != http.StatusOK {
 		return apperror.NewErrorf("server returned status %d: %s", httpResp.StatusCode, string(respBytes))
 	}
 
-	// Unmarshal response
 	c.mutex.RLock()
 	err = c.unmarshalOpts.Unmarshal(respBytes, resp)
 	c.mutex.RUnlock()
@@ -261,7 +254,6 @@ func ServerStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, r
 	closeConn := closeOnce(conn)
 	defer apperror.Catch(closeConn, "closing websocket connection failed")
 
-	// Send initial request
 	err = c.writeWSMessage(conn, req)
 	if err != nil {
 		return apperror.NewError("sending request failed").AddError(err)
@@ -270,25 +262,7 @@ func ServerStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, r
 	errChan := make(chan error, 1)
 	go func() {
 		defer close(out)
-		for {
-			resp := factory()
-			var protoResp proto.Message = resp
-			err := c.readWSMessage(conn, &protoResp)
-			if err != nil {
-				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-					errChan <- nil
-					return
-				}
-				errChan <- apperror.NewError("reading message failed").AddError(err)
-				return
-			}
-			select {
-			case <-ctx.Done():
-				errChan <- ctx.Err()
-				return
-			case out <- resp:
-			}
-		}
+		errChan <- readServerMessages(ctx, c, conn, out, factory)
 	}()
 
 	select {
@@ -298,6 +272,58 @@ func ServerStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, r
 		apperror.Catch(closeConn, "closing websocket connection failed")
 		return <-errChan
 	}
+}
+
+// readServerMessages forwards the messages the server sends to out until the server closes the connection normally
+// (nil), reading fails or ctx is done.
+func readServerMessages[T proto.Message](ctx context.Context, c *Client, conn *websocket.Conn, out chan<- T, factory func() T) error {
+	for {
+		resp := factory()
+		var protoResp proto.Message = resp
+		err := c.readWSMessage(conn, &protoResp)
+		if err != nil {
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+				return nil
+			}
+			return apperror.NewError("reading message failed").AddError(err)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case out <- resp:
+		}
+	}
+}
+
+// writeStreamMessages sends the messages of in to the server until in is closed, a write fails or ctx is done.
+func writeStreamMessages[T proto.Message](ctx context.Context, c *Client, conn *websocket.Conn, in <-chan T) error {
+	for msg := range in {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		default:
+			err := c.writeWSMessage(conn, msg)
+			if err != nil {
+				return apperror.NewError("sending message failed").AddError(err)
+			}
+		}
+	}
+	return nil
+}
+
+// finishClientStream signals the end of the request stream and reads the final response.
+func (c *Client) finishClientStream(conn *websocket.Conn, resp proto.Message) error {
+	closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
+	err := conn.WriteMessage(websocket.CloseMessage, closeMsg)
+	if err != nil {
+		return apperror.NewError("sending close message failed").AddError(err)
+	}
+	// The response may arrive together with a close error, which the WebSocket protocol makes expected here.
+	err = c.readWSMessage(conn, &resp)
+	if err != nil && !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
+		return apperror.NewError("reading response failed").AddError(err)
+	}
+	return nil
 }
 
 // ClientStream makes a client streaming RPC call with typed channels where the client sends a stream
@@ -334,38 +360,12 @@ func ClientStream[T proto.Message](c *Client, ctx context.Context, u *url.URL, i
 
 	errChan := make(chan error, 1)
 	go func() {
-		for msg := range in {
-			select {
-			case <-ctx.Done():
-				errChan <- ctx.Err()
-				return
-			default:
-				err := c.writeWSMessage(conn, msg)
-				if err != nil {
-					errChan <- apperror.NewError("sending message failed").AddError(err)
-					return
-				}
-			}
-		}
-		// Input stream closed, signal end of stream to server
-		closeMsg := websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")
-		err := conn.WriteMessage(websocket.CloseMessage, closeMsg)
+		err := writeStreamMessages(ctx, c, conn, in)
 		if err != nil {
-			errChan <- apperror.NewError("sending close message failed").AddError(err)
+			errChan <- err
 			return
 		}
-		// Read final response - may fail with close error due to WebSocket protocol
-		err = c.readWSMessage(conn, &resp)
-		if err != nil {
-			// WebSocket close errors are expected after sending close message
-			if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-				errChan <- nil
-				return
-			}
-			errChan <- apperror.NewError("reading response failed").AddError(err)
-			return
-		}
-		errChan <- nil
+		errChan <- c.finishClientStream(conn, resp)
 	}()
 
 	select {
@@ -427,52 +427,19 @@ func BidirectionalStream[TReq proto.Message, TResp proto.Message](c *Client, ctx
 		})
 	}
 
-	// Writer goroutine
 	wg.Go(func() {
-		for msg := range in {
-			select {
-			case <-ctx.Done():
-				errMutex.Lock()
-				writerErr = ctx.Err()
-				errMutex.Unlock()
-				return
-			default:
-				err := c.writeWSMessage(conn, msg)
-				if err != nil {
-					errMutex.Lock()
-					writerErr = apperror.NewError("sending message failed").AddError(err)
-					errMutex.Unlock()
-					return
-				}
-			}
-		}
+		err := writeStreamMessages(ctx, c, conn, in)
+		errMutex.Lock()
+		writerErr = err
+		errMutex.Unlock()
 	})
 
-	// Reader goroutine
 	wg.Go(func() {
 		defer close(out)
-		for {
-			resp := respFactory()
-			var protoResp proto.Message = resp
-			err := c.readWSMessage(conn, &protoResp)
-			if err != nil {
-				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
-					return
-				}
-				errMutex.Lock()
-				readerErr = apperror.NewError("reading message failed").AddError(err)
-				errMutex.Unlock()
-				return
-			}
-			select {
-			case <-ctx.Done():
-				errMutex.Lock()
-				readerErr = ctx.Err()
-				errMutex.Unlock()
-				return
-			case out <- resp:
-			}
-		}
+		err := readServerMessages(ctx, c, conn, out, respFactory)
+		errMutex.Lock()
+		readerErr = err
+		errMutex.Unlock()
 	})
 
 	go func() {
@@ -506,7 +473,6 @@ func (c *Client) dialWebSocket(u *url.URL) (*websocket.Conn, *http.Response, err
 	// Create a copy of the URL to avoid mutating the caller's data
 	dialURL := *u
 
-	// Convert HTTP(S) scheme to WS(S)
 	switch dialURL.Scheme {
 	case schemeHTTP:
 		dialURL.Scheme = schemeWS
@@ -519,7 +485,6 @@ func (c *Client) dialWebSocket(u *url.URL) (*websocket.Conn, *http.Response, err
 		TLSClientConfig:  c.tlsConfig,
 	}
 
-	// Set User-Agent header for WebSocket handshake
 	headers := http.Header{}
 	if c.userAgent != "" {
 		headers.Set(headerUserAgent, c.userAgent)

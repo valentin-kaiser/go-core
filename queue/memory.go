@@ -70,23 +70,10 @@ func (mq *MemoryQueue) Enqueue(_ context.Context, job *Job) error {
 
 // Dequeue removes and returns the next job from the queue
 func (mq *MemoryQueue) Dequeue(ctx context.Context, timeout time.Duration) (*Job, error) {
-	mq.mutex.Lock()
-	if mq.closed {
-		mq.mutex.Unlock()
-		return nil, apperror.NewError("queue is closed")
+	job, found, err := mq.popPending()
+	if err != nil || found {
+		return job, err
 	}
-
-	if mq.pendingJobs.Len() > 0 {
-		jobInterface := heap.Pop(mq.pendingJobs)
-		job, ok := jobInterface.(*Job)
-		if !ok {
-			mq.mutex.Unlock()
-			return nil, apperror.NewError("invalid job type in queue")
-		}
-		mq.mutex.Unlock()
-		return job, nil
-	}
-	mq.mutex.Unlock()
 
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
@@ -98,25 +85,32 @@ func (mq *MemoryQueue) Dequeue(ctx context.Context, timeout time.Duration) (*Job
 		case <-timer.C:
 			return nil, context.DeadlineExceeded
 		case <-mq.notifyC:
-			mq.mutex.Lock()
-			if mq.closed {
-				mq.mutex.Unlock()
-				return nil, apperror.NewError("queue is closed")
+			job, found, err = mq.popPending()
+			if err != nil || found {
+				return job, err
 			}
-
-			if mq.pendingJobs.Len() > 0 {
-				jobInterface := heap.Pop(mq.pendingJobs)
-				job, ok := jobInterface.(*Job)
-				if !ok {
-					mq.mutex.Unlock()
-					return nil, apperror.NewError("invalid job type in queue")
-				}
-				mq.mutex.Unlock()
-				return job, nil
-			}
-			mq.mutex.Unlock()
 		}
 	}
+}
+
+// popPending removes the next pending job and reports whether there was one.
+func (mq *MemoryQueue) popPending() (*Job, bool, error) {
+	mq.mutex.Lock()
+	defer mq.mutex.Unlock()
+
+	if mq.closed {
+		return nil, false, apperror.NewError("queue is closed")
+	}
+
+	if mq.pendingJobs.Len() == 0 {
+		return nil, false, nil
+	}
+
+	job, ok := heap.Pop(mq.pendingJobs).(*Job)
+	if !ok {
+		return nil, false, apperror.NewError("invalid job type in queue")
+	}
+	return job, true, nil
 }
 
 // Schedule adds a scheduled job to the queue

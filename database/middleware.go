@@ -327,7 +327,6 @@ func (m *LoggingMiddleware) AfterExec(ctx context.Context, query string, args []
 			Field("type", "exec").
 			Field("args", convertNamedValuesToInterface(args)).
 			Field("duration", duration.String())
-
 		if m.trace.Load() {
 			l = l.Field("caller", apperror.Where(2))
 		}
@@ -434,19 +433,16 @@ func wrap(driverName string, middlewares []Middleware) (string, error) {
 		return driverName, nil
 	}
 
-	// Compute a hash based on the middleware types to create a stable driver name
 	hash := computeMiddlewareHash(middlewares)
 	wrappedDriverName := fmt.Sprintf("middleware_%s_%s", driverName, hash)
 
 	registeredDriversMu.Lock()
 	defer registeredDriversMu.Unlock()
 
-	// Reuse the driver if already registered
 	if registeredDrivers[wrappedDriverName] {
 		return wrappedDriverName, nil
 	}
 
-	// Get the original driver
 	db, err := sql.Open(driverName, "")
 	if err != nil {
 		return "", apperror.NewErrorf("opening driver %s failed", driverName).AddError(err)
@@ -458,7 +454,6 @@ func wrap(driverName string, middlewares []Middleware) (string, error) {
 
 	originalDriver := db.Driver()
 
-	// Make a defensive copy of the middlewares slice to prevent shared state issues
 	cp := make([]Middleware, len(middlewares))
 	copy(cp, middlewares)
 
@@ -479,15 +474,12 @@ func wrap(driverName string, middlewares []Middleware) (string, error) {
 func computeMiddlewareHash(middlewares []Middleware) string {
 	h := sha256.New()
 	for _, mw := range middlewares {
-		// Use the type name as part of the hash
 		typeName := reflect.TypeOf(mw).String()
 		h.Write([]byte(typeName))
-
 		// Include the pointer address to distinguish between different instances
 		// of the same middleware type with different configurations
 		ptr := reflect.ValueOf(mw).Pointer()
 		h.Write([]byte(strconv.FormatUint(uint64(ptr), decimalBase)))
 	}
-	// Return first 8 characters of the hex hash for brevity
 	return hex.EncodeToString(h.Sum(nil))[:hashLength]
 }

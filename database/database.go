@@ -270,18 +270,15 @@ func (d *Database[Q]) Get() *sql.DB {
 // The debug handle shares the same underlying connection and configuration as the parent instance.
 // Example: db.Debug().Query(func(q *sqlc.Queries) error { return q.GetUser(ctx, id) })
 func (d *Database[Q]) Debug() *Database[Q] {
-	// If already in debug mode, return self
 	if d.debug {
 		return d
 	}
 
-	// Determine the parent instance
 	parent := d
 	if d.parent != nil {
 		parent = d.parent
 	}
 
-	// Create a debug instance that references the parent
 	// We don't copy the struct fields directly to avoid copying locks
 	return &Database[Q]{
 		debug:  true,
@@ -294,7 +291,6 @@ func (d *Database[Q]) Debug() *Database[Q] {
 func (d *Database[Q]) Execute(call func(db *sql.DB) error) error {
 	defer interruption.Catch()
 
-	// Get the actual database instance (from parent if debug mode)
 	parent := d
 	if d.debug && d.parent != nil {
 		parent = d.parent
@@ -308,7 +304,6 @@ func (d *Database[Q]) Execute(call func(db *sql.DB) error) error {
 		return apperror.NewError("database is not connected")
 	}
 
-	// If in debug mode, temporarily enable logging middleware
 	if d.debug {
 		loggingMW := d.findLoggingMiddleware()
 		if loggingMW == nil {
@@ -333,7 +328,6 @@ func (d *Database[Q]) Execute(call func(db *sql.DB) error) error {
 func (d *Database[Q]) Query(call func(q *Q) error) error {
 	defer interruption.Catch()
 
-	// Get the actual database instance (from parent if debug mode)
 	parent := d
 	if d.debug && d.parent != nil {
 		parent = d.parent
@@ -351,7 +345,6 @@ func (d *Database[Q]) Query(call func(q *Q) error) error {
 		return apperror.NewError("database is not connected")
 	}
 
-	// If in debug mode, temporarily enable logging middleware
 	if d.debug {
 		loggingMW := d.findLoggingMiddleware()
 		if loggingMW == nil {
@@ -420,7 +413,6 @@ func (d *Database[Q]) Transaction(call func(tx *sql.Tx) error) error {
 func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 	defer interruption.Catch()
 
-	// Get the actual database instance (from parent if debug mode)
 	parent := d
 	if d.debug && d.parent != nil {
 		parent = d.parent
@@ -438,7 +430,6 @@ func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 		return apperror.NewError("database is not connected")
 	}
 
-	// If in debug mode, temporarily enable logging middleware
 	if d.debug {
 		loggingMW := d.findLoggingMiddleware()
 		if loggingMW == nil {
@@ -449,7 +440,6 @@ func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 		defer loggingMW.SetEnabled(wasEnabled)
 	}
 
-	// Begin transaction
 	tx, err := dbInstance.Begin()
 	if err != nil {
 		return apperror.NewError("beginning transaction failed").AddError(err)
@@ -464,7 +454,6 @@ func (d *Database[Q]) QueryTransaction(call func(q *Q) error) error {
 		return apperror.NewError("creating queries failed").AddError(err)
 	}
 
-	// Execute the user's function
 	err = call(queries)
 	if err != nil {
 		rbErr := tx.Rollback()
@@ -555,107 +544,110 @@ func (d *Database[Q]) Connect(interval time.Duration, dsn string) {
 	d.setDSN(dsn)
 	go func() {
 		for {
-			func() {
-				defer interruption.Catch()
-				defer time.Sleep(interval)
-
-				// If we are not connected to the database, try to connect
-				if !d.connected.Load() {
-					var err error
-					instance, err := d.connect(d.driver, d.getDSN())
-					if err != nil {
-						// Prevent spamming the logs with connection errors
-						if !d.failed.Load() {
-							d.logger.Error().Err(err).Msg("connection failed")
-						}
-						d.failed.Store(true)
-						return
-					}
-
-					d.dbMutex.Lock()
-					replaced := d.db
-					d.db = instance
-					d.dbMutex.Unlock()
-
-					// The pool being replaced (a reconnect after a configuration change or a
-					// failed health check) is no longer reachable through the handle, so close
-					// it: otherwise its idle connections and opener goroutine live until exit,
-					// once per reconnect. Queries already running on it finish normally.
-					if replaced != nil && replaced != instance {
-						err := replaced.Close()
-						if err != nil {
-							d.logger.Warn().Err(err).Msg("closing replaced connection pool failed")
-						}
-					}
-
-					d.handlerMutex.Lock()
-					handlers := make([]func(db *sql.DB) error, len(d.onConnectHandler))
-					copy(handlers, d.onConnectHandler)
-					d.handlerMutex.Unlock()
-
-					d.failed.Store(false)
-					d.connected.Store(true)
-
-					for _, handler := range handlers {
-						err := handler(instance)
-						if err != nil {
-							d.logger.Error().Err(err).Msg("onConnect handler failed")
-							d.failed.Store(true)
-							return
-						}
-					}
-
-					if d.failed.Load() {
-						d.logger.Debug().Msg("connection restored")
-					}
-					d.logger.Debug().Msg("connection established")
-					return
-				}
-
-				// Verify that we are indeed connected, if 'SELECT 1;' fails we assume
-				// that the database is currently unavailable
-				d.dbMutex.RLock()
-				dbInstance := d.db
-				d.dbMutex.RUnlock()
-
-				if dbInstance != nil {
-					// Retry ping a few times before declaring connection lost
-					// This prevents treating transient connection pool errors as database failures
-					const maxRetries = 3
-					var lastErr error
-					pingSucceeded := false
-
-					for i := range maxRetries {
-						ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
-						err := dbInstance.PingContext(ctx)
-						cancel()
-
-						if err == nil {
-							pingSucceeded = true
-							break
-						}
-						lastErr = err
-
-						// Brief pause between retries to allow bad connections to be removed from pool
-						if i < maxRetries-1 {
-							time.Sleep(pingRetryPause)
-						}
-					}
-
-					if !pingSucceeded && d.connected.Load() {
-						d.logger.Error().Err(lastErr).Field("attempts", maxRetries).Msg("connection lost after ping attempts")
-						d.connected.Store(false)
-						d.failed.Store(true)
-					}
-				}
-			}()
-
+			d.maintainConnection(interval)
 			if d.cancel.Load() {
 				d.done <- true
 				return
 			}
 		}
 	}()
+}
+
+func (d *Database[Q]) maintainConnection(interval time.Duration) {
+	defer interruption.Catch()
+	defer time.Sleep(interval)
+
+	if !d.connected.Load() {
+		d.establishConnection()
+		return
+	}
+
+	// Verify that we are indeed connected, if 'SELECT 1;' fails we assume
+	// that the database is currently unavailable
+	d.dbMutex.RLock()
+	dbInstance := d.db
+	d.dbMutex.RUnlock()
+	if dbInstance == nil {
+		return
+	}
+
+	const maxRetries = 3
+	lastErr := pingWithRetries(dbInstance, maxRetries)
+	if lastErr != nil && d.connected.Load() {
+		d.logger.Error().Err(lastErr).Field("attempts", maxRetries).Msg("connection lost after ping attempts")
+		d.connected.Store(false)
+		d.failed.Store(true)
+	}
+}
+
+func (d *Database[Q]) establishConnection() {
+	instance, err := d.connect(d.driver, d.getDSN())
+	if err != nil {
+		// Prevent spamming the logs with connection errors
+		if !d.failed.Load() {
+			d.logger.Error().Err(err).Msg("connection failed")
+		}
+		d.failed.Store(true)
+		return
+	}
+
+	d.dbMutex.Lock()
+	replaced := d.db
+	d.db = instance
+	d.dbMutex.Unlock()
+
+	// The pool being replaced (a reconnect after a configuration change or a
+	// failed health check) is no longer reachable through the handle, so close
+	// it: otherwise its idle connections and opener goroutine live until exit,
+	// once per reconnect. Queries already running on it finish normally.
+	if replaced != nil && replaced != instance {
+		err := replaced.Close()
+		if err != nil {
+			d.logger.Warn().Err(err).Msg("closing replaced connection pool failed")
+		}
+	}
+
+	d.handlerMutex.Lock()
+	handlers := make([]func(db *sql.DB) error, len(d.onConnectHandler))
+	copy(handlers, d.onConnectHandler)
+	d.handlerMutex.Unlock()
+
+	d.failed.Store(false)
+	d.connected.Store(true)
+
+	for _, handler := range handlers {
+		err := handler(instance)
+		if err != nil {
+			d.logger.Error().Err(err).Msg("onConnect handler failed")
+			d.failed.Store(true)
+			return
+		}
+	}
+
+	if d.failed.Load() {
+		d.logger.Debug().Msg("connection restored")
+	}
+	d.logger.Debug().Msg("connection established")
+}
+
+// pingWithRetries pings the database up to maxRetries times and returns the last error, or nil
+// once a ping succeeds. Retrying prevents treating transient connection pool errors as database failures.
+func pingWithRetries(db *sql.DB, maxRetries int) error {
+	var lastErr error
+	for i := range maxRetries {
+		ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
+		err := db.PingContext(ctx)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		lastErr = err
+		// Brief pause between retries to allow bad connections to be removed from pool
+		if i < maxRetries-1 {
+			time.Sleep(pingRetryPause)
+		}
+	}
+	return lastErr
 }
 
 // RegisterOnConnectHandler registers a function that will be called when the database connection is established
@@ -779,19 +771,16 @@ func (d *Database[Q]) Backup(path string, schema string) error {
 		dbInstance := d.db
 		d.dbMutex.RUnlock()
 
-		// Execute a checkpoint to ensure all WAL data is in the main database file
 		_, err := dbInstance.Exec(sqliteCheckpointStatement)
 		if err != nil {
 			return apperror.NewError("checkpointing WAL failed").AddError(err)
 		}
 
-		// Parse and validate the SQLite DSN to get the file path
 		sourceFilePath, err := parseSQLiteFilePath(d.getDSN())
 		if err != nil {
 			return apperror.NewError("parsing SQLite file path failed").AddError(err)
 		}
 
-		// Copy the database file
 		err = copyFile(sourceFilePath, path)
 		if err != nil {
 			return apperror.NewError("copying database file failed").AddError(err)
@@ -862,7 +851,6 @@ func (d *Database[Q]) Restore(backupPath string) error {
 
 		d.connected.Store(false)
 
-		// Parse and validate the SQLite DSN to get the file path
 		targetPath, err := parseSQLiteFilePath(d.getDSN())
 		if err != nil {
 			return apperror.NewError("parsing SQLite file path failed").AddError(err)
@@ -873,12 +861,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 			return apperror.NewError("restoring database file failed").AddError(err)
 		}
 
-		for _, suffix := range []string{sqliteWALSuffix, sqliteSHMSuffix} {
-			err = os.Remove(targetPath + suffix)
-			if err != nil && !errors.Is(err, os.ErrNotExist) {
-				d.logger.Warn().Err(err).Field("file", targetPath+suffix).Msg("removing stale sqlite file failed")
-			}
-		}
+		d.removeStaleSQLiteFiles(targetPath)
 
 		d.logger.Info().Field("path", backupPath).Msg("database restored from backup")
 
@@ -916,14 +899,7 @@ func (d *Database[Q]) Restore(backupPath string) error {
 			return apperror.NewError("starting restore failed").AddError(err)
 		}
 		// The connection goes back to the pool, so it must not stay in this mode
-		defer func() {
-			for _, stmt := range []string{mysqlAutocommitOn, mysqlForeignKeyChecksOn} {
-				apperror.Catch(func() error {
-					_, err := conn.ExecContext(context.Background(), stmt)
-					return err
-				}, "resetting restore session settings failed")
-			}
-		}()
+		defer resetRestoreSession(conn)
 
 		// Statements run as they are read, so the dump is never held in memory as a whole
 		err = forEachStatement(backupFile, func(stmt string) error {
@@ -1006,6 +982,24 @@ func (d *Database[Q]) Restore(backupPath string) error {
 	}
 }
 
+func (d *Database[Q]) removeStaleSQLiteFiles(databasePath string) {
+	for _, suffix := range []string{sqliteWALSuffix, sqliteSHMSuffix} {
+		err := os.Remove(databasePath + suffix)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			d.logger.Warn().Err(err).Field("file", databasePath+suffix).Msg("removing stale sqlite file failed")
+		}
+	}
+}
+
+func resetRestoreSession(conn *sql.Conn) {
+	for _, stmt := range []string{mysqlAutocommitOn, mysqlForeignKeyChecksOn} {
+		apperror.Catch(func() error {
+			_, err := conn.ExecContext(context.Background(), stmt)
+			return err
+		}, "resetting restore session settings failed")
+	}
+}
+
 // validateIdentifier checks if a SQL identifier is safe to use
 // Identifiers can only contain alphanumeric characters, underscores, hyphens, and dots
 func validateIdentifier(identifier string) error {
@@ -1047,17 +1041,14 @@ func parseSQLiteFilePath(dsn string) (string, error) {
 		return "", apperror.NewErrorf("invalid SQLite DSN format: %s (expected 'file:path')", dsn)
 	}
 
-	// Remove "file:" prefix
 	pathWithQuery := dsn[len(sqliteDSNPrefix):]
 	if pathWithQuery == "" {
 		return "", apperror.NewError("DSN of SQLite database contains no file path after 'file:' prefix")
 	}
 
-	// Split on '?' to remove query parameters
 	parts := strings.SplitN(pathWithQuery, dsnQuerySeparator, dsnSplitParts)
 	filePath := parts[0]
 
-	// Clean and normalize the file path
 	return filepath.Clean(strings.TrimSpace(filePath)), nil
 }
 

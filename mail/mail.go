@@ -219,7 +219,6 @@ func (m *Manager) Start() error {
 				logger.Error().Err(err).Msg("starting SMTP server failed")
 			}
 		})
-
 		logger.Info().Fields(logging.F("host", m.config.Server.Host), logging.F("port", m.config.Server.Port)).Msg("SMTP server started")
 	}
 
@@ -268,7 +267,6 @@ func (m *Manager) Send(ctx context.Context, message *Message) error {
 		return apperror.NewError("mail manager is not running")
 	}
 
-	// Generate ID if not set
 	if message.ID == "" {
 		message.ID = uuid.New().String()
 	}
@@ -279,7 +277,6 @@ func (m *Manager) Send(ctx context.Context, message *Message) error {
 		Field("to", message.To).
 		Msg("sending email")
 
-	// Send the message
 	err := m.sender.Send(ctx, message)
 	if err != nil {
 		m.incrementFailedCount()
@@ -308,7 +305,6 @@ func (m *Manager) SendAsync(ctx context.Context, message *Message) error {
 		return apperror.NewError("queue is not enabled")
 	}
 
-	// Generate ID if not set
 	if message.ID == "" {
 		message.ID = uuid.New().String()
 	}
@@ -319,7 +315,6 @@ func (m *Manager) SendAsync(ctx context.Context, message *Message) error {
 		Field("to", message.To).
 		Msg("queuing email for async sending")
 
-	// Create queue job
 	jobData := map[string]any{
 		jobKeyID:           message.ID,
 		jobKeyFrom:         message.From,
@@ -346,12 +341,10 @@ func (m *Manager) SendAsync(ctx context.Context, message *Message) error {
 		WithPriority(queue.Priority(message.Priority)).
 		WithMaxAttempts(m.config.Queue.MaxAttempts)
 
-	// Schedule the job if specified
 	if message.ScheduleAt != nil {
 		job = job.WithScheduleAt(*message.ScheduleAt)
 	}
 
-	// Enqueue the job
 	err := m.queueManager.Enqueue(ctx, job.Build())
 	if err != nil {
 		return apperror.NewErrorf("enqueuing message %s failed", message.ID).AddError(err)
@@ -426,20 +419,17 @@ func (m *Manager) SendTestEmail(ctx context.Context, to string) error {
 func (m *Manager) handleMailJob(ctx context.Context, job *queue.Job) error {
 	logger.Debug().Field("job_id", job.ID).Msg("processing mail job")
 
-	// Decode the message from job payload
 	var jobData map[string]any
 	err := json.Unmarshal(job.Payload, &jobData)
 	if err != nil {
 		return apperror.NewError("unmarshaling job payload failed").AddError(err)
 	}
 
-	// Convert job data back to message
 	message, err := m.jobDataToMessage(jobData)
 	if err != nil {
 		return apperror.NewError("converting job data to message failed").AddError(err)
 	}
 
-	// Send the message
 	err = m.sender.Send(ctx, message)
 	if err != nil {
 		m.incrementFailedCount()
@@ -572,22 +562,10 @@ func (m *Manager) jobDataToMessage(jobData map[string]any) (*Message, error) {
 		message.Priority = Priority(int(priority))
 	}
 	if headers, ok := jobData[jobKeyHeaders].(map[string]any); ok {
-		message.Headers = make(map[string]string)
-		for k, v := range headers {
-			s, ok := v.(string)
-			if ok {
-				message.Headers[k] = s
-			}
-		}
+		message.Headers = stringValues(headers)
 	}
 	if metadata, ok := jobData[jobKeyMetadata].(map[string]any); ok {
-		message.Metadata = make(map[string]string)
-		for k, v := range metadata {
-			s, ok := v.(string)
-			if ok {
-				message.Metadata[k] = s
-			}
-		}
+		message.Metadata = stringValues(metadata)
 	}
 	if createdAt, ok := jobData[jobKeyCreatedAt].(string); ok {
 		t, err := time.Parse(time.RFC3339, createdAt)
@@ -604,44 +582,77 @@ func (m *Manager) jobDataToMessage(jobData map[string]any) (*Message, error) {
 		message.ScheduleAt = &t
 	}
 	if attachments, ok := jobData[jobKeyAttachments].([]any); ok {
-		message.Attachments = make([]Attachment, 0, len(attachments))
-		for _, att := range attachments {
-			if attMap, ok := att.(map[string]any); ok {
-				attachment := Attachment{}
-				filename, ok := attMap[attachmentKeyFilename].(string)
-				if ok {
-					attachment.Filename = filename
-				}
-				contentType, ok := attMap[attachmentKeyContentType].(string)
-				if ok {
-					attachment.ContentType = contentType
-				}
-				content, ok := attMap[attachmentKeyContent].(string)
-				if ok {
-					decoded, err := base64.StdEncoding.DecodeString(content)
-					if err != nil {
-						return nil, apperror.NewError("decoding attachment content failed").AddError(err)
-					}
-					attachment.Content = decoded
-				}
-				size, ok := attMap[attachmentKeySize].(float64)
-				if ok {
-					attachment.Size = int64(size)
-				}
-				inline, ok := attMap[attachmentKeyInline].(bool)
-				if ok {
-					attachment.Inline = inline
-				}
-				contentID, ok := attMap[attachmentKeyContentID].(string)
-				if ok {
-					attachment.ContentID = contentID
-				}
-				message.Attachments = append(message.Attachments, attachment)
-			}
+		var err error
+		message.Attachments, err = jobDataToAttachments(attachments)
+		if err != nil {
+			return nil, err
 		}
 	}
 
 	return message, nil
+}
+
+// stringValues copies the string entries of a decoded JSON object and drops all other entries.
+func stringValues(values map[string]any) map[string]string {
+	result := make(map[string]string)
+	for k, v := range values {
+		s, ok := v.(string)
+		if ok {
+			result[k] = s
+		}
+	}
+	return result
+}
+
+// jobDataToAttachments converts the decoded attachments of job data and skips entries that are not objects.
+func jobDataToAttachments(attachments []any) ([]Attachment, error) {
+	result := make([]Attachment, 0, len(attachments))
+	for _, att := range attachments {
+		attMap, ok := att.(map[string]any)
+		if !ok {
+			continue
+		}
+		attachment, err := jobDataToAttachment(attMap)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, attachment)
+	}
+	return result, nil
+}
+
+// jobDataToAttachment converts a single decoded attachment of job data.
+func jobDataToAttachment(attMap map[string]any) (Attachment, error) {
+	attachment := Attachment{}
+	filename, ok := attMap[attachmentKeyFilename].(string)
+	if ok {
+		attachment.Filename = filename
+	}
+	contentType, ok := attMap[attachmentKeyContentType].(string)
+	if ok {
+		attachment.ContentType = contentType
+	}
+	content, ok := attMap[attachmentKeyContent].(string)
+	if ok {
+		decoded, err := base64.StdEncoding.DecodeString(content)
+		if err != nil {
+			return Attachment{}, apperror.NewError("decoding attachment content failed").AddError(err)
+		}
+		attachment.Content = decoded
+	}
+	size, ok := attMap[attachmentKeySize].(float64)
+	if ok {
+		attachment.Size = int64(size)
+	}
+	inline, ok := attMap[attachmentKeyInline].(bool)
+	if ok {
+		attachment.Inline = inline
+	}
+	contentID, ok := attMap[attachmentKeyContentID].(string)
+	if ok {
+		attachment.ContentID = contentID
+	}
+	return attachment, nil
 }
 
 // convertToStringSlice safely converts various types to []string
@@ -649,7 +660,6 @@ func (m *Manager) jobDataToMessage(jobData map[string]any) (*Message, error) {
 func convertToStringSlice(value any) []string {
 	switch v := value.(type) {
 	case []string:
-		// Direct string slice (ideal case)
 		return v
 	case []any:
 		// JSON unmarshaled as interface slice
@@ -661,13 +671,10 @@ func convertToStringSlice(value any) []string {
 		}
 		return result
 	case string:
-		// Single string value
 		return []string{v}
 	case nil:
-		// Nil value
 		return nil
 	default:
-		// Fallback: try to convert to string and return as single-item slice
 		if str := convertToString(value); str != "" {
 			return []string{str}
 		}

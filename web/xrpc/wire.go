@@ -255,37 +255,57 @@ func (w jsonWire) encodeReplies(replies []*reply, batch bool) ([]byte, error) {
 		if i > 0 {
 			b = append(b, ',')
 		}
-		b = append(b, `{"jsonrpc":"2.0",`...)
-		if r.err != nil {
-			b = append(b, `"error":{"code":`...)
-			b = strconv.AppendInt(b, int64(r.err.Code), decimalBase)
-			b = append(b, `,"message":`...)
-			b = appendString(b, r.err.Message)
-			if r.err.Data != nil {
-				b = append(b, `,"data":`...)
-				b, err = w.c.appendJSON(b, r.err.Data.ProtoReflect(), 0)
-				if err != nil {
-					return nil, apperror.NewError("encoding error data failed").AddError(err)
-				}
-			}
-			b = append(b, '}')
-		} else {
-			b = append(b, `"result":`...)
-			if r.result == nil {
-				b = append(b, textNull...)
-			} else {
-				b, err = w.c.appendJSON(b, r.result.ProtoReflect(), 0)
-				if err != nil {
-					return nil, apperror.NewError("encoding result failed").AddError(err)
-				}
-			}
+		b, err = w.appendReply(b, r)
+		if err != nil {
+			return nil, err
 		}
-		b = append(b, `,"id":`...)
-		b = r.id.appendJSON(b)
-		b = append(b, '}')
 	}
 	if batch {
 		b = append(b, ']')
+	}
+	return b, nil
+}
+
+func (w jsonWire) appendReply(b []byte, r *reply) ([]byte, error) {
+	var err error
+	b = append(b, `{"jsonrpc":"2.0",`...)
+	if r.err != nil {
+		b, err = w.appendErrorMember(b, r.err)
+	} else {
+		b, err = w.appendResultMember(b, r.result)
+	}
+	if err != nil {
+		return nil, err
+	}
+	b = append(b, `,"id":`...)
+	b = r.id.appendJSON(b)
+	return append(b, '}'), nil
+}
+
+func (w jsonWire) appendErrorMember(b []byte, e *Error) ([]byte, error) {
+	b = append(b, `"error":{"code":`...)
+	b = strconv.AppendInt(b, int64(e.Code), decimalBase)
+	b = append(b, `,"message":`...)
+	b = appendString(b, e.Message)
+	if e.Data != nil {
+		var err error
+		b = append(b, `,"data":`...)
+		b, err = w.c.appendJSON(b, e.Data.ProtoReflect(), 0)
+		if err != nil {
+			return nil, apperror.NewError("encoding error data failed").AddError(err)
+		}
+	}
+	return append(b, '}'), nil
+}
+
+func (w jsonWire) appendResultMember(b []byte, result proto.Message) ([]byte, error) {
+	b = append(b, `"result":`...)
+	if result == nil {
+		return append(b, textNull...), nil
+	}
+	b, err := w.c.appendJSON(b, result.ProtoReflect(), 0)
+	if err != nil {
+		return nil, apperror.NewError("encoding result failed").AddError(err)
 	}
 	return b, nil
 }

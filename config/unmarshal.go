@@ -72,19 +72,15 @@ func (m *manager) unmarshalStruct(v reflect.Value, prefix string) error {
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		fieldValue := v.Field(i)
-
 		if !fieldValue.CanSet() {
 			continue
 		}
-
 		yamlTag := field.Tag.Get(yamlTagName)
 		if yamlTag == tagIgnore {
 			continue
 		}
-
 		fieldName := getFieldName(field)
 		key := buildLabel(prefix, fieldName)
-
 		if fieldValue.Kind() == reflect.Struct {
 			err := m.unmarshalStruct(fieldValue, key)
 			if err != nil {
@@ -92,7 +88,6 @@ func (m *manager) unmarshalStruct(v reflect.Value, prefix string) error {
 			}
 			continue
 		}
-
 		if fieldValue.Kind() == reflect.Pointer && fieldValue.Type().Elem().Kind() == reflect.Struct {
 			if fieldValue.IsNil() {
 				fieldValue.Set(reflect.New(fieldValue.Type().Elem()))
@@ -103,12 +98,10 @@ func (m *manager) unmarshalStruct(v reflect.Value, prefix string) error {
 			}
 			continue
 		}
-
 		value := m.getValue(key)
 		if value == nil {
 			continue
 		}
-
 		err := m.setFieldValue(fieldValue, value)
 		if err != nil {
 			return apperror.NewErrorf("setting field %s failed", key).AddError(err)
@@ -289,90 +282,47 @@ func (m *manager) setFieldValue(field reflect.Value, value any) error {
 }
 
 func (m *manager) setSliceValue(field reflect.Value, value any) error {
-	elemType := field.Type().Elem()
-	elemKind := elemType.Kind()
-
-	// Handle []interface{} from YAML
 	slice, ok := value.([]any)
 	if !ok {
-		// Try direct assignment for typed slices
+		// Typed slices need no conversion
 		if reflect.TypeOf(value).AssignableTo(field.Type()) {
 			field.Set(reflect.ValueOf(value))
-			return nil
 		}
 		return nil
 	}
 
-	// Create a new slice of the appropriate type
+	elemType := field.Type().Elem()
 	newSlice := reflect.MakeSlice(field.Type(), len(slice), len(slice))
-
 	for i, item := range slice {
-		elemValue := newSlice.Index(i)
-
-		switch elemKind {
-		case reflect.Struct:
-			// Handle slice of structs
-			if itemMap, ok := item.(map[any]any); ok {
-				// Convert map[interface{}]interface{} to map[string]interface{}
-				stringMap := make(map[string]any)
-				for k, v := range itemMap {
-					if keyStr, ok := k.(string); ok {
-						stringMap[keyStr] = v
-					}
-				}
-				err := m.unmarshalMapToStruct(elemValue, stringMap)
-				if err != nil {
-					return apperror.NewErrorf("unmarshalling slice element %d failed", i).AddError(err)
-				}
-			} else if itemMap, ok := item.(map[string]any); ok {
-				err := m.unmarshalMapToStruct(elemValue, itemMap)
-				if err != nil {
-					return apperror.NewErrorf("unmarshalling slice element %d failed", i).AddError(err)
-				}
-			}
-
-		case reflect.Pointer:
-			// Handle slice of pointers to structs
-			if elemType.Elem().Kind() == reflect.Struct {
-				elemValue.Set(reflect.New(elemType.Elem()))
-				if itemMap, ok := item.(map[any]any); ok {
-					stringMap := make(map[string]any)
-					for k, v := range itemMap {
-						if keyStr, ok := k.(string); ok {
-							stringMap[keyStr] = v
-						}
-					}
-					err := m.unmarshalMapToStruct(elemValue, stringMap)
-					if err != nil {
-						return apperror.NewErrorf("unmarshalling slice element %d failed", i).AddError(err)
-					}
-				} else if itemMap, ok := item.(map[string]any); ok {
-					err := m.unmarshalMapToStruct(elemValue, itemMap)
-					if err != nil {
-						return apperror.NewErrorf("unmarshalling slice element %d failed", i).AddError(err)
-					}
-				}
-			} else {
-				// Handle pointer to primitive types
-				newElem := reflect.New(elemType.Elem())
-				err := m.setFieldValue(newElem.Elem(), item)
-				if err != nil {
-					return apperror.NewErrorf("unmarshalling slice element %d failed", i).AddError(err)
-				}
-				elemValue.Set(newElem)
-			}
-
-		default:
-			// Handle primitive types
-			err := m.setFieldValue(elemValue, item)
-			if err != nil {
-				return apperror.NewErrorf("unmarshalling slice element %d failed", i).AddError(err)
-			}
+		err := m.setSliceElement(newSlice.Index(i), elemType, item)
+		if err != nil {
+			return apperror.NewErrorf("unmarshalling slice element %d failed", i).AddError(err)
 		}
 	}
 
 	field.Set(newSlice)
 	return nil
+}
+
+func (m *manager) setSliceElement(elemValue reflect.Value, elemType reflect.Type, item any) error {
+	switch elemType.Kind() {
+	case reflect.Struct:
+		return m.unmarshalNestedStruct(elemValue, item)
+	case reflect.Pointer:
+		if elemType.Elem().Kind() != reflect.Struct {
+			newElem := reflect.New(elemType.Elem())
+			err := m.setFieldValue(newElem.Elem(), item)
+			if err != nil {
+				return err
+			}
+			elemValue.Set(newElem)
+			return nil
+		}
+		elemValue.Set(reflect.New(elemType.Elem()))
+		return m.unmarshalNestedStruct(elemValue, item)
+	default:
+		return m.setFieldValue(elemValue, item)
+	}
 }
 
 func (m *manager) unmarshalMapToStruct(v reflect.Value, data map[string]any) error {
@@ -391,88 +341,72 @@ func (m *manager) unmarshalMapToStruct(v reflect.Value, data map[string]any) err
 	for i := 0; i < t.NumField(); i++ {
 		field := t.Field(i)
 		fieldValue := v.Field(i)
-
 		if !fieldValue.CanSet() {
 			continue
 		}
-
 		yamlTag := field.Tag.Get(yamlTagName)
 		if yamlTag == tagIgnore {
 			continue
 		}
-
 		fieldName := getFieldName(field)
-
-		// Look for the value in the data map
 		value, exists := data[fieldName]
 		if !exists {
-			// Try lowercase version
 			value, exists = data[strings.ToLower(fieldName)]
 		}
 		if !exists {
 			continue
 		}
-
-		if fieldValue.Kind() == reflect.Struct {
-			if nestedMap, ok := value.(map[string]any); ok {
-				err := m.unmarshalMapToStruct(fieldValue, nestedMap)
-				if err != nil {
-					return apperror.NewErrorf("unmarshalling field %s failed", fieldName).AddError(err)
-				}
-			} else if nestedMap, ok := value.(map[any]any); ok {
-				stringMap := make(map[string]any)
-				for k, v := range nestedMap {
-					if keyStr, ok := k.(string); ok {
-						stringMap[keyStr] = v
-					}
-				}
-				err := m.unmarshalMapToStruct(fieldValue, stringMap)
-				if err != nil {
-					return apperror.NewErrorf("unmarshalling field %s failed", fieldName).AddError(err)
-				}
-			}
-			continue
-		}
-
-		if fieldValue.Kind() == reflect.Pointer && fieldValue.Type().Elem().Kind() == reflect.Struct {
-			if fieldValue.IsNil() {
-				fieldValue.Set(reflect.New(fieldValue.Type().Elem()))
-			}
-			if nestedMap, ok := value.(map[string]any); ok {
-				err := m.unmarshalMapToStruct(fieldValue, nestedMap)
-				if err != nil {
-					return apperror.NewErrorf("unmarshalling field %s failed", fieldName).AddError(err)
-				}
-			} else if nestedMap, ok := value.(map[any]any); ok {
-				stringMap := make(map[string]any)
-				for k, v := range nestedMap {
-					if keyStr, ok := k.(string); ok {
-						stringMap[keyStr] = v
-					}
-				}
-				err := m.unmarshalMapToStruct(fieldValue, stringMap)
-				if err != nil {
-					return apperror.NewErrorf("unmarshalling field %s failed", fieldName).AddError(err)
-				}
-			}
-			continue
-		}
-
-		if fieldValue.Kind() == reflect.Slice {
-			err := m.setSliceValue(fieldValue, value)
-			if err != nil {
-				return apperror.NewErrorf("unmarshalling field %s failed", fieldName).AddError(err)
-			}
-			continue
-		}
-
-		err := m.setFieldValue(fieldValue, value)
+		err := m.unmarshalField(fieldValue, value)
 		if err != nil {
 			return apperror.NewErrorf("unmarshalling field %s failed", fieldName).AddError(err)
 		}
 	}
 
 	return nil
+}
+
+func (m *manager) unmarshalField(fieldValue reflect.Value, value any) error {
+	if fieldValue.Kind() == reflect.Struct {
+		return m.unmarshalNestedStruct(fieldValue, value)
+	}
+
+	if fieldValue.Kind() == reflect.Pointer && fieldValue.Type().Elem().Kind() == reflect.Struct {
+		if fieldValue.IsNil() {
+			fieldValue.Set(reflect.New(fieldValue.Type().Elem()))
+		}
+		return m.unmarshalNestedStruct(fieldValue, value)
+	}
+
+	if fieldValue.Kind() == reflect.Slice {
+		return m.setSliceValue(fieldValue, value)
+	}
+
+	return m.setFieldValue(fieldValue, value)
+}
+
+// unmarshalNestedStruct fills target from a decoded YAML or JSON object, which has string keys
+// or, from some decoders, generic keys. Values of any other type are ignored.
+func (m *manager) unmarshalNestedStruct(target reflect.Value, value any) error {
+	switch nested := value.(type) {
+	case map[string]any:
+		return m.unmarshalMapToStruct(target, nested)
+	case map[any]any:
+		return m.unmarshalMapToStruct(target, stringKeyedMap(nested))
+	default:
+		return nil
+	}
+}
+
+// stringKeyedMap converts a map with generic keys, as some decoders produce, to a map with string
+// keys. Entries whose key is not a string are dropped.
+func stringKeyedMap(generic map[any]any) map[string]any {
+	stringMap := make(map[string]any)
+	for k, v := range generic {
+		if keyStr, ok := k.(string); ok {
+			stringMap[keyStr] = v
+		}
+	}
+	return stringMap
 }
 
 func (m *manager) setMapValue(field reflect.Value, value any) error {
@@ -508,42 +442,33 @@ func (m *manager) setMapValue(field reflect.Value, value any) error {
 		if err != nil {
 			return apperror.NewErrorf("setting map key %v failed", k).AddError(err)
 		}
-
 		mapValue := reflect.New(valueType).Elem()
-
-		switch {
-		case valueType.Kind() == reflect.Pointer:
-			if mapValue.IsNil() {
-				mapValue.Set(reflect.New(valueType.Elem()))
-			}
-			if valueType.Elem().Kind() == reflect.Struct {
-				err := m.setStructValue(mapValue, v)
-				if err != nil {
-					return apperror.NewErrorf("setting map value of key %v failed", k).AddError(err)
-				}
-			} else {
-				err := m.setFieldValue(mapValue.Elem(), v)
-				if err != nil {
-					return apperror.NewErrorf("setting map value of key %v failed", k).AddError(err)
-				}
-			}
-		case valueType.Kind() == reflect.Struct:
-			err := m.setStructValue(mapValue.Addr(), v)
-			if err != nil {
-				return apperror.NewErrorf("setting map value of key %v failed", k).AddError(err)
-			}
-		default:
-			err := m.setFieldValue(mapValue, v)
-			if err != nil {
-				return apperror.NewErrorf("setting map value of key %v failed", k).AddError(err)
-			}
+		err = m.setMapEntryValue(mapValue, valueType, v)
+		if err != nil {
+			return apperror.NewErrorf("setting map value of key %v failed", k).AddError(err)
 		}
-
 		newMap.SetMapIndex(keyValue, mapValue)
 	}
 
 	field.Set(newMap)
 	return nil
+}
+
+func (m *manager) setMapEntryValue(mapValue reflect.Value, valueType reflect.Type, value any) error {
+	switch {
+	case valueType.Kind() == reflect.Pointer:
+		if mapValue.IsNil() {
+			mapValue.Set(reflect.New(valueType.Elem()))
+		}
+		if valueType.Elem().Kind() == reflect.Struct {
+			return m.setStructValue(mapValue, value)
+		}
+		return m.setFieldValue(mapValue.Elem(), value)
+	case valueType.Kind() == reflect.Struct:
+		return m.setStructValue(mapValue.Addr(), value)
+	default:
+		return m.setFieldValue(mapValue, value)
+	}
 }
 
 func (m *manager) setStructValue(field reflect.Value, value any) error {
@@ -576,11 +501,9 @@ func (m *manager) setStructValue(field reflect.Value, value any) error {
 	for i := 0; i < structType.NumField(); i++ {
 		fieldInfo := structType.Field(i)
 		fieldValue := structValue.Field(i)
-
 		if !fieldValue.CanSet() {
 			continue
 		}
-
 		fieldName := fieldInfo.Tag.Get(yamlTagName)
 		if fieldName == "" || fieldName == tagIgnore {
 			fieldName = strings.ToLower(fieldInfo.Name)
@@ -589,7 +512,6 @@ func (m *manager) setStructValue(field reflect.Value, value any) error {
 				fieldName = fieldName[:idx]
 			}
 		}
-
 		var fieldVal any
 		var found bool
 		for k, v := range inputMap {
@@ -599,11 +521,9 @@ func (m *manager) setStructValue(field reflect.Value, value any) error {
 				break
 			}
 		}
-
 		if !found {
 			continue
 		}
-
 		switch {
 		case fieldValue.Kind() == reflect.Struct:
 			err := m.setStructValue(fieldValue.Addr(), fieldVal)

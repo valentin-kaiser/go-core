@@ -215,23 +215,19 @@ func Register(s Server) *Service {
 			md := methods.Get(j)
 			mn := string(md.Name())
 			sn := string(sd.Name())
-
 			key := sn + methodSeparator + mn
-
 			rm := sv.MethodByName(mn)
 			if !rm.IsValid() {
 				continue
 			}
 
 			mt := rm.Type()
-
 			var pm proto.Message = dynamicpb.NewMessage(md.Input())
 			pmt, err := protoregistry.GlobalTypes.FindMessageByName(md.Input().FullName())
 			if err == nil {
 				pm = pmt.New().Interface()
 			}
 			service.types[md.Input().FullName()] = pm
-
 			var it, ot reflect.Type
 			if mt.NumIn() >= unaryArgCount {
 				it = mt.In(1)
@@ -322,7 +318,6 @@ func (s *Service) HandlerFunc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate HTTP method if restrictions are configured
 	if len(s.allowedHTTPMethods) > 0 && !s.allowedHTTPMethods[r.Method] {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -392,7 +387,6 @@ func (s *Service) unary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.ContentLength > 0 {
-		// Use buffer pool for body reading
 		bufPtr, ok := bufferPool.Get().(*[]byte)
 		if !ok {
 			http.Error(w, "failed to get buffer from pool", http.StatusInternalServerError)
@@ -404,7 +398,6 @@ func (s *Service) unary(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		buf := *bufPtr
-		// Ensure buffer is large enough
 		if cap(buf) < int(r.ContentLength) {
 			buf = make([]byte, r.ContentLength)
 			*bufPtr = buf
@@ -591,7 +584,6 @@ func (s *Service) invoke(ctx context.Context, methodInfo *methodInfo, service, m
 	m := methodInfo.method
 	mt := methodInfo.reflectType
 
-	// Validate method signature if not already validated
 	if !methodInfo.validated.Load() {
 		if mt.NumIn() != unaryArgCount || mt.NumOut() != unaryResultCount {
 			return nil, apperror.Wrap(errInvalidMethodSignature)
@@ -767,7 +759,6 @@ func (s *Service) handleServerStream(ctx context.Context, conn *websocket.Conn, 
 		return
 	}
 
-	// Read initial message
 	reqPtr := reflect.New(mt.In(1).Elem())
 	err = s.readWSMessage(conn, reqPtr)
 	if err != nil {
@@ -939,10 +930,10 @@ func (s *Service) startMessageReader(ctx context.Context, conn *websocket.Conn, 
 
 			reqPtr := reflect.New(inPtr.Elem())
 			err := s.readWSMessage(conn, reqPtr)
+			if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
+				return
+			}
 			if err != nil {
-				if websocket.IsCloseError(err, websocket.CloseNormalClosure) {
-					return
-				}
 				read <- err
 				return
 			}
@@ -1026,7 +1017,6 @@ func isExpectedCloseError(err error) bool {
 		return false
 	}
 
-	// Check for normal websocket close codes
 	if websocket.IsCloseError(err,
 		websocket.CloseNormalClosure,
 		websocket.CloseGoingAway,
@@ -1087,7 +1077,6 @@ const (
 
 // validateMethodSignature validates and determines the streaming type of a method
 func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.MethodDescriptor) (StreamingType, error) {
-	// Basic validation: must have at least context parameter and error return
 	if mt.NumIn() < 1 || !mt.In(0).Implements(contextType) {
 		return StreamingTypeInvalid, apperror.NewError("first parameter must be context.Context")
 	}
@@ -1098,7 +1087,6 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 	inputType := s.getProtoMessageType(md.Input())
 	outputType := s.getProtoMessageType(md.Output())
 
-	// Determine streaming type based on proto descriptor and validate signature
 	isServerStreaming := md.IsStreamingServer()
 	isClientStreaming := md.IsStreamingClient()
 
@@ -1109,7 +1097,6 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 			return StreamingTypeInvalid, apperror.NewError("bidirectional streaming method must have signature: func(context.Context, chan *InputMsg, chan OutputMsg) error")
 		}
 
-		// Validate input channel type: chan *InputMsg
 		if mt.In(1).Kind() != reflect.Chan || mt.In(1).Elem().Kind() != reflect.Pointer {
 			return StreamingTypeInvalid, apperror.NewError("second parameter must be chan *InputMsg")
 		}
@@ -1118,7 +1105,6 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 			return StreamingTypeInvalid, apperror.NewError("input channel type mismatch: expected chan *" + inputType.String() + ", got " + mt.In(1).String())
 		}
 
-		// Validate output channel type: chan OutputMsg
 		if mt.In(streamOutArgIndex).Kind() != reflect.Chan {
 			return StreamingTypeInvalid, apperror.NewError("third parameter must be chan OutputMsg")
 		}
@@ -1139,7 +1125,6 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 			return StreamingTypeInvalid, apperror.NewError("server streaming method must have signature: func(context.Context, *InputMsg, chan OutputMsg) error")
 		}
 
-		// Validate input type: *InputMsg
 		if mt.In(1).Kind() != reflect.Pointer {
 			return StreamingTypeInvalid, apperror.NewError("second parameter must be *InputMsg")
 		}
@@ -1148,7 +1133,6 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 			return StreamingTypeInvalid, apperror.NewError("input type mismatch: expected *" + inputType.String() + ", got " + mt.In(1).String())
 		}
 
-		// Validate output channel type: chan OutputMsg
 		if mt.In(streamOutArgIndex).Kind() != reflect.Chan || mt.In(streamOutArgIndex).ChanDir()&reflect.SendDir == 0 {
 			return StreamingTypeInvalid, apperror.NewError("third parameter must be send chan OutputMsg")
 		}
@@ -1168,7 +1152,6 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 			return StreamingTypeInvalid, apperror.NewError("client streaming method must have signature: func(context.Context, chan *InputMsg) (OutputMsg, error)")
 		}
 
-		// Validate input channel type: chan *InputMsg
 		if mt.In(1).Kind() != reflect.Chan || mt.In(1).Elem().Kind() != reflect.Pointer {
 			return StreamingTypeInvalid, apperror.NewError("second parameter must be chan *InputMsg")
 		}
@@ -1177,7 +1160,6 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 			return StreamingTypeInvalid, apperror.NewError("input channel type mismatch: expected chan *" + inputType.String() + ", got " + mt.In(1).String())
 		}
 
-		// Validate output type: OutputMsg or *OutputMsg
 		actualOutputType := mt.Out(0)
 		if actualOutputType.Kind() == reflect.Pointer {
 			actualOutputType = actualOutputType.Elem()
@@ -1194,7 +1176,6 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 			return StreamingTypeInvalid, apperror.NewError("unary method must have signature: func(context.Context, *InputMsg) (OutputMsg, error)")
 		}
 
-		// Validate input type: *InputMsg
 		if mt.In(1).Kind() != reflect.Pointer {
 			return StreamingTypeInvalid, apperror.NewError("second parameter must be *InputMsg")
 		}
@@ -1203,7 +1184,6 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 			return StreamingTypeInvalid, apperror.NewError("input type mismatch: expected *" + inputType.String() + ", got " + mt.In(1).String())
 		}
 
-		// Validate output type: OutputMsg or *OutputMsg
 		actualOutputType := mt.Out(0)
 		if actualOutputType.Kind() == reflect.Pointer {
 			actualOutputType = actualOutputType.Elem()
@@ -1228,21 +1208,17 @@ func (s *Service) getProtoMessageType(msgDesc protoreflect.MessageDescriptor) re
 
 // typesMatch checks if two reflect.Types represent the same proto message type
 func (s *Service) typesMatch(actual, expected reflect.Type) bool {
-	// Direct type comparison
 	if actual == expected {
 		return true
 	}
 
-	// Compare by type name as fallback
 	actualName := actual.String()
 	expectedName := expected.String()
 
-	// Handle package differences - compare the base type name
 	if actualName == expectedName {
 		return true
 	}
 
-	// Extract the struct name for comparison
 	actualParts := actual.Name()
 	expectedParts := expected.Name()
 

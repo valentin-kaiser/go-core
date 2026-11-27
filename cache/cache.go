@@ -435,7 +435,6 @@ func (bc *BaseCache) updateStats(fn func(*Stats)) {
 	defer bc.mutex.Unlock()
 	fn(&bc.stats)
 
-	// Calculate hit ratio
 	total := bc.stats.Hits + bc.stats.Misses
 	if total > 0 {
 		bc.stats.HitRatio = float64(bc.stats.Hits) / float64(total)

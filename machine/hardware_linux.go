@@ -148,13 +148,11 @@ func parseCPUInfo(content string) string {
 		}
 	}
 
-	// Combine CPU information for unique identifier
 	return fmt.Sprintf(cpuIDFormat, processor, vendorID, modelName, flags)
 }
 
 // getLinuxSystemUUID retrieves system UUID from DMI
 func getLinuxSystemUUID() (string, error) {
-	// Try multiple locations for system UUID
 	locations := []string{
 		dmiProductUUIDPath,
 		virtualDMIProductUUIDPath,
@@ -228,7 +226,6 @@ func isNonEmpty(value string) bool {
 func getLinuxMACAddresses() ([]string, error) {
 	var macs []string
 
-	// Read from /sys/class/net
 	netDir := sysClassNetPath
 	entries, err := os.ReadDir(netDir)
 	if err != nil {
@@ -236,14 +233,16 @@ func getLinuxMACAddresses() ([]string, error) {
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() && entry.Name() != loopbackInterface { // Skip loopback
-			macFile := filepath.Join(netDir, entry.Name(), macAddressFile)
-			if data, err := os.ReadFile(macFile); err == nil {
-				mac := strings.TrimSpace(string(data))
-				if mac != "" && mac != zeroMAC {
-					macs = append(macs, mac)
-				}
-			}
+		if !entry.IsDir() || entry.Name() == loopbackInterface {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(netDir, entry.Name(), macAddressFile))
+		if err != nil {
+			continue
+		}
+		mac := strings.TrimSpace(string(data))
+		if mac != "" && mac != zeroMAC {
+			macs = append(macs, mac)
 		}
 	}
 
@@ -254,12 +253,10 @@ func getLinuxMACAddresses() ([]string, error) {
 func getLinuxDiskSerials() ([]string, error) {
 	var serials []string
 
-	// Try using lsblk command first
 	if lsblkSerials, err := getLinuxDiskSerialsLSBLK(); err == nil && len(lsblkSerials) > 0 {
 		serials = append(serials, lsblkSerials...)
 	}
 
-	// Try reading from /sys/block
 	if sysSerials, err := getLinuxDiskSerialsSys(); err == nil && len(sysSerials) > 0 {
 		serials = append(serials, sysSerials...)
 	}
@@ -298,14 +295,16 @@ func getLinuxDiskSerialsSys() ([]string, error) {
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() && !strings.HasPrefix(entry.Name(), loopDevicePrefix) {
-			serialFile := filepath.Join(blockDir, entry.Name(), blockDeviceDir, blockSerialFile)
-			if data, err := os.ReadFile(serialFile); err == nil {
-				serial := strings.TrimSpace(string(data))
-				if serial != "" {
-					serials = append(serials, serial)
-				}
-			}
+		if !entry.IsDir() || strings.HasPrefix(entry.Name(), loopDevicePrefix) {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(blockDir, entry.Name(), blockDeviceDir, blockSerialFile))
+		if err != nil {
+			continue
+		}
+		serial := strings.TrimSpace(string(data))
+		if serial != "" {
+			serials = append(serials, serial)
 		}
 	}
 

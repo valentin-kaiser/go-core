@@ -91,19 +91,16 @@ func (r *RSACipher) LoadPrivateKey(pemData []byte, passphrase []byte) *RSACipher
 			r.Error = apperror.NewError("encrypted private key requires a passphrase")
 			return r
 		}
-		// Decrypt PKCS#8 encrypted private key
 		decryptedBytes, err := decryptPKCS8PrivateKey(block.Bytes, passphrase)
 		if err != nil {
 			r.Error = apperror.NewError("decrypting PKCS#8 private key failed").AddError(err)
 			return r
 		}
-
 		keyInterface, err := x509.ParsePKCS8PrivateKey(decryptedBytes)
 		if err != nil {
 			r.Error = apperror.NewError("parsing decrypted PKCS#8 private key failed").AddError(err)
 			return r
 		}
-
 		var ok bool
 		privateKey, ok = keyInterface.(*rsa.PrivateKey)
 		if !ok {
@@ -111,13 +108,11 @@ func (r *RSACipher) LoadPrivateKey(pemData []byte, passphrase []byte) *RSACipher
 			return r
 		}
 	case pemTypePrivateKey:
-		// Unencrypted PKCS#8
 		keyInterface, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 		if err != nil {
 			r.Error = apperror.NewError("parsing PKCS#8 private key failed").AddError(err)
 			return r
 		}
-
 		var ok bool
 		privateKey, ok = keyInterface.(*rsa.PrivateKey)
 		if !ok {
@@ -213,24 +208,19 @@ func (r *RSACipher) ExportPrivateKey(passphrase []byte) ([]byte, error) {
 
 	var block *pem.Block
 	if len(passphrase) > 0 {
-		// Marshal to PKCS#8 first
 		pkcs8Bytes, err := x509.MarshalPKCS8PrivateKey(r.privateKey)
 		if err != nil {
 			return nil, apperror.NewError("marshaling private key failed").AddError(err)
 		}
-
-		// Encrypt using AES-256-CBC with PBKDF2
 		encryptedBytes, err := encryptPKCS8PrivateKey(pkcs8Bytes, passphrase)
 		if err != nil {
 			return nil, apperror.NewError("encrypting private key failed").AddError(err)
 		}
-
 		block = &pem.Block{
 			Type:  pemTypeEncryptedPrivateKey,
 			Bytes: encryptedBytes,
 		}
 	} else {
-		// Export as unencrypted PKCS#8
 		privateKeyBytes, err := x509.MarshalPKCS8PrivateKey(r.privateKey)
 		if err != nil {
 			return nil, apperror.NewError("marshaling private key failed").AddError(err)
@@ -439,14 +429,12 @@ var (
 // This produces encrypted keys compatible with OpenSSL and other standard tools.
 // Uses PBKDF2-HMAC-SHA256 with 100,000 iterations and AES-256-CBC for encryption.
 func encryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
-	// Generate salt for PBKDF2
 	salt := make([]byte, pbkdf2SaltBytes)
 	_, err := rand.Read(salt)
 	if err != nil {
 		return nil, apperror.NewError("generating salt failed").AddError(err)
 	}
 
-	// Generate IV for AES-CBC
 	iv := make([]byte, aes.BlockSize)
 	_, err = rand.Read(iv)
 	if err != nil {
@@ -456,7 +444,6 @@ func encryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 	// Derive key using PBKDF2 with SHA-256 and 100,000 iterations (NIST recommendation)
 	key := pbkdf2.Key(passphrase, salt, pbkdf2Iterations, pbkdf2KeyBytes, sha256.New)
 
-	// Encrypt using AES-256-CBC
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, apperror.NewError("creating AES cipher failed").AddError(err)
@@ -474,7 +461,6 @@ func encryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 	mode := cipher.NewCBCEncrypter(block, iv)
 	mode.CryptBlocks(ciphertext, paddedData)
 
-	// Encode PBKDF2 parameters
 	pbkdf2ParamsBytes, err := asn1.Marshal(pbkdf2Params{
 		Salt:           salt,
 		IterationCount: pbkdf2Iterations,
@@ -487,13 +473,11 @@ func encryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 		return nil, apperror.NewError("encoding PBKDF2 parameters failed").AddError(err)
 	}
 
-	// Encode AES-256-CBC parameters (just the IV)
 	aesParamsBytes, err := asn1.Marshal(iv)
 	if err != nil {
 		return nil, apperror.NewError("encoding AES-256-CBC parameters failed").AddError(err)
 	}
 
-	// Encode PBES2 parameters
 	pbes2ParamsBytes, err := asn1.Marshal(pbes2Params{
 		KeyDerivationFunc: algorithmIdentifier{
 			Algorithm:  oidPBKDF2,
@@ -508,7 +492,6 @@ func encryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 		return nil, apperror.NewError("encoding PBES2 parameters failed").AddError(err)
 	}
 
-	// Create the EncryptedPrivateKeyInfo structure
 	encryptedPKI := encryptedPrivateKeyInfo{
 		EncryptionAlgorithm: algorithmIdentifier{
 			Algorithm:  oidPBES2,
@@ -523,57 +506,48 @@ func encryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 // decryptPKCS8PrivateKey decrypts a standard PBES2-encrypted PKCS#8 private key.
 // Compatible with keys encrypted by OpenSSL and other standard tools.
 func decryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
-	// Parse the EncryptedPrivateKeyInfo structure
 	var encryptedPKI encryptedPrivateKeyInfo
 	_, err := asn1.Unmarshal(data, &encryptedPKI)
 	if err != nil {
 		return nil, apperror.NewError("parsing encrypted private key info failed").AddError(err)
 	}
 
-	// Verify it's PBES2
 	if !encryptedPKI.EncryptionAlgorithm.Algorithm.Equal(oidPBES2) {
 		return nil, apperror.NewError("unsupported encryption algorithm, expected PBES2")
 	}
 
-	// Parse PBES2 parameters
 	var pbes2Params pbes2Params
 	_, err = asn1.Unmarshal(encryptedPKI.EncryptionAlgorithm.Parameters.FullBytes, &pbes2Params)
 	if err != nil {
 		return nil, apperror.NewError("parsing PBES2 parameters failed").AddError(err)
 	}
 
-	// Verify it's PBKDF2
 	if !pbes2Params.KeyDerivationFunc.Algorithm.Equal(oidPBKDF2) {
 		return nil, apperror.NewError("unsupported key derivation function, expected PBKDF2")
 	}
 
-	// Parse PBKDF2 parameters
 	var pbkdf2Params pbkdf2Params
 	_, err = asn1.Unmarshal(pbes2Params.KeyDerivationFunc.Parameters.FullBytes, &pbkdf2Params)
 	if err != nil {
 		return nil, apperror.NewError("parsing PBKDF2 parameters failed").AddError(err)
 	}
 
-	// Verify it's AES-256-CBC
 	if !pbes2Params.EncryptionScheme.Algorithm.Equal(oidAES256CBC) {
 		return nil, apperror.NewError("unsupported encryption scheme, expected AES-256-CBC")
 	}
 
-	// Parse AES-256-CBC parameters (IV)
 	var iv []byte
 	_, err = asn1.Unmarshal(pbes2Params.EncryptionScheme.Parameters.FullBytes, &iv)
 	if err != nil {
 		return nil, apperror.NewError("parsing AES-256-CBC parameters failed").AddError(err)
 	}
 
-	// Derive the key using PBKDF2
 	keyLen := pbkdf2Params.KeyLength
 	if keyLen == 0 {
 		keyLen = pbkdf2KeyBytes // Default for AES-256
 	}
 	key := pbkdf2.Key(passphrase, pbkdf2Params.Salt, pbkdf2Params.IterationCount, keyLen, sha256.New)
 
-	// Decrypt using AES-256-CBC
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, apperror.NewError("creating AES cipher failed").AddError(err)
@@ -593,7 +567,6 @@ func decryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 		return nil, apperror.NewError("invalid padding")
 	}
 
-	// Verify padding
 	for i := len(plaintext) - padding; i < len(plaintext); i++ {
 		if plaintext[i] != byte(padding) {
 			return nil, apperror.NewError("invalid padding")

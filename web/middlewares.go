@@ -108,39 +108,40 @@ const (
 func securityHeaderMiddlewareWithServer(server *Server) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Check If-None-Match header for ETag validation
-			if inm := r.Header.Get(headerIfNoneMatch); inm != "" {
-				// Compare with current ETag (version.GitCommit)
-				if inm == version.GitCommit || inm == `"`+version.GitCommit+`"` {
-					// ETag matches, return 304 Not Modified
-					w.WriteHeader(http.StatusNotModified)
-					return
-				}
+			if etagMatches(r) {
+				w.WriteHeader(http.StatusNotModified)
+				return
 			}
 
 			cacheControl := server.cacheControl
 			if routeCacheControl, ok := server.router.cacheControlFor(r.URL.Path); ok {
 				cacheControl = routeCacheControl
 			}
-
-			for key, value := range securityHeaders {
-				// Skip Cache-Control if a custom one is set
-				if key == headerCacheControl && cacheControl != "" {
-					continue
-				}
-				w.Header().Set(key, value)
-			}
-
-			// Set custom cache control if specified
-			if cacheControl != "" {
-				w.Header().Set(headerCacheControl, cacheControl)
-			}
-
+			setSecurityHeaders(w, cacheControl)
 			if flag.Debug {
 				w.Header().Set(headerCacheControl, cacheControlDebug)
 			}
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+// etagMatches reports whether the If-None-Match header holds the current ETag, which is the git commit of the build.
+func etagMatches(r *http.Request) bool {
+	inm := r.Header.Get(headerIfNoneMatch)
+	return inm != "" && (inm == version.GitCommit || inm == `"`+version.GitCommit+`"`)
+}
+
+// setSecurityHeaders sets the security headers, a non-empty cacheControl replaces the default Cache-Control.
+func setSecurityHeaders(w http.ResponseWriter, cacheControl string) {
+	for key, value := range securityHeaders {
+		if key == headerCacheControl && cacheControl != "" {
+			continue
+		}
+		w.Header().Set(key, value)
+	}
+	if cacheControl != "" {
+		w.Header().Set(headerCacheControl, cacheControl)
 	}
 }
 
@@ -225,7 +226,6 @@ func buildCORSApplier(config *CORSConfig) func(http.ResponseWriter, *http.Reques
 		allowHeaders = corsAllowHeadersDefault
 	}
 
-	// Build static headers
 	headers := map[string]string{
 		headerAllowMethods: allowMethods,
 		headerAllowHeaders: allowHeaders,
@@ -338,13 +338,19 @@ func corsHeaderMiddlewareWithServer(server *Server) Middleware {
 func routeHeaderMiddlewareWithServer(server *Server) Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if headers, ok := server.router.headersFor(r.URL.Path); ok {
-				for key, value := range headers {
-					w.Header().Set(key, value)
-				}
+			headers, ok := server.router.headersFor(r.URL.Path)
+			if ok {
+				setHeaders(w, headers)
 			}
 			next.ServeHTTP(w, r)
 		})
+	}
+}
+
+// setHeaders sets every header of the map on the response.
+func setHeaders(w http.ResponseWriter, headers map[string]string) {
+	for key, value := range headers {
+		w.Header().Set(key, value)
 	}
 }
 
@@ -363,26 +369,21 @@ func addVaryHeader(w http.ResponseWriter, value string) {
 func varyHeaderMiddleware(headers ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			// Execute the handler first
 			next.ServeHTTP(w, r)
+			if len(headers) == 0 {
+				return
+			}
 
-			// Get existing Vary header after the handler has run
+			// The handler may have set a Vary header itself, which must be kept.
+			var allHeaders []string
 			existing := w.Header().Get(headerVary)
-
-			// If we have headers to add
-			if len(headers) > 0 {
-				// Combine with new headers
-				var allHeaders []string
-				if existing != "" {
-					allHeaders = append(allHeaders, existing)
-				}
-				allHeaders = append(allHeaders, headers...)
-
-				// Set the combined Vary header
-				w.Header().Set(headerVary, allHeaders[0])
-				for _, header := range allHeaders[1:] {
-					w.Header().Add(headerVary, header)
-				}
+			if existing != "" {
+				allHeaders = append(allHeaders, existing)
+			}
+			allHeaders = append(allHeaders, headers...)
+			w.Header().Set(headerVary, allHeaders[0])
+			for _, header := range allHeaders[1:] {
+				w.Header().Add(headerVary, header)
 			}
 		})
 	}

@@ -94,11 +94,9 @@ func Catch() {
 		if ok {
 			caller = fmt.Sprintf("%s/%s", filepath.Base(filepath.Dir(file)), strings.Trim(filepath.Base(file), filepath.Ext(file)))
 		}
-
 		if Write {
 			write(err, caller, line)
 		}
-
 		if !logger.Enabled() {
 			if flag.Debug {
 				fmt.Fprintf(os.Stderr, "%v code: %v => %v \n %v", caller, line, err, string(debug.Stack()))
@@ -107,7 +105,6 @@ func Catch() {
 			fmt.Fprintf(os.Stderr, "%v code: %v => %v", caller, line, err)
 			return
 		}
-
 		if flag.Debug {
 			logger.Error().Field("caller", caller).Field("line", line).Field("error", err).Field("stack", string(debug.Stack())).Msg("panic recovered")
 			return
@@ -122,7 +119,6 @@ func Catch() {
 func OnSignal(handlers []func() error, signals ...os.Signal) context.Context {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// Create a channel to receive signals
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, signals...)
 
@@ -131,26 +127,24 @@ func OnSignal(handlers []func() error, signals ...os.Signal) context.Context {
 			signal.Stop(sigChan)
 			cancel()
 		}()
-
 		if len(handlers) == 0 {
 			return
 		}
-
-		// Wait for signal
 		<-sigChan
-
-		// Execute all handlers with panic recovery
 		for _, handler := range handlers {
-			func() {
-				defer Catch()
-				err := handler()
-				if err != nil {
-					logger.Error().Err(err).Msg("running signal handler failed")
-				}
-			}()
+			runSignalHandler(handler)
 		}
 	}()
 	return ctx
+}
+
+// runSignalHandler runs the handler so that a panic in it does not stop the remaining handlers.
+func runSignalHandler(handler func() error) {
+	defer Catch()
+	err := handler()
+	if err != nil {
+		logger.Error().Err(err).Msg("running signal handler failed")
+	}
 }
 
 // WaitForShutdown waits for the provided context to be done, enabling graceful shutdown.

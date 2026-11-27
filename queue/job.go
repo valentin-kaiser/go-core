@@ -176,18 +176,15 @@ func (bm *BatchManager) CreateBatch(ctx context.Context, name string, jobs []*Jo
 		Metadata:  make(map[string]string),
 	}
 
-	// Enqueue all jobs
 	for _, job := range jobs {
 		if job.Metadata == nil {
 			job.Metadata = make(map[string]string)
 		}
 		job.Metadata["batch_id"] = batch.ID
-
 		err := bm.manager.Enqueue(ctx, job)
 		if err != nil {
 			return nil, apperror.NewErrorf("enqueuing job %s of batch %s failed", job.ID, batch.ID).AddError(err)
 		}
-
 		batch.JobIDs = append(batch.JobIDs, job.ID)
 	}
 
@@ -228,7 +225,6 @@ func (bm *BatchManager) UpdateBatchStatus(ctx context.Context, batchID string) e
 		if err != nil {
 			continue
 		}
-
 		switch job.Status {
 		case StatusPending:
 			batch.Pending++

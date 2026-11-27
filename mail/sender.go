@@ -57,13 +57,11 @@ func (s *smtpSender) Send(ctx context.Context, message *Message) error {
 		return apperror.NewError("smtp sender is disabled")
 	}
 
-	// Validate message
 	err := s.validateMessage(message)
 	if err != nil {
 		return apperror.NewErrorf("validating message %s failed", message.ID).AddError(err)
 	}
 
-	// Process template if specified
 	if s.templateManager != nil && s.templateManager.config.Enabled {
 		err = s.processTemplate(message)
 		if err != nil {
@@ -71,34 +69,27 @@ func (s *smtpSender) Send(ctx context.Context, message *Message) error {
 		}
 	}
 
-	// Create email using internal email package
 	emailMsg, err := s.createEmail(message)
 	if err != nil {
 		return apperror.NewErrorf("creating email for message %s failed", message.ID).AddError(err)
 	}
 
-	// Send with retries
 	for attempt := 0; attempt <= s.config.MaxRetries; attempt++ {
 		if attempt > 0 {
 			logger.Warn().Field("attempt", attempt).Field("message_id", message.ID).Msg("retrying email send")
-
 			select {
 			case <-ctx.Done():
 				return ctx.Err()
 			case <-time.After(s.config.RetryDelay):
-				// Continue with retry
 			}
 		}
-
 		err = s.sendEmail(ctx, emailMsg)
 		if err == nil {
 			return nil
 		}
-
 		if attempt == s.config.MaxRetries {
 			break
 		}
-
 		logger.Warn().Err(err).Field("attempt", attempt).Field("message_id", message.ID).Msg("sending email via SMTP failed")
 	}
 
@@ -121,17 +112,14 @@ func (s *smtpSender) validateMessage(message *Message) error {
 
 // processTemplate processes the email template if specified
 func (s *smtpSender) processTemplate(message *Message) error {
-	// Skip if neither template name nor template content is provided
 	if message.Template == "" && message.TemplateContent == "" {
 		return nil
 	}
 
 	var err error
 	if message.TemplateContent != "" {
-		// Use direct template content
 		message.HTMLBody, err = s.templateManager.RenderTemplateContent(message.TemplateContent, message.TemplateData, message.TemplateFuncs)
 	} else {
-		// Use template file
 		message.HTMLBody, err = s.templateManager.RenderTemplate(message.Template, message.TemplateData, message.TemplateFuncs)
 	}
 
@@ -146,27 +134,22 @@ func (s *smtpSender) processTemplate(message *Message) error {
 func (s *smtpSender) createEmail(message *Message) (*email.Email, error) {
 	emailMsg := email.New()
 
-	// Set From address
 	from := message.From
 	if from == "" {
 		from = s.config.From
 	}
 	emailMsg.From = from
 
-	// Set recipients
 	emailMsg.To = message.To
 	emailMsg.Cc = message.CC
 	emailMsg.Bcc = message.BCC
 
-	// Set Reply-To
 	if message.ReplyTo != "" {
 		emailMsg.ReplyTo = []string{message.ReplyTo}
 	}
 
-	// Set subject
 	emailMsg.Subject = message.Subject
 
-	// Set body content
 	if message.TextBody != "" {
 		emailMsg.Text = []byte(message.TextBody)
 	}
@@ -174,28 +157,23 @@ func (s *smtpSender) createEmail(message *Message) (*email.Email, error) {
 		emailMsg.HTML = []byte(message.HTMLBody)
 	}
 
-	// Set custom headers
 	if emailMsg.Headers == nil {
 		emailMsg.Headers = make(map[string][]string)
 	}
 
-	// Add Message-ID if available
 	if message.ID != "" {
 		emailMsg.Headers[headerMessageID] = []string{fmt.Sprintf("<%s@%s>", message.ID, s.config.Host)}
 	}
 
-	// Add priority header
 	if message.Priority != PriorityNormal {
 		priority := s.getPriorityHeader(message.Priority)
 		emailMsg.Headers[headerXPriority] = []string{priority}
 	}
 
-	// Add custom headers
 	for key, value := range message.Headers {
 		emailMsg.Headers[key] = []string{value}
 	}
 
-	// Add attachments
 	for _, attachment := range message.Attachments {
 		err := s.addAttachment(emailMsg, attachment)
 		if err != nil {
@@ -225,7 +203,6 @@ func (s *smtpSender) addAttachment(emailMsg *email.Email, attachment Attachment)
 		if err != nil {
 			return apperror.NewErrorf("attaching inline file %s failed", attachment.Filename).AddError(err)
 		}
-		// Set Content-ID header for inline attachments
 		a.Header.Set(headerContentID, fmt.Sprintf("<%s>", attachment.ContentID))
 		a.Header.Set(headerContentDisposition, fmt.Sprintf("inline; filename=\"%s\"", attachment.Filename))
 		return nil
@@ -241,16 +218,13 @@ func (s *smtpSender) addAttachment(emailMsg *email.Email, attachment Attachment)
 
 // sendEmail sends the email using the appropriate method
 func (s *smtpSender) sendEmail(_ context.Context, emailMsg *email.Email) error {
-	// Prepare authentication
 	var auth smtp.Auth
 	if s.config.Auth {
 		auth = s.createAuth()
 	}
 
-	// Get server address
 	addr := net.JoinHostPort(s.config.Host, strconv.Itoa(s.config.Port))
 
-	// Send based on encryption method
 	switch strings.ToUpper(s.config.Encryption) {
 	case string(EncryptionTLS):
 		return s.sendWithTLS(emailMsg, addr, auth)
@@ -265,7 +239,6 @@ func (s *smtpSender) sendEmail(_ context.Context, emailMsg *email.Email) error {
 func (s *smtpSender) createAuth() smtp.Auth {
 	switch strings.ToUpper(s.config.AuthMethod) {
 	case string(AuthMethodCRAMMD5):
-		// Use the proper CRAM-MD5 implementation from net/smtp
 		return smtp.CRAMMD5Auth(s.config.Username, s.config.Password)
 	case string(AuthMethodLogin):
 		return NewLoginAuth(s.config.Username, s.config.Password)

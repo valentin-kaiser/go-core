@@ -249,9 +249,8 @@ func (rq *RedisQueue) GetJobs(ctx context.Context, status Status, limit int) ([]
 		job, err := rq.GetJob(ctx, jobID)
 		if err != nil {
 			logger.Error().Err(err).Field("job_id", jobID).Msg("reading scheduled job failed")
-			continue // Skip jobs that can't be retrieved
+			continue
 		}
-
 		if job.Status == status {
 			jobs = append(jobs, job)
 		}
@@ -271,31 +270,26 @@ func (rq *RedisQueue) scanJobsByStatus(ctx context.Context, status Status, limit
 		if err != nil {
 			return nil, apperror.NewError("scanning jobs failed").AddError(err)
 		}
-
 		for _, key := range keys {
 			if count >= limit {
 				break
 			}
-
 			jobData, err := rq.client.HGet(ctx, key, jobDataField).Result()
 			if err != nil {
 				logger.Warn().Err(err).Field("key", key).Msg("reading job while scanning failed")
 				continue
 			}
-
 			var job Job
 			unmarshalErr := json.Unmarshal([]byte(jobData), &job)
 			if unmarshalErr != nil {
 				logger.Warn().Err(unmarshalErr).Field("key", key).Msg("unmarshaling job while scanning failed")
 				continue
 			}
-
 			if job.Status == status {
 				jobs = append(jobs, &job)
 				count++
 			}
 		}
-
 		cursor = nextCursor
 		if cursor == 0 || count >= limit {
 			break
@@ -333,19 +327,16 @@ func (rq *RedisQueue) GetStats(ctx context.Context) (*Stats, error) {
 		if err != nil {
 			return nil, apperror.NewError("scanning jobs failed").AddError(err)
 		}
-
 		for _, key := range keys {
 			jobData, err := rq.client.HGet(ctx, key, jobDataField).Result()
 			if err != nil {
 				continue
 			}
-
 			var job Job
 			unmarshalErr := json.Unmarshal([]byte(jobData), &job)
 			if unmarshalErr != nil {
 				continue
 			}
-
 			stats.TotalJobs++
 			switch job.Status {
 			case StatusRunning:
@@ -364,7 +355,6 @@ func (rq *RedisQueue) GetStats(ctx context.Context) (*Stats, error) {
 				stats.DeadLetter++
 			}
 		}
-
 		cursor = nextCursor
 		if cursor == 0 {
 			break
@@ -415,10 +405,8 @@ func (rq *RedisQueue) MoveScheduledToPending(ctx context.Context) error {
 		if err != nil {
 			continue
 		}
-
 		job.Status = StatusPending
 		job.ScheduleAt = time.Time{}
-
 		updateErr := rq.UpdateJob(ctx, job)
 		if updateErr != nil {
 			logger.Error().Err(updateErr).Field("job_id", jobID).Msg("moving scheduled job to pending failed")

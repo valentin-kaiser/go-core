@@ -176,9 +176,7 @@ func (m *manager) declareFlag(label string, usage string, defaultValue any) erro
 	label = strings.ToLower(label)
 	flag.RegisterEnvVar(pflagLabel, label)
 
-	// Check if flag already exists to avoid redefinition errors
 	if pflag.Lookup(pflagLabel) != nil {
-		// Flag already exists, just bind to config
 		return m.bind(label, pflag.Lookup(pflagLabel))
 	}
 
@@ -223,41 +221,32 @@ func (m *manager) declareFlag(label string, usage string, defaultValue any) erro
 // parseStructTags parses the struct tags of the given struct and registers the flags
 // It also sets the default values of the flags to the values of the struct fields
 func (m *manager) parseStructTags(v reflect.Value, labelBase string) error {
-	// If the config is a pointer, we need to get the type of the element
 	if v.Kind() == reflect.Pointer {
 		v = v.Elem()
 	}
 
 	t := v.Type()
 	for i := 0; i < t.NumField(); i++ {
-		// If the field is not exported, we skip it
 		if t.Field(i).PkgPath != "" {
 			continue
 		}
-
 		field := t.Field(i)
 		fieldName := getFieldName(field)
-
-		// If the field is a pointer, we need to dereference it
 		if v.Field(i).Kind() == reflect.Pointer {
 			if v.Field(i).IsNil() {
 				v.Field(i).Set(reflect.New(field.Type.Elem()))
 			}
-
 			err := m.parseStructTags(v.Field(i).Elem(), fieldName)
 			if err != nil {
 				return apperror.NewErrorf("parsing struct tags of field %s failed", fieldName).AddError(err)
 			}
 			continue
 		}
-
-		// If the field is a struct, we need to iterate over its fields
 		if field.Type.Kind() == reflect.Struct {
 			subv := v.Field(i)
 			if subv.Kind() == reflect.Pointer {
 				subv = subv.Elem()
 			}
-
 			label := buildLabel(labelBase, fieldName)
 			err := m.parseStructTags(subv, label)
 			if err != nil {
@@ -265,7 +254,6 @@ func (m *manager) parseStructTags(v reflect.Value, labelBase string) error {
 			}
 			continue
 		}
-
 		tag := buildLabel(labelBase, fieldName)
 		err := m.declareFlag(tag, field.Tag.Get(usageTagName), v.Field(i).Interface())
 		if err != nil {
@@ -285,7 +273,6 @@ func kebabCase(s string) string {
 		return s
 	}
 
-	// Handle dot-separated segments (e.g., "Server.ARCHost")
 	if strings.Contains(s, keySeparator) {
 		parts := strings.Split(s, keySeparator)
 		for i, part := range parts {
@@ -297,30 +284,29 @@ func kebabCase(s string) string {
 	runes := []rune(s)
 	var result strings.Builder
 
-	for i := range runes {
-		r := runes[i]
-
-		// Check if current character is uppercase
-		if unicode.IsUpper(r) {
-			// Add hyphen before uppercase letter if:
-			// 1. It's not the first character
-			// 2. Previous character is lowercase OR
-			// 3. Next character exists and is lowercase (end of acronym)
-			if i > 0 {
-				prevIsLower := unicode.IsLower(runes[i-1])
-				nextIsLower := i+1 < len(runes) && unicode.IsLower(runes[i+1])
-
-				if prevIsLower || nextIsLower {
-					result.WriteString(dashSeparator)
-				}
-			}
-			result.WriteRune(unicode.ToLower(r))
-		} else {
+	for i, r := range runes {
+		if !unicode.IsUpper(r) {
 			result.WriteRune(r)
+			continue
 		}
+		if startsWord(runes, i) {
+			result.WriteString(dashSeparator)
+		}
+		result.WriteRune(unicode.ToLower(r))
 	}
 
 	return result.String()
+}
+
+// startsWord reports whether the uppercase rune at index i begins a new word: it follows a
+// lowercase rune, or it is the last uppercase rune of an acronym that precedes a lowercase one.
+func startsWord(runes []rune, i int) bool {
+	if i == 0 {
+		return false
+	}
+	prevIsLower := unicode.IsLower(runes[i-1])
+	nextIsLower := i+1 < len(runes) && unicode.IsLower(runes[i+1])
+	return prevIsLower || nextIsLower
 }
 
 // getFieldName extracts the field name from struct field, preferring yaml tag over field name

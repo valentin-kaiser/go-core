@@ -44,7 +44,6 @@ func NewTemplateManager(config TemplateConfig) *TemplateManager {
 		templates: make(map[string]*template.Template),
 	}
 
-	// Add global functions if provided
 	if config.GlobalFuncs != nil {
 		for key, fn := range config.GlobalFuncs {
 			tm.WithTemplateFunc(key, fn)
@@ -55,7 +54,6 @@ func NewTemplateManager(config TemplateConfig) *TemplateManager {
 		tm.WithDefaultFuncs()
 	}
 
-	// Load templates on initialization if filesystem is configured
 	if config.FileSystem != nil || config.TemplatesPath != "" {
 		err := tm.ReloadTemplates()
 		if err != nil {
@@ -75,7 +73,6 @@ func (tm *TemplateManager) WithFS(filesystem fs.FS) *TemplateManager {
 	tm.config.FileSystem = filesystem
 	tm.config.TemplatesPath = ""
 
-	// Reload templates from the new filesystem
 	err := tm.ReloadTemplates()
 	if err != nil {
 		tm.Error = apperror.NewError("reloading templates failed").AddError(err)
@@ -101,7 +98,6 @@ func (tm *TemplateManager) WithFileServer(templatesPath string) *TemplateManager
 	tm.config.TemplatesPath = templatesPath
 	tm.config.FileSystem = nil
 
-	// Reload templates from the new path
 	err := tm.ReloadTemplates()
 	if err != nil {
 		tm.Error = apperror.NewError("reloading templates failed").AddError(err)
@@ -160,79 +156,12 @@ func (tm *TemplateManager) RenderTemplate(name string, data any, funcs ...templa
 		return "", tm.Error
 	}
 
-	// Load template content from source
-	content, err := func() ([]byte, error) {
-		// Try reading from TemplatesPath first (OS paths, use filepath)
-		if tm.config.TemplatesPath != "" {
-			// Normalize the name to a clean relative OS path and reject traversal attempts.
-			cleanName := filepath.Clean(filepath.FromSlash(name))
-			if filepath.IsAbs(cleanName) || strings.HasPrefix(cleanName, ".."+string(filepath.Separator)) || cleanName == ".." {
-				return nil, apperror.NewError("invalid template name: path traversal detected").AddDetail("name", name)
-			}
-
-			// Build and clean a single path used for both Stat and ReadFile.
-			customPath := filepath.Join(tm.config.TemplatesPath, cleanName)
-
-			// Verify the resolved path is within TemplatesPath.
-			root, err := filepath.Abs(tm.config.TemplatesPath)
-			if err != nil {
-				return nil, apperror.NewError("resolving templates root path failed").AddError(err)
-			}
-			absCustom, err := filepath.Abs(customPath)
-			if err != nil {
-				return nil, apperror.NewError("resolving template path failed").AddError(err)
-			}
-			if !strings.HasPrefix(absCustom, root+string(filepath.Separator)) && absCustom != root {
-				return nil, apperror.NewError("invalid template name: path escapes templates root").AddDetail("name", name)
-			}
-
-			_, err = os.Stat(absCustom)
-			if err == nil {
-				content, err := os.ReadFile(absCustom) //nolint:gosec // absCustom was verified to be inside TemplatesPath above
-				if err != nil {
-					return nil, apperror.NewError("reading template file from TemplatesPath failed").AddError(err)
-				}
-				return content, nil
-			}
-		}
-
-		// Fallback to FileSystem if configured (fs.FS requires valid, relative, forward-slash paths)
-		if tm.config.FileSystem != nil {
-			fsPath := path.Clean(filepath.ToSlash(name))
-			if !fs.ValidPath(fsPath) {
-				return nil, apperror.NewError("invalid template name: not a valid fs.FS path").AddDetail("name", name)
-			}
-			content, err := fs.ReadFile(tm.config.FileSystem, fsPath)
-			if err != nil {
-				return nil, apperror.NewError("reading template file from FileSystem failed").AddError(err)
-			}
-			return content, nil
-		}
-
-		// Neither TemplatesPath nor FileSystem configured
-		return nil, apperror.NewError("no template source configured")
-	}()
+	content, err := tm.readTemplateSource(name)
 	if err != nil {
 		return "", apperror.NewError("reading template source failed").AddError(err)
 	}
 
-	// Build function map: start with global functions, then apply custom functions
-	funcMap := make(template.FuncMap)
-
-	// Thread-safe access to global functions
-	tm.mutex.RLock()
-	if tm.funcs != nil {
-		maps.Copy(funcMap, tm.funcs)
-	}
-	tm.mutex.RUnlock()
-
-	// Apply custom functions (later ones override earlier ones)
-	for _, customFunc := range funcs {
-		maps.Copy(funcMap, customFunc)
-	}
-
-	// Parse and execute template
-	tmpl, err := template.New(name).Funcs(funcMap).Parse(string(content))
+	tmpl, err := template.New(name).Funcs(tm.mergedFuncs(funcs)).Parse(string(content))
 	if err != nil {
 		return "", apperror.NewError("parsing template failed").AddError(err)
 	}
@@ -246,6 +175,86 @@ func (tm *TemplateManager) RenderTemplate(name string, data any, funcs ...templa
 	return buf.String(), nil
 }
 
+// readTemplateSource reads the template from TemplatesPath and falls back to the FileSystem
+func (tm *TemplateManager) readTemplateSource(name string) ([]byte, error) {
+	if tm.config.TemplatesPath != "" {
+		content, found, err := tm.readTemplateFromPath(name)
+		if err != nil || found {
+			return content, err
+		}
+	}
+
+	if tm.config.FileSystem != nil {
+		return tm.readTemplateFromFileSystem(name)
+	}
+
+	return nil, apperror.NewError("no template source configured")
+}
+
+// readTemplateFromPath reads a template below TemplatesPath and reports whether the file exists
+func (tm *TemplateManager) readTemplateFromPath(name string) ([]byte, bool, error) {
+	// Normalize the name to a clean relative OS path and reject traversal attempts.
+	cleanName := filepath.Clean(filepath.FromSlash(name))
+	if filepath.IsAbs(cleanName) || strings.HasPrefix(cleanName, ".."+string(filepath.Separator)) || cleanName == ".." {
+		return nil, false, apperror.NewError("invalid template name: path traversal detected").AddDetail("name", name)
+	}
+
+	// Build and clean a single path used for both Stat and ReadFile.
+	customPath := filepath.Join(tm.config.TemplatesPath, cleanName)
+
+	// Verify the resolved path is within TemplatesPath.
+	root, err := filepath.Abs(tm.config.TemplatesPath)
+	if err != nil {
+		return nil, false, apperror.NewError("resolving templates root path failed").AddError(err)
+	}
+	absCustom, err := filepath.Abs(customPath)
+	if err != nil {
+		return nil, false, apperror.NewError("resolving template path failed").AddError(err)
+	}
+	if !strings.HasPrefix(absCustom, root+string(filepath.Separator)) && absCustom != root {
+		return nil, false, apperror.NewError("invalid template name: path escapes templates root").AddDetail("name", name)
+	}
+
+	_, err = os.Stat(absCustom)
+	if err != nil {
+		return nil, false, nil
+	}
+
+	content, err := os.ReadFile(absCustom) //nolint:gosec // absCustom was verified to be inside TemplatesPath above
+	if err != nil {
+		return nil, false, apperror.NewError("reading template file from TemplatesPath failed").AddError(err)
+	}
+	return content, true, nil
+}
+
+// readTemplateFromFileSystem reads a template from the configured FileSystem, which requires valid, relative, forward-slash paths
+func (tm *TemplateManager) readTemplateFromFileSystem(name string) ([]byte, error) {
+	fsPath := path.Clean(filepath.ToSlash(name))
+	if !fs.ValidPath(fsPath) {
+		return nil, apperror.NewError("invalid template name: not a valid fs.FS path").AddDetail("name", name)
+	}
+
+	content, err := fs.ReadFile(tm.config.FileSystem, fsPath)
+	if err != nil {
+		return nil, apperror.NewError("reading template file from FileSystem failed").AddError(err)
+	}
+	return content, nil
+}
+
+// mergedFuncs combines the global functions with the custom functions, later ones override earlier ones
+func (tm *TemplateManager) mergedFuncs(funcs []template.FuncMap) template.FuncMap {
+	funcMap := make(template.FuncMap)
+
+	tm.mutex.RLock()
+	maps.Copy(funcMap, tm.funcs)
+	tm.mutex.RUnlock()
+
+	for _, customFunc := range funcs {
+		maps.Copy(funcMap, customFunc)
+	}
+	return funcMap
+}
+
 // RenderTemplateContent renders template content directly with the given data and optional custom functions
 func (tm *TemplateManager) RenderTemplateContent(content string, data any, funcs ...template.FuncMap) (string, error) {
 	if tm.Error != nil {
@@ -256,23 +265,7 @@ func (tm *TemplateManager) RenderTemplateContent(content string, data any, funcs
 		return "", apperror.NewError("template content cannot be empty")
 	}
 
-	// Build function map: start with global functions, then apply custom functions
-	funcMap := make(template.FuncMap)
-
-	// Thread-safe access to global functions
-	tm.mutex.RLock()
-	if tm.funcs != nil {
-		maps.Copy(funcMap, tm.funcs)
-	}
-	tm.mutex.RUnlock()
-
-	// Apply custom functions (later ones override earlier ones)
-	for _, customFunc := range funcs {
-		maps.Copy(funcMap, customFunc)
-	}
-
-	// Parse and execute template
-	tmpl, err := template.New("inline-template").Funcs(funcMap).Parse(content)
+	tmpl, err := template.New("inline-template").Funcs(tm.mergedFuncs(funcs)).Parse(content)
 	if err != nil {
 		return "", apperror.NewError("parsing template content failed").AddError(err)
 	}
@@ -323,23 +316,17 @@ func (tm *TemplateManager) loadTemplatesFromFS(filesystem fs.FS) error {
 		if err != nil {
 			return apperror.NewError("walking templates filesystem failed").AddError(err)
 		}
-
 		if d.IsDir() || !strings.HasSuffix(path, ".html") {
 			return nil
 		}
-
-		// Read template content
 		content, err := fs.ReadFile(filesystem, path)
 		if err != nil {
 			return apperror.NewError("reading template file failed").AddError(err)
 		}
-
-		// Parse template
 		tmpl, err := tm.parseTemplate(path, string(content))
 		if err != nil {
 			return apperror.NewErrorf("parsing template %s failed", path).AddError(err)
 		}
-
 		logger.Trace().Field("template", path).Msg("loaded template from filesystem")
 		tm.templates[path] = tmpl
 		return nil
@@ -367,30 +354,22 @@ func (tm *TemplateManager) loadTemplatesFromPath(templatesPath string) error {
 		if err != nil {
 			return apperror.NewError("walking templates path failed").AddError(err)
 		}
-
 		if info.IsDir() || !strings.HasSuffix(path, ".html") {
 			return nil
 		}
-
-		// Get template name relative to templates path
 		relPath, err := filepath.Rel(templatesPath, path)
 		if err != nil {
 			return apperror.NewErrorf("resolving relative path of %s failed", path).AddError(err)
 		}
-
-		// Load template content
 		// Reading through the root keeps symlinks from leading out of the templates path.
 		content, err := root.ReadFile(relPath)
 		if err != nil {
 			return apperror.NewError("reading template file failed").AddError(err)
 		}
-
-		// Parse template
 		tmpl, err := tm.parseTemplate(relPath, string(content))
 		if err != nil {
 			return apperror.NewErrorf("parsing template %s failed", relPath).AddError(err)
 		}
-
 		logger.Trace().Field("template", relPath).Msg("loaded template from path")
 		tm.templates[relPath] = tmpl
 		return nil
@@ -406,7 +385,6 @@ func (tm *TemplateManager) loadTemplateFromDisk(name string) (*template.Template
 	var content []byte
 	var err error
 
-	// Try to load from filesystem first
 	switch {
 	case tm.config.FileSystem != nil:
 		content, err = fs.ReadFile(tm.config.FileSystem, name)
@@ -414,13 +392,11 @@ func (tm *TemplateManager) loadTemplateFromDisk(name string) (*template.Template
 			return nil, apperror.NewError("template not found in filesystem").AddError(err)
 		}
 	case tm.config.TemplatesPath != "":
-		// Try to load from custom path
 		customPath := filepath.Clean(filepath.Join(tm.config.TemplatesPath, name))
 		_, statErr := os.Stat(customPath)
 		if statErr != nil {
 			return nil, apperror.NewError("template not found in templates path").AddError(statErr)
 		}
-
 		content, err = os.ReadFile(customPath)
 		if err != nil {
 			return nil, apperror.NewError("reading template file failed").AddError(err)
@@ -429,13 +405,11 @@ func (tm *TemplateManager) loadTemplateFromDisk(name string) (*template.Template
 		return nil, apperror.NewError("no template source configured - use WithFS or WithFileServer")
 	}
 
-	// Parse template
 	tmpl, err := tm.parseTemplate(name, string(content))
 	if err != nil {
 		return nil, apperror.NewErrorf("parsing template %s failed", name).AddError(err)
 	}
 
-	// Cache the template
 	tm.mutex.Lock()
 	tm.templates[name] = tmpl
 	tm.mutex.Unlock()
@@ -449,7 +423,6 @@ func (tm *TemplateManager) parseTemplate(name, content string) (*template.Templa
 		tm.funcs = make(template.FuncMap)
 	}
 
-	// Parse template with functions
 	tmpl, err := template.New(name).Funcs(tm.funcs).Parse(content)
 	if err != nil {
 		return nil, apperror.NewError("parsing template failed").AddError(err)
@@ -464,7 +437,6 @@ func (tm *TemplateManager) WithDefaultFuncs() *TemplateManager {
 		return tm
 	}
 
-	// Add default functions if not already set
 	if tm.funcs == nil {
 		tm.funcs = make(template.FuncMap)
 	}
@@ -510,10 +482,8 @@ func DefaultFuncs() template.FuncMap {
 		"title": func(s string, langCode string) string {
 			lang, err := language.Parse(langCode)
 			if err != nil {
-				// Default to English if parsing fails
 				lang = language.English
 			}
-
 			return cases.Title(lang, cases.NoLower).String(s)
 		},
 		"trim":      strings.TrimSpace,
@@ -545,37 +515,8 @@ func DefaultFuncs() template.FuncMap {
 			return dict
 		},
 		// Time functions
-		"now": time.Now,
-		"date": func(format string, date any) string {
-			// Handle different date types and formats
-			switch v := date.(type) {
-			case time.Time:
-				if format == "" {
-					format = defaultDateFormat
-				}
-				return v.Format(format)
-			case *time.Time:
-				if v == nil {
-					return ""
-				}
-				if format == "" {
-					format = defaultDateFormat
-				}
-				return v.Format(format)
-			case string:
-				// Try to parse string as time
-				t, parseErr := time.Parse(time.RFC3339, v)
-				if parseErr == nil {
-					if format == "" {
-						format = defaultDateFormat
-					}
-					return t.Format(format)
-				}
-				return v
-			default:
-				return fmt.Sprintf("%v", date)
-			}
-		},
+		"now":  time.Now,
+		"date": formatDate,
 		"unix": func(t int64, nsec int) time.Time {
 			return time.Unix(t, int64(nsec))
 		},
@@ -604,5 +545,30 @@ func DefaultFuncs() template.FuncMap {
 		},
 		"print":  fmt.Sprint,
 		"printf": fmt.Sprintf,
+	}
+}
+
+// formatDate formats a time, a time pointer or an RFC 3339 string and returns every other value as text.
+func formatDate(format string, date any) string {
+	if format == "" {
+		format = defaultDateFormat
+	}
+
+	switch v := date.(type) {
+	case time.Time:
+		return v.Format(format)
+	case *time.Time:
+		if v == nil {
+			return ""
+		}
+		return v.Format(format)
+	case string:
+		t, parseErr := time.Parse(time.RFC3339, v)
+		if parseErr != nil {
+			return v
+		}
+		return t.Format(format)
+	default:
+		return fmt.Sprintf("%v", date)
 	}
 }

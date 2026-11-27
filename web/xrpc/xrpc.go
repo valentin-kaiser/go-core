@@ -105,36 +105,7 @@ func Register(servers ...Server) *Service {
 	// Short aliases are added after all canonical keys so they can never shadow one.
 	candidates := make(map[string]int)
 	for _, srv := range servers {
-		sv := reflect.ValueOf(srv)
-		services := srv.Descriptor().Services()
-		for i := 0; i < services.Len(); i++ {
-			sd := services.Get(i)
-			for j := 0; j < sd.Methods().Len(); j++ {
-				md := sd.Methods().Get(j)
-				fn := sv.MethodByName(string(md.Name()))
-				if !fn.IsValid() {
-					continue
-				}
-
-				m, err := bind(fn, md)
-				if err != nil {
-					logger.Error().Err(err).Field("method", string(sd.FullName())+pathSeparator+string(md.Name())).Msg("skipping method with invalid signature")
-					continue
-				}
-				m.service = string(sd.Name())
-				m.full = string(sd.FullName())
-
-				if _, dup := s.methods[m.full+pathSeparator+m.name]; dup {
-					continue
-				}
-				for _, key := range []string{m.full + nameSeparator + m.name, m.full + pathSeparator + m.name} {
-					s.methods[key] = m
-				}
-
-				candidates[m.service+"."+m.name]++
-				s.list = append(s.list, m)
-			}
-		}
+		s.addServer(srv, candidates)
 	}
 	for _, m := range s.list {
 		short := m.service + "." + m.name
@@ -143,6 +114,44 @@ func Register(servers ...Server) *Service {
 		}
 	}
 	return s
+}
+
+// addServer registers the methods of all services of srv and counts the short names in candidates.
+func (s *Service) addServer(srv Server, candidates map[string]int) {
+	sv := reflect.ValueOf(srv)
+	services := srv.Descriptor().Services()
+	for i := 0; i < services.Len(); i++ {
+		s.addServiceMethods(sv, services.Get(i), candidates)
+	}
+}
+
+// addServiceMethods registers the methods of one service that sv implements with a valid signature.
+func (s *Service) addServiceMethods(sv reflect.Value, sd protoreflect.ServiceDescriptor, candidates map[string]int) {
+	for j := 0; j < sd.Methods().Len(); j++ {
+		md := sd.Methods().Get(j)
+		fn := sv.MethodByName(string(md.Name()))
+		if !fn.IsValid() {
+			continue
+		}
+
+		m, err := bind(fn, md)
+		if err != nil {
+			logger.Error().Err(err).Field("method", string(sd.FullName())+pathSeparator+string(md.Name())).Msg("skipping method with invalid signature")
+			continue
+		}
+		m.service = string(sd.Name())
+		m.full = string(sd.FullName())
+
+		if _, dup := s.methods[m.full+pathSeparator+m.name]; dup {
+			continue
+		}
+		for _, key := range []string{m.full + nameSeparator + m.name, m.full + pathSeparator + m.name} {
+			s.methods[key] = m
+		}
+
+		candidates[m.service+"."+m.name]++
+		s.list = append(s.list, m)
+	}
 }
 
 // WithFieldNames makes JSON and XML output use field names instead of field numbers.

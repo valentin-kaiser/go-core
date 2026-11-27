@@ -113,7 +113,6 @@ func (e *StandardEvent) formatMessage(msg string) string {
 	var b strings.Builder
 	b.Grow(len(msg) + messageOverheadBytes + fieldOverheadBytes*len(e.fields))
 
-	// Level prefix
 	b.WriteByte('[')
 	b.WriteString(upperLevelName(e.level))
 	b.WriteByte(']')
@@ -124,11 +123,9 @@ func (e *StandardEvent) formatMessage(msg string) string {
 		b.WriteString(callerSuffix)
 	}
 
-	// The main message
 	b.WriteByte(' ')
 	b.WriteString(msg)
 
-	// Package name if set
 	if e.adapter.pkg != "" {
 		b.WriteString(pkgPrefix)
 		b.WriteString(e.adapter.pkg)

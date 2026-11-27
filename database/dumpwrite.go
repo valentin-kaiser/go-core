@@ -191,7 +191,6 @@ func dumpTable(w *bufio.Writer, rows *sql.Rows, columns int, prefix, suffix stri
 		if err != nil {
 			return apperror.NewError("scanning row failed").AddError(err)
 		}
-
 		row = append(row[:0], '(')
 		for i, val := range values {
 			if i > 0 {
@@ -200,7 +199,6 @@ func dumpTable(w *bufio.Writer, rows *sql.Rows, columns int, prefix, suffix stri
 			row = appendValue(row, val)
 		}
 		row = append(row, ')')
-
 		switch inBatch {
 		case 0:
 			_, err = w.WriteString(prefix)
@@ -216,7 +214,6 @@ func dumpTable(w *bufio.Writer, rows *sql.Rows, columns int, prefix, suffix stri
 		if err != nil {
 			return apperror.NewError("writing values failed").AddError(err)
 		}
-
 		inBatch++
 		batchBytes += len(row)
 		if inBatch >= dumpBatchRows || batchBytes >= dumpBatchBytes {
@@ -315,7 +312,6 @@ func (d *Database[Q]) backupMySQL(dbInstance *sql.DB, path string) (err error) {
 		if err != nil {
 			return apperror.NewError("writing table schema failed").AddError(err)
 		}
-
 		dataRows, err := dbInstance.Query(selectAllFrom + quotedTable) //nolint:gosec,unqueryvet // quotedTable is escaped by quoteIdentifier; a dump needs every column
 		if err != nil {
 			d.logger.Warn().Err(err).Field("table", table).Msg("reading table data failed")
@@ -432,12 +428,10 @@ func (d *Database[Q]) backupPostgres(dbInstance *sql.DB, path string, schema str
 		if err != nil {
 			return apperror.NewError("writing table schema failed").AddError(err)
 		}
-
 		quotedTable, err := quoteIdentifier(table, DriverPostgres)
 		if err != nil {
 			return apperror.NewError("quoting table name failed").AddError(err)
 		}
-
 		dataRows, err := dbInstance.Query(selectAllFrom + quotedSchema + "." + quotedTable) //nolint:gosec,unqueryvet // both identifiers are escaped by quoteIdentifier; a dump needs every column
 		if err != nil {
 			d.logger.Warn().Err(err).Field("table", table).Msg("reading table data failed")

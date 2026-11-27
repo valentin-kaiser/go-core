@@ -75,7 +75,6 @@ func NewSecurityManager(config SecurityConfig) *SecurityManager {
 	sm.allowedNetworks = parseNetworks(config.IPAllowlist)
 	sm.blockedNetworks = parseNetworks(config.IPBlocklist)
 
-	// Start cleanup goroutine
 	go sm.cleanup()
 
 	return sm
@@ -90,13 +89,11 @@ func parseNetworks(entries []string) []*net.IPNet {
 			networks = append(networks, network)
 			continue
 		}
-
 		ip := net.ParseIP(entry)
 		if ip == nil {
 			logger.Warn().Err(err).Field("entry", entry).Msg("ignoring invalid ip entry")
 			continue
 		}
-
 		// Single IP address - convert to a /32 or /128 network
 		if ip4 := ip.To4(); ip4 != nil {
 			networks = append(networks, &net.IPNet{IP: ip4, Mask: net.CIDRMask(ipv4Bits, ipv4Bits)})
@@ -125,7 +122,6 @@ func (sm *SecurityManager) ValidateConnection(remoteAddr string) error {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
-	// Check if IP is blocked
 	if sm.isIPBlocked(ip) {
 		if sm.config.LogSecurityEvents {
 			logger.Warn().Field("ip", ip.String()).Msg("connection blocked - IP in blocklist")
@@ -133,7 +129,6 @@ func (sm *SecurityManager) ValidateConnection(remoteAddr string) error {
 		return &SecurityError{Type: "ip_blocked", Message: "ip address is blocked"}
 	}
 
-	// Check if IP is in allowlist (if allowlist is configured)
 	if len(sm.allowedNetworks) > 0 && !sm.isIPAllowed(ip) {
 		if sm.config.LogSecurityEvents {
 			logger.Warn().Field("ip", ip.String()).Msg("connection denied - IP not in allowlist")
@@ -141,7 +136,6 @@ func (sm *SecurityManager) ValidateConnection(remoteAddr string) error {
 		return &SecurityError{Type: "ip_not_allowed", Message: "ip address is not allowed"}
 	}
 
-	// Check connection limits per IP
 	if sm.config.MaxConnectionsPerIP > 0 {
 		currentConnections := sm.ipConnections[ip.String()]
 		if currentConnections >= sm.config.MaxConnectionsPerIP {
@@ -155,7 +149,6 @@ func (sm *SecurityManager) ValidateConnection(remoteAddr string) error {
 		}
 	}
 
-	// Check if IP is blocked due to auth failures
 	if tracker, exists := sm.authFailures[ip.String()]; exists && tracker.blocked {
 		if time.Since(tracker.blockedTime) < sm.config.AuthFailureWindow {
 			if sm.config.LogSecurityEvents {
@@ -163,13 +156,10 @@ func (sm *SecurityManager) ValidateConnection(remoteAddr string) error {
 			}
 			return &SecurityError{Type: "auth_blocked", Message: "ip temporarily blocked due to authentication failures"}
 		}
-
-		// Reset auth failure tracking after window expires
 		tracker.blocked = false
 		tracker.failures = 0
 	}
 
-	// Increment connection count
 	sm.ipConnections[ip.String()]++
 
 	if sm.config.LogSecurityEvents {
@@ -193,7 +183,6 @@ func (sm *SecurityManager) ValidateHelo(hostname, remoteAddr string) error {
 		host = remoteAddr
 	}
 
-	// Basic hostname validation
 	if hostname == "" {
 		if sm.config.LogSecurityEvents {
 			logger.Warn().Field("ip", host).Msg("empty HELO hostname")
@@ -201,7 +190,6 @@ func (sm *SecurityManager) ValidateHelo(hostname, remoteAddr string) error {
 		return &SecurityError{Type: "empty_helo", Message: "helo hostname cannot be empty"}
 	}
 
-	// Check for FQDN requirement
 	if sm.config.HeloRequireFQDN {
 		if !sm.isValidFQDN(hostname) {
 			if sm.config.LogSecurityEvents {
@@ -211,12 +199,9 @@ func (sm *SecurityManager) ValidateHelo(hostname, remoteAddr string) error {
 		}
 	}
 
-	// DNS validation
 	if sm.config.HeloDNSCheck {
 		ctx, cancel := context.WithTimeout(context.Background(), heloDNSTimeout)
 		defer cancel()
-
-		// Try to resolve the hostname
 		_, lookupErr := net.DefaultResolver.LookupIPAddr(ctx, hostname)
 		if lookupErr != nil {
 			if sm.config.LogSecurityEvents {
@@ -296,7 +281,6 @@ func (sm *SecurityManager) RecordAuthFailure(remoteAddr string) {
 		return
 	}
 
-	// Reset window if it's been longer than the auth failure window
 	if now.Sub(tracker.windowStart) > sm.config.AuthFailureWindow {
 		tracker.failures = 1
 		tracker.windowStart = now
@@ -324,7 +308,6 @@ func (sm *SecurityManager) RecordAuthSuccess(remoteAddr string) {
 	sm.mutex.Lock()
 	defer sm.mutex.Unlock()
 
-	// Reset auth failure tracking on successful auth
 	if tracker, exists := sm.authFailures[host]; exists {
 		tracker.failures = 0
 		tracker.blocked = false
@@ -380,22 +363,18 @@ func (sm *SecurityManager) isIPBlocked(ip net.IP) bool {
 
 // isValidFQDN validates if hostname is a proper FQDN
 func (sm *SecurityManager) isValidFQDN(hostname string) bool {
-	// Basic FQDN validation
 	if len(hostname) == 0 || len(hostname) > maxFQDNLength {
 		return false
 	}
 
-	// Must contain at least one dot
 	if !strings.Contains(hostname, ".") {
 		return false
 	}
 
-	// Must not start or end with dot
 	if strings.HasPrefix(hostname, ".") || strings.HasSuffix(hostname, ".") {
 		return false
 	}
 
-	// Validate format using regex
 	return FQDNPattern.MatchString(hostname)
 }
 
@@ -407,21 +386,16 @@ func (sm *SecurityManager) cleanup() {
 	for range ticker.C {
 		sm.mutex.Lock()
 		now := time.Now()
-
-		// Clean up rate limiters
 		for ip, limiter := range sm.ipRateLimit {
 			if time.Since(limiter.last) > rateLimiterIdleTimeout {
 				delete(sm.ipRateLimit, ip)
 			}
 		}
-
-		// Clean up auth trackers
 		for ip, tracker := range sm.authFailures {
 			if now.Sub(tracker.windowStart) > authTrackerWindowFactor*sm.config.AuthFailureWindow {
 				delete(sm.authFailures, ip)
 			}
 		}
-
 		sm.mutex.Unlock()
 	}
 }

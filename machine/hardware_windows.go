@@ -134,7 +134,6 @@ func parseWmicMultipleValues(output, prefix string) []string {
 			value := strings.TrimSpace(after)
 			switch value {
 			case "", placeholderSerial:
-				// Skip empty or placeholder values
 			default:
 				values = append(values, value)
 			}

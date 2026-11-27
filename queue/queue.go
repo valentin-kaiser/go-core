@@ -471,7 +471,6 @@ func (m *Manager) worker(ctx context.Context, workerID int) {
 			if err != nil {
 				continue
 			}
-
 			if job != nil {
 				atomic.AddInt64(&m.stats.WorkersBusy, 1)
 				m.processJob(ctx, job, workerID)
@@ -516,50 +515,7 @@ func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
 
 	err = handler(ctx, job)
 	if err != nil {
-		if retryErr, ok := err.(*RetryableError); ok && job.Attempts < job.MaxAttempts {
-			job.Status = StatusRetrying
-			job.Error = retryErr.Error()
-			job.RetryAt = time.Now().Add(m.calculateRetryDelay(job.Attempts))
-			job.UpdatedAt = time.Now()
-			err = m.queue.UpdateJob(ctx, job)
-			if err != nil {
-				logger.Error().Err(err).Field("job_id", job.ID).Msg("updating job status to retrying failed")
-			}
-			atomic.AddInt64(&m.stats.JobsRetried, 1)
-
-			logger.Debug().
-				Field("job_id", job.ID).
-				Field("job_type", job.Type).
-				Field("retry_delay", m.calculateRetryDelay(job.Attempts).Milliseconds()).
-				Msg("job scheduled for retry")
-
-			// A timer instead of a goroutine that sleeps: nothing is parked while the job waits
-			time.AfterFunc(m.calculateRetryDelay(job.Attempts), func() {
-				job.Status = StatusPending
-				job.RetryAt = time.Time{}
-				enqueueErr := m.queue.Enqueue(ctx, job)
-				if enqueueErr != nil {
-					logger.Error().Err(enqueueErr).Field("job_id", job.ID).Msg("re-enqueueing job for retry failed")
-				}
-			})
-			return
-		}
-
-		job.Status = StatusFailed
-		job.Error = err.Error()
-		job.UpdatedAt = time.Now()
-		updateErr := m.queue.UpdateJob(ctx, job)
-		if updateErr != nil {
-			logger.Error().Err(updateErr).Field("job_id", job.ID).Msg("updating job status to failed failed")
-		}
-		atomic.AddInt64(&m.stats.JobsFailed, 1)
-
-		logger.Error().
-			Err(err).
-			Field("job_id", job.ID).
-			Field("job_type", job.Type).
-			Field("attempt", job.Attempts).
-			Msg("job failed")
+		m.handleJobError(ctx, job, err)
 		return
 	}
 
@@ -579,6 +535,65 @@ func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
 		Msg("job completed successfully")
 }
 
+// handleJobError retries a job that failed with a retryable error as long as attempts are left and fails it otherwise.
+func (m *Manager) handleJobError(ctx context.Context, job *Job, jobErr error) {
+	retryErr, ok := jobErr.(*RetryableError)
+	if ok && job.Attempts < job.MaxAttempts {
+		m.retryJob(ctx, job, retryErr)
+		return
+	}
+
+	m.failJob(ctx, job, jobErr)
+}
+
+// retryJob marks a job for retry and enqueues it again after the retry delay.
+func (m *Manager) retryJob(ctx context.Context, job *Job, retryErr *RetryableError) {
+	job.Status = StatusRetrying
+	job.Error = retryErr.Error()
+	job.RetryAt = time.Now().Add(m.calculateRetryDelay(job.Attempts))
+	job.UpdatedAt = time.Now()
+	err := m.queue.UpdateJob(ctx, job)
+	if err != nil {
+		logger.Error().Err(err).Field("job_id", job.ID).Msg("updating job status to retrying failed")
+	}
+	atomic.AddInt64(&m.stats.JobsRetried, 1)
+
+	logger.Debug().
+		Field("job_id", job.ID).
+		Field("job_type", job.Type).
+		Field("retry_delay", m.calculateRetryDelay(job.Attempts).Milliseconds()).
+		Msg("job scheduled for retry")
+
+	// A timer instead of a goroutine that sleeps: nothing is parked while the job waits
+	time.AfterFunc(m.calculateRetryDelay(job.Attempts), func() {
+		job.Status = StatusPending
+		job.RetryAt = time.Time{}
+		enqueueErr := m.queue.Enqueue(ctx, job)
+		if enqueueErr != nil {
+			logger.Error().Err(enqueueErr).Field("job_id", job.ID).Msg("re-enqueueing job for retry failed")
+		}
+	})
+}
+
+// failJob marks a job as permanently failed.
+func (m *Manager) failJob(ctx context.Context, job *Job, jobErr error) {
+	job.Status = StatusFailed
+	job.Error = jobErr.Error()
+	job.UpdatedAt = time.Now()
+	updateErr := m.queue.UpdateJob(ctx, job)
+	if updateErr != nil {
+		logger.Error().Err(updateErr).Field("job_id", job.ID).Msg("updating job status to failed failed")
+	}
+	atomic.AddInt64(&m.stats.JobsFailed, 1)
+
+	logger.Error().
+		Err(jobErr).
+		Field("job_id", job.ID).
+		Field("job_type", job.Type).
+		Field("attempt", job.Attempts).
+		Msg("job failed")
+}
+
 // calculateRetryDelay calculates the retry delay with exponential backoff
 func (m *Manager) calculateRetryDelay(attempt int) time.Duration {
 	if attempt <= 1 {
@@ -592,9 +607,6 @@ func (m *Manager) calculateRetryDelay(attempt int) time.Duration {
 
 // scheduleProcessor processes scheduled jobs
 func (m *Manager) scheduleProcessor(ctx context.Context) {
-	// scheduledBatchSize is the maximum number of scheduled jobs fetched per tick.
-	const scheduledBatchSize = 100
-
 	for {
 		select {
 		case <-ctx.Done():
@@ -602,23 +614,32 @@ func (m *Manager) scheduleProcessor(ctx context.Context) {
 		case <-m.shutdownChan:
 			return
 		case <-m.scheduleTicker.C:
-			jobs, err := m.queue.GetJobs(ctx, StatusScheduled, scheduledBatchSize)
-			if err != nil {
-				logger.Error().Err(err).Msg("getting scheduled jobs failed")
-				continue
-			}
+			m.enqueueDueScheduledJobs(ctx)
+		}
+	}
+}
 
-			now := time.Now()
-			for _, job := range jobs {
-				if job.ScheduleAt.Before(now) || job.ScheduleAt.Equal(now) {
-					job.Status = StatusPending
-					job.ScheduleAt = time.Time{}
-					enqueueErr := m.queue.Enqueue(ctx, job)
-					if enqueueErr != nil {
-						logger.Error().Err(enqueueErr).Field("job_id", job.ID).Msg("enqueueing scheduled job failed")
-					}
-				}
-			}
+// enqueueDueScheduledJobs moves every scheduled job whose time has come back into the queue.
+func (m *Manager) enqueueDueScheduledJobs(ctx context.Context) {
+	// scheduledBatchSize is the maximum number of scheduled jobs fetched per tick.
+	const scheduledBatchSize = 100
+
+	jobs, err := m.queue.GetJobs(ctx, StatusScheduled, scheduledBatchSize)
+	if err != nil {
+		logger.Error().Err(err).Msg("getting scheduled jobs failed")
+		return
+	}
+
+	now := time.Now()
+	for _, job := range jobs {
+		if job.ScheduleAt.After(now) {
+			continue
+		}
+		job.Status = StatusPending
+		job.ScheduleAt = time.Time{}
+		enqueueErr := m.queue.Enqueue(ctx, job)
+		if enqueueErr != nil {
+			logger.Error().Err(enqueueErr).Field("job_id", job.ID).Msg("enqueueing scheduled job failed")
 		}
 	}
 }

@@ -97,7 +97,6 @@ func (m *languageMatcher) resolve(b *Bundle, accept string) Language {
 	}
 	matched, _, _ := m.matcher.Match(tags...)
 
-	// Convert the matched tag back to our Language type.
 	// Use the base language to normalize (e.g. "en-US" → "en").
 	base, _ := matched.Base()
 	lang := Language(strings.ToLower(base.String()))

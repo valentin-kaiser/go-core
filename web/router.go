@@ -410,7 +410,6 @@ func (router *Router) handleStatusHooks(rw *ResponseWriter, r *http.Request, pat
 		router.mutex.RLock()
 		fn, ok := router.onStatus[matched][rw.status]
 		router.mutex.RUnlock()
-
 		if ok {
 			rw.clear()
 			fn(rw, r)
@@ -638,16 +637,7 @@ func (router *Router) ipInList(ip net.IP, list map[string]*net.IPNet) bool {
 func (router *Router) parseIPList(entries []string) ([]*net.IPNet, error) {
 	var list []*net.IPNet
 	for _, entry := range entries {
-		if !strings.Contains(entry, pathSeparator) {
-			if ip := net.ParseIP(entry); ip != nil {
-				if ip.To4() != nil {
-					entry += ipv4PrefixSuffix // Use /32 for IPv4 addresses
-				}
-				if ip.To4() == nil {
-					entry += ipv6PrefixSuffix // Use /128 for IPv6 addresses
-				}
-			}
-		}
+		entry = withHostPrefix(entry)
 		_, network, err := net.ParseCIDR(entry)
 		if err != nil {
 			return nil, apperror.NewErrorf("parsing CIDR entry '%s' failed", entry).AddError(err)
@@ -655,4 +645,20 @@ func (router *Router) parseIPList(entries []string) ([]*net.IPNet, error) {
 		list = append(list, network)
 	}
 	return list, nil
+}
+
+// withHostPrefix appends the single host prefix (/32 for IPv4, /128 for IPv6) to a plain IP address.
+// Entries that are not a plain IP address are returned unchanged.
+func withHostPrefix(entry string) string {
+	if strings.Contains(entry, pathSeparator) {
+		return entry
+	}
+	ip := net.ParseIP(entry)
+	if ip == nil {
+		return entry
+	}
+	if ip.To4() != nil {
+		return entry + ipv4PrefixSuffix
+	}
+	return entry + ipv6PrefixSuffix
 }
