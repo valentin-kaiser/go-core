@@ -13,17 +13,17 @@ func TestSizeOf(t *testing.T) {
 		expected int64
 		hasError bool
 	}{
-		{"nil value", nil, 0, false},
-		{"string", "hello", 9, false},
-		{"int", 42, 4, false},
-		{"bool", true, 4, false},
-		{"slice", []int{1, 2, 3}, 20, false},
-		{"map", map[string]int{"a": 1, "b": 2}, 26, false},
-		{"struct", struct{ Name string }{Name: "test"}, 32, false},
-		{"nil pointer", (*int)(nil), 0, false},
-		{"nil slice", []int(nil), 0, false},
-		{"nil map", map[string]int(nil), 0, false},
-		{"nil channel", (chan int)(nil), 0, false},
+		{name: "nil value", value: nil, expected: 0, hasError: false},
+		{name: "string", value: "hello", expected: 9, hasError: false},
+		{name: "int", value: 42, expected: 4, hasError: false},
+		{name: "bool", value: true, expected: 4, hasError: false},
+		{name: "slice", value: []int{1, 2, 3}, expected: 20, hasError: false},
+		{name: "map", value: map[string]int{"a": 1, "b": 2}, expected: 26, hasError: false},
+		{name: "struct", value: struct{ Name string }{Name: "test"}, expected: 32, hasError: false},
+		{name: "nil pointer", value: (*int)(nil), expected: 0, hasError: false},
+		{name: "nil slice", value: []int(nil), expected: 0, hasError: false},
+		{name: "nil map", value: map[string]int(nil), expected: 0, hasError: false},
+		{name: "nil channel", value: (chan int)(nil), expected: 0, hasError: false},
 	}
 
 	for _, tc := range testCases {
@@ -84,22 +84,22 @@ func TestToByteString(t *testing.T) {
 		bytes    int64
 		expected string
 	}{
-		{0, "0 B"},
-		{1, "1 B"},
-		{999, "999 B"},
-		{1000, "1.0 kB"},
-		{1024, "1.0 kB"},
-		{1500, "1.5 kB"},
-		{1000000, "1.0 MB"},
-		{1024000, "1.0 MB"},
-		{1500000, "1.5 MB"},
-		{1000000000, "1.0 GB"},
-		{1500000000, "1.5 GB"},
-		{1000000000000, "1.0 TB"},
-		{1500000000000, "1.5 TB"},
-		{1000000000000000, "1.0 PB"},
-		{1500000000000000, "1.5 PB"},
-		{1000000000000000000, "1.0 EB"},
+		{bytes: 0, expected: "0 B"},
+		{bytes: 1, expected: "1 B"},
+		{bytes: 999, expected: "999 B"},
+		{bytes: 1000, expected: "1.0 kB"},
+		{bytes: 1024, expected: "1.0 kB"},
+		{bytes: 1500, expected: "1.5 kB"},
+		{bytes: 1000000, expected: "1.0 MB"},
+		{bytes: 1024000, expected: "1.0 MB"},
+		{bytes: 1500000, expected: "1.5 MB"},
+		{bytes: 1000000000, expected: "1.0 GB"},
+		{bytes: 1500000000, expected: "1.5 GB"},
+		{bytes: 1000000000000, expected: "1.0 TB"},
+		{bytes: 1500000000000, expected: "1.5 TB"},
+		{bytes: 1000000000000000, expected: "1.0 PB"},
+		{bytes: 1500000000000000, expected: "1.5 PB"},
+		{bytes: 1000000000000000000, expected: "1.0 EB"},
 	}
 
 	for _, tc := range testCases {
@@ -116,19 +116,19 @@ func TestInterfaceIsNullPointer(t *testing.T) {
 		value    any
 		expected bool
 	}{
-		{"nil", nil, true},
-		{"nil pointer", (*int)(nil), true},
-		{"nil slice", []int(nil), true},
-		{"nil map", map[string]int(nil), true},
-		{"nil channel", (chan int)(nil), true},
-		{"non-nil pointer", new(int), false},
-		{"non-nil slice", []int{1, 2, 3}, false},
-		{"non-nil map", map[string]int{"a": 1}, false},
-		{"non-nil channel", make(chan int), false},
-		{"string", "hello", false},
-		{"int", 42, false},
-		{"bool", true, false},
-		{"struct", struct{}{}, false},
+		{name: "nil", value: nil, expected: true},
+		{name: "nil pointer", value: (*int)(nil), expected: true},
+		{name: "nil slice", value: []int(nil), expected: true},
+		{name: "nil map", value: map[string]int(nil), expected: true},
+		{name: "nil channel", value: (chan int)(nil), expected: true},
+		{name: "non-nil pointer", value: new(int), expected: false},
+		{name: "non-nil slice", value: []int{1, 2, 3}, expected: false},
+		{name: "non-nil map", value: map[string]int{"a": 1}, expected: false},
+		{name: "non-nil channel", value: make(chan int), expected: false},
+		{name: "string", value: "hello", expected: false},
+		{name: "int", value: 42, expected: false},
+		{name: "bool", value: true, expected: false},
+		{name: "struct", value: struct{}{}, expected: false},
 	}
 
 	for _, tc := range testCases {

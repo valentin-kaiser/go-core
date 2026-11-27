@@ -1,7 +1,6 @@
 package flag_test
 
 import (
-	"os"
 	"testing"
 
 	"github.com/spf13/pflag"
@@ -27,7 +26,9 @@ func TestDefaultFlags(t *testing.T) {
 	}
 }
 
-func TestRegisterFlag(_ *testing.T) {
+func TestRegisterFlag(t *testing.T) {
+	useFreshCommandLine(t)
+
 	// Test registering a string flag
 	var stringFlag string
 	flag.Register("test-string", &stringFlag, "A test string flag")
@@ -76,6 +77,8 @@ func TestRegisterFlag(_ *testing.T) {
 }
 
 func TestRegisterFlagPanics(t *testing.T) {
+	useFreshCommandLine(t)
+
 	// Test that registering a duplicate flag panics
 	var testFlag string
 	flag.Register("unique-flag", &testFlag, "A unique flag")
@@ -89,6 +92,8 @@ func TestRegisterFlagPanics(t *testing.T) {
 }
 
 func TestRegisterFlagNonPointer(t *testing.T) {
+	useFreshCommandLine(t)
+
 	defer func() {
 		if r := recover(); r == nil {
 			t.Error("Expected panic when registering non-pointer flag")
@@ -99,6 +104,8 @@ func TestRegisterFlagNonPointer(t *testing.T) {
 }
 
 func TestRegisterFlagNilPointer(t *testing.T) {
+	useFreshCommandLine(t)
+
 	defer func() {
 		if r := recover(); r == nil {
 			t.Error("Expected panic when registering nil pointer flag")
@@ -109,6 +116,8 @@ func TestRegisterFlagNilPointer(t *testing.T) {
 }
 
 func TestRegisterFlagUnsupportedType(t *testing.T) {
+	useFreshCommandLine(t)
+
 	defer func() {
 		if r := recover(); r == nil {
 			t.Error("Expected panic when registering unsupported type")
@@ -118,13 +127,11 @@ func TestRegisterFlagUnsupportedType(t *testing.T) {
 	flag.Register("unsupported", &testFlag, "An unsupported type flag")
 }
 
-func TestInit(_ *testing.T) {
-	// Save original args
-	originalArgs := os.Args
-	defer func() { os.Args = originalArgs }()
+func TestInit(t *testing.T) {
+	useFreshCommandLine(t)
 
 	// Test normal initialization
-	os.Args = []string{"program"}
+	setArgs(t, "program")
 	flag.Init()
 	// Should not panic or exit
 
@@ -135,7 +142,9 @@ func TestInit(_ *testing.T) {
 }
 
 // Test flag registration with default values
-func TestRegisterFlagWithDefaults(_ *testing.T) {
+func TestRegisterFlagWithDefaults(t *testing.T) {
+	useFreshCommandLine(t)
+
 	var stringFlag = "default"
 	flag.Register("default-string", &stringFlag, "A string flag with default")
 
@@ -150,10 +159,8 @@ func TestRegisterFlagWithDefaults(_ *testing.T) {
 }
 
 // Test integration with actual command line parsing
-func TestCommandLineIntegration(_ *testing.T) {
-	// Save original args
-	originalArgs := os.Args
-	defer func() { os.Args = originalArgs }()
+func TestCommandLineIntegration(t *testing.T) {
+	useFreshCommandLine(t)
 
 	// Test with command line arguments
 	var testString string
@@ -165,12 +172,12 @@ func TestCommandLineIntegration(_ *testing.T) {
 	flag.Register("integration-bool", &testBool, "Integration test bool")
 
 	// Simulate command line arguments
-	os.Args = []string{
+	setArgs(t,
 		"program",
 		"--integration-string=hello",
 		"--integration-int=123",
 		"--integration-bool=true",
-	}
+	)
 
 	flag.Init()
 
@@ -179,7 +186,9 @@ func TestCommandLineIntegration(_ *testing.T) {
 }
 
 // Test that flags are properly bound to pflag
-func TestFlagBinding(_ *testing.T) {
+func TestFlagBinding(t *testing.T) {
+	useFreshCommandLine(t)
+
 	var testFlag string
 	flag.Register("binding-test", &testFlag, "A binding test flag")
 
@@ -188,12 +197,7 @@ func TestFlagBinding(_ *testing.T) {
 }
 
 func TestOverrideFlag(t *testing.T) {
-	// Save and restore the original command line
-	originalCommandLine := pflag.CommandLine
-	defer func() { pflag.CommandLine = originalCommandLine }()
-
-	// Create a fresh command line for this test
-	pflag.CommandLine = pflag.NewFlagSet("", pflag.ContinueOnError)
+	useFreshCommandLine(t)
 
 	// First register a flag
 	var originalFlag = "original"
@@ -220,12 +224,7 @@ func TestOverrideFlag(t *testing.T) {
 }
 
 func TestOverrideFlagPanics(t *testing.T) {
-	// Save and restore the original command line
-	originalCommandLine := pflag.CommandLine
-	defer func() { pflag.CommandLine = originalCommandLine }()
-
-	// Create a fresh command line for this test
-	pflag.CommandLine = pflag.NewFlagSet("", pflag.ContinueOnError)
+	useFreshCommandLine(t)
 
 	// Test that overriding a non-existent flag panics
 	defer func() {
@@ -238,12 +237,7 @@ func TestOverrideFlagPanics(t *testing.T) {
 }
 
 func TestOverrideFlagNonPointer(t *testing.T) {
-	// Save and restore the original command line
-	originalCommandLine := pflag.CommandLine
-	defer func() { pflag.CommandLine = originalCommandLine }()
-
-	// Create a fresh command line for this test
-	pflag.CommandLine = pflag.NewFlagSet("", pflag.ContinueOnError)
+	useFreshCommandLine(t)
 
 	// First register a flag to override
 	var originalFlag string
@@ -259,12 +253,7 @@ func TestOverrideFlagNonPointer(t *testing.T) {
 }
 
 func TestOverrideFlagNilPointer(t *testing.T) {
-	// Save and restore the original command line
-	originalCommandLine := pflag.CommandLine
-	defer func() { pflag.CommandLine = originalCommandLine }()
-
-	// Create a fresh command line for this test
-	pflag.CommandLine = pflag.NewFlagSet("", pflag.ContinueOnError)
+	useFreshCommandLine(t)
 
 	// First register a flag to override
 	var originalFlag string
@@ -280,12 +269,7 @@ func TestOverrideFlagNilPointer(t *testing.T) {
 }
 
 func TestOverrideFlagAfterParse(t *testing.T) {
-	// Save and restore the original command line
-	originalCommandLine := pflag.CommandLine
-	defer func() { pflag.CommandLine = originalCommandLine }()
-
-	// Create a fresh command line for this test
-	pflag.CommandLine = pflag.NewFlagSet("", pflag.ContinueOnError)
+	useFreshCommandLine(t)
 
 	// Register a flag and parse
 	var originalFlag string
@@ -304,12 +288,7 @@ func TestOverrideFlagAfterParse(t *testing.T) {
 }
 
 func TestOverrideUnsupportedType(t *testing.T) {
-	// Save and restore the original command line
-	originalCommandLine := pflag.CommandLine
-	defer func() { pflag.CommandLine = originalCommandLine }()
-
-	// Create a fresh command line for this test
-	pflag.CommandLine = pflag.NewFlagSet("", pflag.ContinueOnError)
+	useFreshCommandLine(t)
 
 	// First register a flag to override
 	var originalFlag string
@@ -325,12 +304,7 @@ func TestOverrideUnsupportedType(t *testing.T) {
 }
 
 func TestUnregisterFlag(t *testing.T) {
-	// Save and restore the original command line
-	originalCommandLine := pflag.CommandLine
-	defer func() { pflag.CommandLine = originalCommandLine }()
-
-	// Create a fresh command line for this test
-	pflag.CommandLine = pflag.NewFlagSet("", pflag.ContinueOnError)
+	useFreshCommandLine(t)
 
 	// Register a flag to unregister
 	var testFlag string
@@ -352,12 +326,7 @@ func TestUnregisterFlag(t *testing.T) {
 }
 
 func TestUnregisterFlagPanics(t *testing.T) {
-	// Save and restore the original command line
-	originalCommandLine := pflag.CommandLine
-	defer func() { pflag.CommandLine = originalCommandLine }()
-
-	// Create a fresh command line for this test
-	pflag.CommandLine = pflag.NewFlagSet("", pflag.ContinueOnError)
+	useFreshCommandLine(t)
 
 	// Test that unregistering a non-existent flag panics
 	defer func() {
@@ -369,12 +338,7 @@ func TestUnregisterFlagPanics(t *testing.T) {
 }
 
 func TestUnregisterFlagAfterParse(t *testing.T) {
-	// Save and restore the original command line
-	originalCommandLine := pflag.CommandLine
-	defer func() { pflag.CommandLine = originalCommandLine }()
-
-	// Create a fresh command line for this test
-	pflag.CommandLine = pflag.NewFlagSet("", pflag.ContinueOnError)
+	useFreshCommandLine(t)
 
 	// Register a flag and parse
 	var testFlag string
@@ -392,12 +356,7 @@ func TestUnregisterFlagAfterParse(t *testing.T) {
 }
 
 func TestUnregisterMultipleFlags(t *testing.T) {
-	// Save and restore the original command line
-	originalCommandLine := pflag.CommandLine
-	defer func() { pflag.CommandLine = originalCommandLine }()
-
-	// Create a fresh command line for this test
-	pflag.CommandLine = pflag.NewFlagSet("", pflag.ContinueOnError)
+	useFreshCommandLine(t)
 
 	// Register multiple flags
 	var flag1, flag2, flag3 string

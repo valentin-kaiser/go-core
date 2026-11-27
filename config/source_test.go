@@ -6,9 +6,9 @@ import (
 	"maps"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/valentin-kaiser/go-core/config"
+	"github.com/valentin-kaiser/go-core/internal/await"
 )
 
 // mockSource is an in-memory config.Source used to verify the manager's
@@ -43,7 +43,7 @@ func (m *mockSource) Load(_ context.Context) (map[string]any, error) {
 	return out, nil
 }
 
-func (m *mockSource) Save(_ context.Context, c config.Config) error {
+func (m *mockSource) Save(_ context.Context, _ config.Config) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.readOnly {
@@ -52,7 +52,6 @@ func (m *mockSource) Save(_ context.Context, c config.Config) error {
 	m.saveCount++
 	// Pretend we serialised; for our tests we only need to clear notFound.
 	m.notFound = false
-	_ = c
 	return nil
 }
 
@@ -98,7 +97,7 @@ func (c *sourceTestConfig) Validate() error {
 
 func TestWithSourceLoadsFromSource(t *testing.T) {
 	config.Reset()
-	defer config.Reset()
+	t.Cleanup(config.Reset)
 
 	src := newMockSource("mock")
 	src.setValue("name", "from-source")
@@ -125,7 +124,7 @@ func TestWithSourceLoadsFromSource(t *testing.T) {
 
 func TestWithSourceBootstrapsOnNotFound(t *testing.T) {
 	config.Reset()
-	defer config.Reset()
+	t.Cleanup(config.Reset)
 
 	src := newMockSource("mock")
 	src.notFound = true
@@ -149,7 +148,7 @@ func TestWithSourceBootstrapsOnNotFound(t *testing.T) {
 
 func TestWithOverlayMergesOnTopOfBase(t *testing.T) {
 	config.Reset()
-	defer config.Reset()
+	t.Cleanup(config.Reset)
 
 	base := newMockSource("base")
 	base.setValue("name", "from-base")
@@ -182,7 +181,7 @@ func TestWithOverlayMergesOnTopOfBase(t *testing.T) {
 
 func TestStartWatchTriggersReload(t *testing.T) {
 	config.Reset()
-	defer config.Reset()
+	t.Cleanup(config.Reset)
 
 	src := newMockSource("mock")
 	src.setValue("name", "v1")
@@ -207,26 +206,21 @@ func TestStartWatchTriggersReload(t *testing.T) {
 		return nil
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	err = config.StartWatch(ctx)
 	if err != nil {
 		t.Fatalf("StartWatch: %v", err)
 	}
-	defer config.StopWatch()
+	t.Cleanup(config.StopWatch)
 
 	src.setValue("name", "v2")
 
-	select {
-	case n := <-changed:
-		got, ok := n.(*sourceTestConfig)
-		if !ok {
-			t.Fatalf("OnChange received %T", n)
-		}
-		if got.Name != "v2" {
-			t.Fatalf("expected name=v2 after watch, got %q", got.Name)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("OnChange was not invoked after watch event")
+	n := await.Receive(t, changed, watchTimeout, "OnChange after the watch event")
+	got, ok := n.(*sourceTestConfig)
+	if !ok {
+		t.Fatalf("OnChange received %T", n)
+	}
+	if got.Name != "v2" {
+		t.Fatalf("expected name=v2 after watch, got %q", got.Name)
 	}
 }

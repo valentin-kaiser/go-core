@@ -120,16 +120,16 @@ func TestIsSemver(t *testing.T) {
 		tag      string
 		expected bool
 	}{
-		{"v1.2.3", true},
-		{"v0.0.1", true},
-		{"v10.20.30", true},
-		{"1.2.3", false},
-		{"v1.2", false},
-		{"v1.2.3.4", false},    // This is not valid semantic versioning
-		{"v1.2.3-alpha", true}, // Pre-release is valid
-		{"v1.2.3+build", true}, // Build metadata is valid
-		{"invalid", false},
-		{"", false},
+		{tag: "v1.2.3", expected: true},
+		{tag: "v0.0.1", expected: true},
+		{tag: "v10.20.30", expected: true},
+		{tag: "1.2.3", expected: false},
+		{tag: "v1.2", expected: false},
+		{tag: "v1.2.3.4", expected: false},    // This is not valid semantic versioning
+		{tag: "v1.2.3-alpha", expected: true}, // Pre-release is valid
+		{tag: "v1.2.3+build", expected: true}, // Build metadata is valid
+		{tag: "invalid", expected: false},
+		{tag: "", expected: false},
 	}
 
 	for _, tc := range testCases {
@@ -146,12 +146,12 @@ func TestParseSemver(t *testing.T) {
 		segment  int
 		expected int
 	}{
-		{"v1.2.3", 0, 1},
-		{"v1.2.3", 1, 2},
-		{"v1.2.3", 2, 3},
-		{"v1.2.3", 3, 0},  // out of range
-		{"invalid", 0, 0}, // invalid tag
-		{"v1.2", 2, 0},    // insufficient segments
+		{tag: "v1.2.3", segment: 0, expected: 1},
+		{tag: "v1.2.3", segment: 1, expected: 2},
+		{tag: "v1.2.3", segment: 2, expected: 3},
+		{tag: "v1.2.3", segment: 3, expected: 0},  // out of range
+		{tag: "invalid", segment: 0, expected: 0}, // invalid tag
+		{tag: "v1.2", segment: 2, expected: 0},    // insufficient segments
 	}
 
 	for _, tc := range testCases {
@@ -167,10 +167,10 @@ func TestExtractSemanticVersion(t *testing.T) {
 		tag      string
 		expected string
 	}{
-		{"v1.2.3", "1.2.3"},
-		{"v1.2.3-alpha", "1.2.3"},
-		{"invalid", ""},
-		{"", ""},
+		{tag: "v1.2.3", expected: "1.2.3"},
+		{tag: "v1.2.3-alpha", expected: "1.2.3"},
+		{tag: "invalid", expected: ""},
+		{tag: "", expected: ""},
 	}
 
 	for _, tc := range testCases {
@@ -239,17 +239,24 @@ func TestVersionCompareCommit(t *testing.T) {
 	}
 }
 
+const (
+	validBuildDate = "2024-01-01"
+	validGoVersion = "go1.21"
+	validPlatform  = "linux/amd64"
+	validCommit    = "abc123"
+)
+
 func TestVersionValidate(t *testing.T) {
 	v := &version.Release{}
 
 	// Test valid version
 	validVersion := &version.Release{
 		GitTag:    "v1.2.3",
-		GitCommit: "abc123",
+		GitCommit: validCommit,
 		GitShort:  "abc",
-		BuildDate: "2024-01-01",
-		GoVersion: "go1.21",
-		Platform:  "linux/amd64",
+		BuildDate: validBuildDate,
+		GoVersion: validGoVersion,
+		Platform:  validPlatform,
 	}
 
 	err := v.Validate(validVersion)
@@ -262,12 +269,12 @@ func TestVersionValidate(t *testing.T) {
 		name    string
 		version *version.Release
 	}{
-		{"empty tag", &version.Release{GitTag: "", GitCommit: "abc", GitShort: "abc", BuildDate: "2024-01-01", GoVersion: "go1.21", Platform: "linux/amd64"}},
-		{"empty commit", &version.Release{GitTag: "v1.2.3", GitCommit: "", GitShort: "abc", BuildDate: "2024-01-01", GoVersion: "go1.21", Platform: "linux/amd64"}},
-		{"empty short", &version.Release{GitTag: "v1.2.3", GitCommit: "abc123", GitShort: "", BuildDate: "2024-01-01", GoVersion: "go1.21", Platform: "linux/amd64"}},
-		{"empty build date", &version.Release{GitTag: "v1.2.3", GitCommit: "abc123", GitShort: "abc", BuildDate: "", GoVersion: "go1.21", Platform: "linux/amd64"}},
-		{"empty go version", &version.Release{GitTag: "v1.2.3", GitCommit: "abc123", GitShort: "abc", BuildDate: "2024-01-01", GoVersion: "", Platform: "linux/amd64"}},
-		{"empty platform", &version.Release{GitTag: "v1.2.3", GitCommit: "abc123", GitShort: "abc", BuildDate: "2024-01-01", GoVersion: "go1.21", Platform: ""}},
+		{name: "empty tag", version: &version.Release{GitTag: "", GitCommit: "abc", GitShort: "abc", BuildDate: validBuildDate, GoVersion: validGoVersion, Platform: validPlatform}},
+		{name: "empty commit", version: &version.Release{GitTag: "v1.2.3", GitCommit: "", GitShort: "abc", BuildDate: validBuildDate, GoVersion: validGoVersion, Platform: validPlatform}},
+		{name: "empty short", version: &version.Release{GitTag: "v1.2.3", GitCommit: validCommit, GitShort: "", BuildDate: validBuildDate, GoVersion: validGoVersion, Platform: validPlatform}},
+		{name: "empty build date", version: &version.Release{GitTag: "v1.2.3", GitCommit: validCommit, GitShort: "abc", BuildDate: "", GoVersion: validGoVersion, Platform: validPlatform}},
+		{name: "empty go version", version: &version.Release{GitTag: "v1.2.3", GitCommit: validCommit, GitShort: "abc", BuildDate: validBuildDate, GoVersion: "", Platform: validPlatform}},
+		{name: "empty platform", version: &version.Release{GitTag: "v1.2.3", GitCommit: validCommit, GitShort: "abc", BuildDate: validBuildDate, GoVersion: validGoVersion, Platform: ""}},
 	}
 
 	for _, tc := range testCases {
@@ -285,13 +292,13 @@ func TestDetectVersionFormat(t *testing.T) {
 		tag      string
 		expected version.Format
 	}{
-		{"v1.2.3", version.FormatSemVer},
-		{"v2024.10.02", version.FormatCalVerYYYYMMDD},
-		{"v24.10.123", version.FormatCalVerYYMMMICRO},
-		{"v2024.42", version.FormatCalVerYYYYWW},
-		{"v2024.10.02.456", version.FormatCalVerYYYYMMDDMICRO},
-		{"invalid", version.FormatUnknown},
-		{"", version.FormatUnknown},
+		{tag: "v1.2.3", expected: version.FormatSemVer},
+		{tag: "v2024.10.02", expected: version.FormatCalVerYYYYMMDD},
+		{tag: "v24.10.123", expected: version.FormatCalVerYYMMMICRO},
+		{tag: "v2024.42", expected: version.FormatCalVerYYYYWW},
+		{tag: "v2024.10.02.456", expected: version.FormatCalVerYYYYMMDDMICRO},
+		{tag: "invalid", expected: version.FormatUnknown},
+		{tag: "", expected: version.FormatUnknown},
 	}
 
 	for _, tc := range testCases {
@@ -307,12 +314,12 @@ func TestVersionFormatString(t *testing.T) {
 		format   version.Format
 		expected string
 	}{
-		{version.FormatSemVer, "semantic"},
-		{version.FormatCalVerYYYYMMDD, "calver-yyyy.mm.dd"},
-		{version.FormatCalVerYYMMMICRO, "calver-yy.mm.micro"},
-		{version.FormatCalVerYYYYWW, "calver-yyyy.ww"},
-		{version.FormatCalVerYYYYMMDDMICRO, "calver-yyyy.mm.dd.micro"},
-		{version.FormatUnknown, "unknown"},
+		{format: version.FormatSemVer, expected: "semantic"},
+		{format: version.FormatCalVerYYYYMMDD, expected: "calver-yyyy.mm.dd"},
+		{format: version.FormatCalVerYYMMMICRO, expected: "calver-yy.mm.micro"},
+		{format: version.FormatCalVerYYYYWW, expected: "calver-yyyy.ww"},
+		{format: version.FormatCalVerYYYYMMDDMICRO, expected: "calver-yyyy.mm.dd.micro"},
+		{format: version.FormatUnknown, expected: "unknown"},
 	}
 
 	for _, tc := range testCases {
@@ -334,12 +341,12 @@ func TestParseVersion(t *testing.T) {
 		expectedMinor int
 		expectedPatch int
 	}{
-		{"v1.2.3", false, 0, 0, 0, 1, 2, 3},
-		{"v2024.10.02", false, 2024, 10, 2, 0, 0, 0},
-		{"v24.10.123", false, 24, 10, 0, 0, 0, 0},
-		{"v2024.42", false, 2024, 0, 0, 0, 0, 0},
-		{"v2024.10.02.456", false, 2024, 10, 2, 0, 0, 0},
-		{"invalid", true, 0, 0, 0, 0, 0, 0},
+		{tag: "v1.2.3", expectError: false, expectedYear: 0, expectedMonth: 0, expectedDay: 0, expectedMajor: 1, expectedMinor: 2, expectedPatch: 3},
+		{tag: "v2024.10.02", expectError: false, expectedYear: 2024, expectedMonth: 10, expectedDay: 2, expectedMajor: 0, expectedMinor: 0, expectedPatch: 0},
+		{tag: "v24.10.123", expectError: false, expectedYear: 24, expectedMonth: 10, expectedDay: 0, expectedMajor: 0, expectedMinor: 0, expectedPatch: 0},
+		{tag: "v2024.42", expectError: false, expectedYear: 2024, expectedMonth: 0, expectedDay: 0, expectedMajor: 0, expectedMinor: 0, expectedPatch: 0},
+		{tag: "v2024.10.02.456", expectError: false, expectedYear: 2024, expectedMonth: 10, expectedDay: 2, expectedMajor: 0, expectedMinor: 0, expectedPatch: 0},
+		{tag: "invalid", expectError: true, expectedYear: 0, expectedMonth: 0, expectedDay: 0, expectedMajor: 0, expectedMinor: 0, expectedPatch: 0},
 	}
 
 	for _, tc := range testCases {
@@ -382,14 +389,14 @@ func TestIsValidVersion(t *testing.T) {
 		tag      string
 		expected bool
 	}{
-		{"v1.2.3", true},
-		{"v2024.10.02", true},
-		{"v24.10.123", true},
-		{"v2024.42", true},
-		{"v2024.10.02.456", true},
-		{"invalid", false},
-		{"", false},
-		{"1.2.3", false}, // missing 'v' prefix for semver
+		{tag: "v1.2.3", expected: true},
+		{tag: "v2024.10.02", expected: true},
+		{tag: "v24.10.123", expected: true},
+		{tag: "v2024.42", expected: true},
+		{tag: "v2024.10.02.456", expected: true},
+		{tag: "invalid", expected: false},
+		{tag: "", expected: false},
+		{tag: "1.2.3", expected: false}, // missing 'v' prefix for semver
 	}
 
 	for _, tc := range testCases {
@@ -408,26 +415,26 @@ func TestCompareVersions(t *testing.T) {
 		hasError bool
 	}{
 		// SemVer comparisons
-		{"v1.2.3", "v1.2.3", 0, false},
-		{"v1.2.3", "v1.2.4", -1, false},
-		{"v1.2.4", "v1.2.3", 1, false},
-		{"v1.3.0", "v1.2.9", 1, false},
-		{"v2.0.0", "v1.9.9", 1, false},
+		{tag1: "v1.2.3", tag2: "v1.2.3", expected: 0, hasError: false},
+		{tag1: "v1.2.3", tag2: "v1.2.4", expected: -1, hasError: false},
+		{tag1: "v1.2.4", tag2: "v1.2.3", expected: 1, hasError: false},
+		{tag1: "v1.3.0", tag2: "v1.2.9", expected: 1, hasError: false},
+		{tag1: "v2.0.0", tag2: "v1.9.9", expected: 1, hasError: false},
 
 		// CalVer YYYY.MM.DD comparisons
-		{"v2024.10.02", "v2024.10.02", 0, false},
-		{"v2024.10.01", "v2024.10.02", -1, false},
-		{"v2024.10.02", "v2024.10.01", 1, false},
-		{"v2024.11.01", "v2024.10.31", 1, false},
-		{"v2025.01.01", "v2024.12.31", 1, false},
+		{tag1: "v2024.10.02", tag2: "v2024.10.02", expected: 0, hasError: false},
+		{tag1: "v2024.10.01", tag2: "v2024.10.02", expected: -1, hasError: false},
+		{tag1: "v2024.10.02", tag2: "v2024.10.01", expected: 1, hasError: false},
+		{tag1: "v2024.11.01", tag2: "v2024.10.31", expected: 1, hasError: false},
+		{tag1: "v2025.01.01", tag2: "v2024.12.31", expected: 1, hasError: false},
 
 		// Different formats should error
-		{"v1.2.3", "v2024.10.02", 0, true},
-		{"v2024.10.02", "v24.10.123", 0, true},
+		{tag1: "v1.2.3", tag2: "v2024.10.02", expected: 0, hasError: true},
+		{tag1: "v2024.10.02", tag2: "v24.10.123", expected: 0, hasError: true},
 
 		// Invalid versions should error
-		{"invalid", "v1.2.3", 0, true},
-		{"v1.2.3", "invalid", 0, true},
+		{tag1: "invalid", tag2: "v1.2.3", expected: 0, hasError: true},
+		{tag1: "v1.2.3", tag2: "invalid", expected: 0, hasError: true},
 	}
 
 	for _, tc := range testCases {
@@ -455,12 +462,12 @@ func TestGetVersionComponents(t *testing.T) {
 		tag         string
 		expectError bool
 	}{
-		{"v1.2.3", false},
-		{"v2024.10.02", false},
-		{"v24.10.123", false},
-		{"v2024.42", false},
-		{"v2024.10.02.456", false},
-		{"invalid", true},
+		{tag: "v1.2.3", expectError: false},
+		{tag: "v2024.10.02", expectError: false},
+		{tag: "v24.10.123", expectError: false},
+		{tag: "v2024.42", expectError: false},
+		{tag: "v2024.10.02.456", expectError: false},
+		{tag: "invalid", expectError: true},
 	}
 
 	for _, tc := range testCases {
@@ -526,21 +533,21 @@ func TestCalVerFormats(t *testing.T) {
 		function func(string) bool
 		expected bool
 	}{
-		{"v2024.10.02", version.IsCalVerYYYYMMDD, true},
-		{"2024.10.02", version.IsCalVerYYYYMMDD, true},
-		{"v1.2.3", version.IsCalVerYYYYMMDD, false},
+		{tag: "v2024.10.02", function: version.IsCalVerYYYYMMDD, expected: true},
+		{tag: "2024.10.02", function: version.IsCalVerYYYYMMDD, expected: true},
+		{tag: "v1.2.3", function: version.IsCalVerYYYYMMDD, expected: false},
 
-		{"v24.10.123", version.IsCalVerYYMMMICRO, true},
-		{"24.10.123", version.IsCalVerYYMMMICRO, true},
-		{"v1.2.3", version.IsCalVerYYMMMICRO, false},
+		{tag: "v24.10.123", function: version.IsCalVerYYMMMICRO, expected: true},
+		{tag: "24.10.123", function: version.IsCalVerYYMMMICRO, expected: true},
+		{tag: "v1.2.3", function: version.IsCalVerYYMMMICRO, expected: false},
 
-		{"v2024.42", version.IsCalVerYYYYWW, true},
-		{"2024.42", version.IsCalVerYYYYWW, true},
-		{"v1.2.3", version.IsCalVerYYYYWW, false},
+		{tag: "v2024.42", function: version.IsCalVerYYYYWW, expected: true},
+		{tag: "2024.42", function: version.IsCalVerYYYYWW, expected: true},
+		{tag: "v1.2.3", function: version.IsCalVerYYYYWW, expected: false},
 
-		{"v2024.10.02.456", version.IsCalVerYYYYMMDDMICRO, true},
-		{"2024.10.02.456", version.IsCalVerYYYYMMDDMICRO, true},
-		{"v1.2.3", version.IsCalVerYYYYMMDDMICRO, false},
+		{tag: "v2024.10.02.456", function: version.IsCalVerYYYYMMDDMICRO, expected: true},
+		{tag: "2024.10.02.456", function: version.IsCalVerYYYYMMDDMICRO, expected: true},
+		{tag: "v1.2.3", function: version.IsCalVerYYYYMMDDMICRO, expected: false},
 	}
 
 	for _, tc := range testCases {

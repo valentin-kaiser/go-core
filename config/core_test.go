@@ -8,10 +8,22 @@ import (
 	"runtime"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/valentin-kaiser/go-core/config"
 	"github.com/valentin-kaiser/go-core/flag"
+)
+
+const (
+	testAppName        = "test-app"
+	testPort           = 8080
+	testDatabaseURL    = "sqlite:///test.db"
+	updatedAppName     = "updated-app"
+	updatedPort        = 9090
+	updatedDatabaseURL = "postgres://localhost"
+	dirMode            = 0o750
+	fileMode           = 0o600
+	concurrentWorkers  = 10
+	sequentialWrites   = 5
 )
 
 // TestConfig implements the Config interface for testing
@@ -50,10 +62,10 @@ func TestRegisterBasic(t *testing.T) {
 
 	// Test valid config (should pass)
 	cfg := &TestConfig{
-		ApplicationName: "test-app",
-		ServerPort:      8080,
+		ApplicationName: testAppName,
+		ServerPort:      testPort,
 		EnableVerbose:   false,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	err = config.Manager().WithName("test-valid").Register(cfg)
@@ -64,10 +76,10 @@ func TestRegisterBasic(t *testing.T) {
 
 func TestConfigValidation(t *testing.T) {
 	cfg := &TestConfig{
-		ApplicationName: "test-app",
-		ServerPort:      8080,
+		ApplicationName: testAppName,
+		ServerPort:      testPort,
 		EnableVerbose:   false,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	// Test valid config
@@ -101,7 +113,7 @@ func TestConfigValidation(t *testing.T) {
 
 func TestConfigWithErrorValidation(t *testing.T) {
 	cfg := &TestConfigWithError{
-		ApplicationName: "test-app",
+		ApplicationName: testAppName,
 	}
 
 	err := cfg.Validate()
@@ -127,15 +139,11 @@ func TestFileOperations(t *testing.T) {
 	// Create a temporary directory for testing
 	tempDir := t.TempDir()
 
-	// Save original flag.Path
-	originalPath := flag.Path
-	defer func() { flag.Path = originalPath }()
-
-	flag.Path = tempDir
+	setFlagPath(t, tempDir)
 
 	// Test that the temp directory exists
 	_, err := os.Stat(tempDir)
-	if os.IsNotExist(err) {
+	if err != nil {
 		t.Errorf("Temp directory %s does not exist", tempDir)
 	}
 
@@ -146,14 +154,14 @@ func TestFileOperations(t *testing.T) {
 
 	// Test creating directory structure
 	subDir := filepath.Join(tempDir, "subdir")
-	err = os.MkdirAll(subDir, 0750)
+	err = os.MkdirAll(subDir, dirMode)
 	if err != nil {
 		t.Errorf("Failed to create subdirectory: %v", err)
 	}
 
 	// Test file creation
 	testFile := filepath.Join(tempDir, "test.yaml")
-	err = os.WriteFile(testFile, []byte("test: value"), 0600)
+	err = os.WriteFile(testFile, []byte("test: value"), fileMode)
 	if err != nil {
 		t.Errorf("Failed to create test file: %v", err)
 	}
@@ -190,10 +198,10 @@ func TestPackageConstants(_ *testing.T) {
 
 // Test concurrent access safety
 func TestConcurrentAccess(_ *testing.T) {
-	done := make(chan bool, 10)
+	done := make(chan bool, concurrentWorkers)
 
 	// Test concurrent Get operations
-	for range 10 {
+	for range concurrentWorkers {
 		go func() {
 			defer func() { done <- true }()
 			config := config.Get()
@@ -202,7 +210,7 @@ func TestConcurrentAccess(_ *testing.T) {
 	}
 
 	// Wait for all goroutines to complete
-	for range 10 {
+	for range concurrentWorkers {
 		<-done
 	}
 }
@@ -210,10 +218,10 @@ func TestConcurrentAccess(_ *testing.T) {
 // Test that the config structs work with YAML tags
 func TestYAMLTags(t *testing.T) {
 	cfg := &TestConfig{
-		ApplicationName: "test-app",
-		ServerPort:      8080,
+		ApplicationName: testAppName,
+		ServerPort:      testPort,
 		EnableVerbose:   true,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	// The actual YAML marshaling is handled by the config package
@@ -222,7 +230,7 @@ func TestYAMLTags(t *testing.T) {
 		t.Error("ApplicationName field not properly set")
 	}
 
-	if cfg.ServerPort != 8080 {
+	if cfg.ServerPort != testPort {
 		t.Error("ServerPort field not properly set")
 	}
 
@@ -230,7 +238,7 @@ func TestYAMLTags(t *testing.T) {
 		t.Error("EnableVerbose field not properly set")
 	}
 
-	if cfg.DatabaseURL != "sqlite:///test.db" {
+	if cfg.DatabaseURL != testDatabaseURL {
 		t.Error("DatabaseURL field not properly set")
 	}
 }
@@ -249,7 +257,7 @@ func TestUsageTags(t *testing.T) {
 
 	// Test with valid values
 	cfg.ApplicationName = "test"
-	cfg.ServerPort = 8080
+	cfg.ServerPort = testPort
 	err = cfg.Validate()
 	if err != nil {
 		t.Errorf("Valid config should pass validation: %v", err)
@@ -505,15 +513,13 @@ func TestRegisterWithComplexTypes(t *testing.T) {
 
 func TestReadConfigFileOperations(t *testing.T) {
 	tempDir := t.TempDir()
-	originalPath := flag.Path
-	defer func() { flag.Path = originalPath }()
-	flag.Path = tempDir
+	setFlagPath(t, tempDir)
 
 	cfg := &TestConfig{
-		ApplicationName: "test-app",
-		ServerPort:      8080,
+		ApplicationName: testAppName,
+		ServerPort:      testPort,
 		EnableVerbose:   true,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	err := config.Manager().WithName("read-test").Register(cfg)
@@ -530,7 +536,7 @@ func TestReadConfigFileOperations(t *testing.T) {
 	// Verify config file was created
 	configPath := filepath.Join(tempDir, "read-test.yaml")
 	_, err = os.Stat(configPath)
-	if os.IsNotExist(err) {
+	if err != nil {
 		t.Error("Config file should have been created")
 	}
 
@@ -542,18 +548,16 @@ func TestReadConfigFileOperations(t *testing.T) {
 }
 
 func TestWriteConfig(t *testing.T) {
-	defer config.Reset() // Ensure clean state for other tests
+	t.Cleanup(config.Reset)
 
 	tempDir := t.TempDir()
-	originalPath := flag.Path
-	defer func() { flag.Path = originalPath }()
-	flag.Path = tempDir
+	setFlagPath(t, tempDir)
 
 	cfg := &TestConfig{
-		ApplicationName: "test-app",
-		ServerPort:      8080,
+		ApplicationName: testAppName,
+		ServerPort:      testPort,
 		EnableVerbose:   true,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	err := config.Manager().WithPath(tempDir).WithName("write-test").Register(cfg)
@@ -563,10 +567,10 @@ func TestWriteConfig(t *testing.T) {
 
 	// Test Write() with valid config
 	newCfg := &TestConfig{
-		ApplicationName: "updated-app",
-		ServerPort:      9090,
+		ApplicationName: updatedAppName,
+		ServerPort:      updatedPort,
 		EnableVerbose:   false,
-		DatabaseURL:     "postgres://localhost",
+		DatabaseURL:     updatedDatabaseURL,
 	}
 
 	err = config.Write(newCfg)
@@ -579,24 +583,24 @@ func TestWriteConfig(t *testing.T) {
 	if !ok {
 		t.Fatal("Expected config to be *TestConfig")
 	}
-	if current.ApplicationName != "updated-app" {
+	if current.ApplicationName != updatedAppName {
 		t.Error("Write() should have updated the in-memory config")
 	}
 
 	// Verify the file was written correctly
 	configFile := filepath.Join(tempDir, "write-test.yaml")
 	_, err = os.Stat(configFile)
-	if os.IsNotExist(err) {
+	if err != nil {
 		t.Error("Write() should have created the config file")
 	}
 }
 
 func TestWriteConfigWithInvalidConfig(t *testing.T) {
 	cfg := &TestConfig{
-		ApplicationName: "test-app",
-		ServerPort:      8080,
+		ApplicationName: testAppName,
+		ServerPort:      testPort,
 		EnableVerbose:   true,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	err := config.Manager().WithName("write-invalid-test").Register(cfg)
@@ -607,9 +611,9 @@ func TestWriteConfigWithInvalidConfig(t *testing.T) {
 	// Test Write() with invalid config
 	invalidCfg := &TestConfig{
 		ApplicationName: "", // Invalid
-		ServerPort:      8080,
+		ServerPort:      testPort,
 		EnableVerbose:   true,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	err = config.Write(invalidCfg)
@@ -620,15 +624,13 @@ func TestWriteConfigWithInvalidConfig(t *testing.T) {
 
 func TestOnChangeCallbacks(t *testing.T) {
 	tempDir := t.TempDir()
-	originalPath := flag.Path
-	defer func() { flag.Path = originalPath }()
-	flag.Path = tempDir
+	setFlagPath(t, tempDir)
 
 	cfg := &TestConfig{
-		ApplicationName: "test-app",
-		ServerPort:      8080,
+		ApplicationName: testAppName,
+		ServerPort:      testPort,
 		EnableVerbose:   true,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	err := config.Manager().WithPath(tempDir).WithName("onchange-test").Register(cfg)
@@ -647,10 +649,10 @@ func TestOnChangeCallbacks(t *testing.T) {
 
 	// Trigger a change via Write() - this should now call onChange handlers
 	newCfg := &TestConfig{
-		ApplicationName: "updated-app",
-		ServerPort:      9090,
+		ApplicationName: updatedAppName,
+		ServerPort:      updatedPort,
 		EnableVerbose:   false,
-		DatabaseURL:     "postgres://localhost",
+		DatabaseURL:     updatedDatabaseURL,
 	}
 
 	err = config.Write(newCfg)
@@ -675,23 +677,21 @@ func TestOnChangeCallbacks(t *testing.T) {
 	if !ok {
 		t.Fatalf("config has type %T, want *TestConfig", config.Get())
 	}
-	if current.ApplicationName != "updated-app" {
+	if current.ApplicationName != updatedAppName {
 		t.Error("In-memory config should have been updated by Write()")
 	}
 }
 
 func TestOnChangeCallbackError(t *testing.T) {
-	defer config.Reset()
+	t.Cleanup(config.Reset)
 	tempDir := t.TempDir()
-	originalPath := flag.Path
-	defer func() { flag.Path = originalPath }()
-	flag.Path = tempDir
+	setFlagPath(t, tempDir)
 
 	cfg := &TestConfig{
-		ApplicationName: "test-app",
-		ServerPort:      8080,
+		ApplicationName: testAppName,
+		ServerPort:      testPort,
 		EnableVerbose:   true,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	err := config.Manager().WithPath(tempDir).WithName("onchange-error-test").Register(cfg)
@@ -705,10 +705,10 @@ func TestOnChangeCallbackError(t *testing.T) {
 
 	// Trigger a change via Write() - this should now call onChange handlers and fail
 	newCfg := &TestConfig{
-		ApplicationName: "updated-app",
-		ServerPort:      9090,
+		ApplicationName: updatedAppName,
+		ServerPort:      updatedPort,
 		EnableVerbose:   false,
-		DatabaseURL:     "postgres://localhost",
+		DatabaseURL:     updatedDatabaseURL,
 	}
 
 	err = config.Write(newCfg)
@@ -719,15 +719,13 @@ func TestOnChangeCallbackError(t *testing.T) {
 
 func TestBasicConfigOperations(t *testing.T) {
 	tempDir := t.TempDir()
-	originalPath := flag.Path
-	defer func() { flag.Path = originalPath }()
-	flag.Path = tempDir
+	setFlagPath(t, tempDir)
 
 	cfg := &TestConfig{
-		ApplicationName: "test-app",
-		ServerPort:      8080,
+		ApplicationName: testAppName,
+		ServerPort:      testPort,
 		EnableVerbose:   true,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	err := config.Manager().WithPath(tempDir).WithName("basic-test").Register(cfg)
@@ -741,9 +739,6 @@ func TestBasicConfigOperations(t *testing.T) {
 		t.Fatalf("Read() failed: %v", err)
 	}
 
-	// Give time for setup
-	time.Sleep(100 * time.Millisecond)
-
 	// Note: This test mainly ensures the basic functionality doesn't panic
 	// File watching has been removed from the config package
 }
@@ -753,9 +748,9 @@ func TestConcurrentConfigOperations(t *testing.T) {
 
 	cfg := &TestConfig{
 		ApplicationName: "concurrent-test",
-		ServerPort:      8080,
+		ServerPort:      testPort,
 		EnableVerbose:   true,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	err := config.Manager().WithPath(tempDir).WithName("concurrent-test").Register(cfg)
@@ -764,10 +759,10 @@ func TestConcurrentConfigOperations(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	errs := make(chan error, 10)
+	errs := make(chan error, concurrentWorkers+sequentialWrites)
 
 	// Test concurrent reads - this should be safe
-	for range 10 {
+	for range concurrentWorkers {
 		wg.Go(func() {
 			config := config.Get()
 			if config == nil {
@@ -780,12 +775,12 @@ func TestConcurrentConfigOperations(t *testing.T) {
 
 	// Test sequential writes to avoid file conflicts
 	// (concurrent writes to the same config file can cause issues)
-	for i := range 5 {
+	for i := range sequentialWrites {
 		newCfg := &TestConfig{
 			ApplicationName: fmt.Sprintf("concurrent-app-%d", i),
-			ServerPort:      8080 + i,
+			ServerPort:      testPort + i,
 			EnableVerbose:   true,
-			DatabaseURL:     "sqlite:///test.db",
+			DatabaseURL:     testDatabaseURL,
 		}
 		err := config.Write(newCfg)
 		if err != nil {
@@ -803,15 +798,13 @@ func TestConcurrentConfigOperations(t *testing.T) {
 
 func TestConfigFilePermissions(t *testing.T) {
 	tempDir := t.TempDir()
-	originalPath := flag.Path
-	defer func() { flag.Path = originalPath }()
-	flag.Path = tempDir
+	setFlagPath(t, tempDir)
 
 	cfg := &TestConfig{
 		ApplicationName: "permissions-test",
-		ServerPort:      8080,
+		ServerPort:      testPort,
 		EnableVerbose:   true,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	err := config.Manager().WithPath(tempDir).WithName("permissions-test").Register(cfg)
@@ -832,8 +825,8 @@ func TestConfigFilePermissions(t *testing.T) {
 	}
 
 	if runtime.GOOS != "windows" {
-		// Config files should be readable and writable by owner only (0600)
-		expectedMode := os.FileMode(0600)
+		// Config files should be readable and writable by owner only (fileMode)
+		expectedMode := os.FileMode(fileMode)
 		if info.Mode().Perm() != expectedMode {
 			t.Errorf("Config file permissions are %v, expected %v", info.Mode().Perm(), expectedMode)
 		}
@@ -842,18 +835,16 @@ func TestConfigFilePermissions(t *testing.T) {
 
 func TestConfigDirectoryCreation(t *testing.T) {
 	tempDir := t.TempDir()
-	originalPath := flag.Path
-	defer func() { flag.Path = originalPath }()
 
 	// Set path to a non-existent subdirectory
 	subDir := filepath.Join(tempDir, "config", "subdir")
-	flag.Path = subDir
+	setFlagPath(t, subDir)
 
 	cfg := &TestConfig{
 		ApplicationName: "directory-test",
-		ServerPort:      8080,
+		ServerPort:      testPort,
 		EnableVerbose:   true,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	err := config.Manager().WithPath(subDir).WithName("directory-test").Register(cfg)
@@ -868,14 +859,14 @@ func TestConfigDirectoryCreation(t *testing.T) {
 
 	// Verify directory was created
 	_, err = os.Stat(subDir)
-	if os.IsNotExist(err) {
+	if err != nil {
 		t.Error("Config directory should have been created")
 	}
 
 	// Verify config file was created
 	configPath := filepath.Join(subDir, "directory-test.yaml")
 	_, err = os.Stat(configPath)
-	if os.IsNotExist(err) {
+	if err != nil {
 		t.Error("Config file should have been created in subdirectory")
 	}
 }
@@ -885,28 +876,26 @@ func BenchmarkRegister(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		cfg := &TestConfig{
 			ApplicationName: "benchmark-test",
-			ServerPort:      8080,
+			ServerPort:      testPort,
 			EnableVerbose:   false,
-			DatabaseURL:     "sqlite:///test.db",
+			DatabaseURL:     testDatabaseURL,
 		}
 		err := config.Manager().WithName(fmt.Sprintf("benchmark-%d", i)).Register(cfg)
 		if err != nil {
-			b.Logf("Failed to register config: %v", err)
+			b.Fatalf("Failed to register config: %v", err)
 		}
 	}
 }
 
 func BenchmarkWrite(b *testing.B) {
 	tempDir := b.TempDir()
-	originalPath := flag.Path
-	defer func() { flag.Path = originalPath }()
-	flag.Path = tempDir
+	setFlagPath(b, tempDir)
 
 	cfg := &TestConfig{
 		ApplicationName: "benchmark-write",
-		ServerPort:      8080,
+		ServerPort:      testPort,
 		EnableVerbose:   false,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	err := config.Manager().WithPath(tempDir).WithName("benchmark-write").Register(cfg)
@@ -918,28 +907,26 @@ func BenchmarkWrite(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		newCfg := &TestConfig{
 			ApplicationName: fmt.Sprintf("benchmark-app-%d", i),
-			ServerPort:      8080 + i,
+			ServerPort:      testPort + i,
 			EnableVerbose:   i%2 == 0,
-			DatabaseURL:     "sqlite:///test.db",
+			DatabaseURL:     testDatabaseURL,
 		}
 		err := config.Write(newCfg)
 		if err != nil {
-			b.Logf("Failed to write config: %v", err)
+			b.Fatalf("Failed to write config: %v", err)
 		}
 	}
 }
 
 func BenchmarkRead(b *testing.B) {
 	tempDir := b.TempDir()
-	originalPath := flag.Path
-	defer func() { flag.Path = originalPath }()
-	flag.Path = tempDir
+	setFlagPath(b, tempDir)
 
 	cfg := &TestConfig{
 		ApplicationName: "benchmark-read",
-		ServerPort:      8080,
+		ServerPort:      testPort,
 		EnableVerbose:   false,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	err := config.Manager().WithPath(tempDir).WithName("benchmark-read").Register(cfg)
@@ -957,24 +944,22 @@ func BenchmarkRead(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		err := config.Read()
 		if err != nil {
-			b.Logf("Failed to read config: %v", err)
+			b.Fatalf("Failed to read config: %v", err)
 		}
 	}
 }
 
 func TestReadAlwaysLoadsFromDisk(t *testing.T) {
-	defer config.Reset() // Ensure clean state for other tests
+	t.Cleanup(config.Reset)
 
 	tempDir := t.TempDir()
-	originalPath := flag.Path
-	defer func() { flag.Path = originalPath }()
-	flag.Path = tempDir
+	setFlagPath(t, tempDir)
 
 	cfg := &TestConfig{
 		ApplicationName: "initial-app",
-		ServerPort:      8080,
+		ServerPort:      testPort,
 		EnableVerbose:   true,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	err := config.Manager().WithPath(tempDir).WithName("read-disk-test").Register(cfg)
@@ -1004,7 +989,7 @@ server_port: 7777
 enable_verbose: false
 database_url: "modified://disk"`
 
-	err = os.WriteFile(configFile, []byte(manualYAML), 0600)
+	err = os.WriteFile(configFile, []byte(manualYAML), fileMode)
 	if err != nil {
 		t.Fatalf("Failed to write modified config to disk: %v", err)
 	}
@@ -1032,18 +1017,16 @@ database_url: "modified://disk"`
 }
 
 func TestWriteTriggersOnChange(t *testing.T) {
-	defer config.Reset() // Ensure clean state for other tests
+	t.Cleanup(config.Reset)
 
 	tempDir := t.TempDir()
-	originalPath := flag.Path
-	defer func() { flag.Path = originalPath }()
-	flag.Path = tempDir
+	setFlagPath(t, tempDir)
 
 	cfg := &TestConfig{
 		ApplicationName: "initial-app",
-		ServerPort:      8080,
+		ServerPort:      testPort,
 		EnableVerbose:   true,
-		DatabaseURL:     "sqlite:///test.db",
+		DatabaseURL:     testDatabaseURL,
 	}
 
 	err := config.Manager().WithPath(tempDir).WithName("write-onchange-test").Register(cfg)
@@ -1065,9 +1048,9 @@ func TestWriteTriggersOnChange(t *testing.T) {
 	// Write a new config - this should trigger the onChange handler
 	newCfg := &TestConfig{
 		ApplicationName: "updated-by-write",
-		ServerPort:      9090,
+		ServerPort:      updatedPort,
 		EnableVerbose:   false,
-		DatabaseURL:     "postgres://localhost",
+		DatabaseURL:     updatedDatabaseURL,
 	}
 
 	err = config.Write(newCfg)

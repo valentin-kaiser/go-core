@@ -1,3 +1,5 @@
+//go:build integration
+
 package database_test
 
 import (
@@ -10,12 +12,21 @@ import (
 	"testing"
 	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/database"
+	"github.com/valentin-kaiser/go-core/internal/await"
 )
 
-// These tests need a MySQL and a PostgreSQL server and skip without them. The defaults match
-// test/compose.yaml; MYSQL_DSN and POSTGRES_DSN override them.
+// These tests need a MySQL and a PostgreSQL server and fail without them. Start them with
+// docker compose -f test/compose.yaml up -d. The defaults match test/compose.yaml;
+// MYSQL_DSN and POSTGRES_DSN override them.
+
+const (
+	serverConnectWait  = 5 * time.Second
+	dropRoundtripTable = "DROP TABLE IF EXISTS dump_roundtrip"
+	insertNullRow      = "INSERT INTO dump_roundtrip VALUES (100, NULL, NULL, NULL, NULL, NULL)"
+	bulkRowIDOffset    = 1000
+	bulkRowCount       = 1300
+)
 
 func serverDSN(env, fallback string) string {
 	if v := os.Getenv(env); v != "" {
@@ -29,16 +40,10 @@ const dumpRoundtripQuery = "SELECT id, txt, bin, num, ts, flag FROM dump_roundtr
 func connectServer(tb testing.TB, driver database.Driver, name, dsn string) *database.Database[TestQueries] {
 	tb.Helper()
 	db := database.New[TestQueries](driver, name)
-	db.Connect(100*time.Millisecond, dsn)
-	tb.Cleanup(func() { apperror.Catch(db.Disconnect, "disconnecting database failed") })
-
-	done := make(chan struct{})
-	go func() { db.AwaitConnection(); close(done) }()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		tb.Skipf("%s server not available at %s", name, dsn)
-	}
+	db.Connect(connectInterval, dsn)
+	cleanupDisconnect(tb, db)
+	await.Until(tb, serverConnectWait, db.Connected,
+		"the "+name+" server; start the test services with: docker compose -f test/compose.yaml up -d")
 	return db
 }
 
@@ -98,7 +103,12 @@ func readRows(tb testing.TB, db *database.Database[TestQueries]) []dumpRow {
 		if err != nil {
 			return err
 		}
-		defer apperror.Catch(rows.Close, "closing rows failed")
+		defer func() {
+			closeErr := rows.Close()
+			if closeErr != nil {
+				tb.Errorf("closing rows failed: %v", closeErr)
+			}
+		}()
 		for rows.Next() {
 			var r dumpRow
 			err := rows.Scan(&r.ID, &r.Text, &r.Blob, &r.Num, &r.When, &r.Flag)
@@ -132,10 +142,10 @@ func compareRows(t *testing.T, want, got []dumpRow) {
 func TestMySQLBackupRestoreRoundTrip(t *testing.T) {
 	db := mysqlServer(t)
 	execAll(t, db,
-		"DROP TABLE IF EXISTS dump_roundtrip",
+		dropRoundtripTable,
 		"CREATE TABLE dump_roundtrip (id BIGINT PRIMARY KEY, txt TEXT NULL, bin BLOB NULL, num DOUBLE NULL, ts DATETIME(6) NULL, flag TINYINT(1) NULL)",
 	)
-	t.Cleanup(func() { execAll(t, db, "DROP TABLE IF EXISTS dump_roundtrip") })
+	t.Cleanup(func() { execAll(t, db, dropRoundtripTable) })
 
 	when := time.Date(2026, 3, 4, 5, 6, 7, 123456000, time.UTC)
 	err := db.Execute(func(c *sql.DB) error {
@@ -145,13 +155,13 @@ func TestMySQLBackupRestoreRoundTrip(t *testing.T) {
 				return err
 			}
 		}
-		_, err := c.Exec("INSERT INTO dump_roundtrip VALUES (100, NULL, NULL, NULL, NULL, NULL)")
+		_, err := c.Exec(insertNullRow)
 		if err != nil {
 			return err
 		}
 		// More rows than fit in one INSERT statement of the dump
-		for i := range 1300 {
-			_, err := c.Exec("INSERT INTO dump_roundtrip VALUES (?, ?, NULL, ?, ?, 1)", 1000+i, fmt.Sprintf("row %d; 'x'", i), float64(i)/3, when)
+		for i := range bulkRowCount {
+			_, err := c.Exec("INSERT INTO dump_roundtrip VALUES (?, ?, NULL, ?, ?, 1)", bulkRowIDOffset+i, fmt.Sprintf("row %d; 'x'", i), float64(i)/3, when)
 			if err != nil {
 				return err
 			}
@@ -192,10 +202,10 @@ func TestMySQLBackupRestoreRoundTrip(t *testing.T) {
 func TestPostgresBackupRestoreRoundTrip(t *testing.T) {
 	db := postgresServer(t)
 	execAll(t, db,
-		"DROP TABLE IF EXISTS dump_roundtrip",
+		dropRoundtripTable,
 		"CREATE TABLE dump_roundtrip (id BIGINT PRIMARY KEY, txt TEXT NULL, bin BYTEA NULL, num DOUBLE PRECISION NULL, ts TIMESTAMPTZ NULL, flag BOOLEAN NULL)",
 	)
-	t.Cleanup(func() { execAll(t, db, "DROP TABLE IF EXISTS dump_roundtrip") })
+	t.Cleanup(func() { execAll(t, db, dropRoundtripTable) })
 
 	when := time.Date(2026, 3, 4, 5, 6, 7, 123456000, time.UTC)
 	err := db.Execute(func(c *sql.DB) error {
@@ -205,12 +215,12 @@ func TestPostgresBackupRestoreRoundTrip(t *testing.T) {
 				return err
 			}
 		}
-		_, err := c.Exec("INSERT INTO dump_roundtrip VALUES (100, NULL, NULL, NULL, NULL, NULL)")
+		_, err := c.Exec(insertNullRow)
 		if err != nil {
 			return err
 		}
-		for i := range 1300 {
-			_, err := c.Exec("INSERT INTO dump_roundtrip VALUES ($1, $2, NULL, $3, $4, true)", 1000+i, fmt.Sprintf("row %d; 'x'", i), float64(i)/3, when)
+		for i := range bulkRowCount {
+			_, err := c.Exec("INSERT INTO dump_roundtrip VALUES ($1, $2, NULL, $3, $4, true)", bulkRowIDOffset+i, fmt.Sprintf("row %d; 'x'", i), float64(i)/3, when)
 			if err != nil {
 				return err
 			}
@@ -274,7 +284,12 @@ func TestMySQLRestoreWithForeignKeys(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		defer apperror.Catch(conn.Close, "closing database connection failed")
+		defer func() {
+			closeErr := conn.Close()
+			if closeErr != nil {
+				t.Errorf("closing database connection failed: %v", closeErr)
+			}
+		}()
 		for _, s := range []string{"SET FOREIGN_KEY_CHECKS = 0", "DROP TABLE a_fk_child", "DROP TABLE b_fk_parent", "SET FOREIGN_KEY_CHECKS = 1"} {
 			_, err := conn.ExecContext(t.Context(), s)
 			if err != nil {

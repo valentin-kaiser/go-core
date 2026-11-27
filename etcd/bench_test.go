@@ -7,6 +7,20 @@ import (
 	"time"
 )
 
+const (
+	lockTTL        = 10 * time.Second
+	heldLockTTL    = 30 * time.Second
+	rawKeyMask     = 255
+	rawKeyPrefix   = "/k"
+	rawValue       = "v"
+	benchLockKey   = "bench"
+	heldLockKey    = "held"
+	benchConfigApp = "bench"
+	loadConfigApp  = "bench-load"
+	benchName      = "alpha"
+	benchPort      = 4242
+)
+
 // These run against the embedded etcd server of the tests, so they measure the client
 // wrapper plus a local single node cluster, not a network round trip.
 
@@ -16,7 +30,7 @@ func BenchmarkLockUnlock(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		l, err := cli.Lock(ctx, "bench", 10*time.Second)
+		l, err := cli.Lock(ctx, benchLockKey, lockTTL)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -30,16 +44,21 @@ func BenchmarkLockUnlock(b *testing.B) {
 func BenchmarkTryLockContended(b *testing.B) {
 	cli := newTestClient(b)
 	ctx := context.Background()
-	held, err := cli.Lock(ctx, "held", 30*time.Second)
+	held, err := cli.Lock(ctx, heldLockKey, heldLockTTL)
 	if err != nil {
 		b.Fatal(err)
 	}
-	b.Cleanup(func() { _ = held.Unlock(ctx) })
+	b.Cleanup(func() {
+		err := held.Unlock(ctx)
+		if err != nil {
+			b.Errorf("unlocking held lock failed: %v", err)
+		}
+	})
 
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		l, err := cli.TryLock(ctx, "held", 30*time.Second)
+		l, err := cli.TryLock(ctx, heldLockKey, heldLockTTL)
 		if err != nil {
 			b.Fatal(err)
 		}
@@ -51,9 +70,9 @@ func BenchmarkTryLockContended(b *testing.B) {
 
 func BenchmarkConfigSourceSave(b *testing.B) {
 	cli := newTestClient(b)
-	src := cli.ConfigSource("bench")
+	src := cli.ConfigSource(benchConfigApp)
 	ctx := context.Background()
-	cfg := &cfgConfig{Name: "alpha", Port: 4242}
+	cfg := &cfgConfig{Name: benchName, Port: benchPort}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -67,9 +86,9 @@ func BenchmarkConfigSourceSave(b *testing.B) {
 
 func BenchmarkConfigSourceLoad(b *testing.B) {
 	cli := newTestClient(b)
-	src := cli.ConfigSource("bench-load")
+	src := cli.ConfigSource(loadConfigApp)
 	ctx := context.Background()
-	err := src.Save(ctx, &cfgConfig{Name: "alpha", Port: 4242})
+	err := src.Save(ctx, &cfgConfig{Name: benchName, Port: benchPort})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -90,7 +109,7 @@ func BenchmarkRawPut(b *testing.B) {
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_, err := raw.Put(ctx, cli.Prefix()+"/k"+strconv.Itoa(i&255), "v")
+		_, err := raw.Put(ctx, cli.Prefix()+rawKeyPrefix+strconv.Itoa(i&rawKeyMask), rawValue)
 		if err != nil {
 			b.Fatal(err)
 		}

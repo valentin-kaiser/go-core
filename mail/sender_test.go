@@ -9,14 +9,24 @@ import (
 	"github.com/valentin-kaiser/go-core/mail"
 )
 
+const (
+	// smtpTestHost has no listener, so every send fails at once without reaching the network.
+	smtpTestHost         = "127.0.0.1"
+	submissionPort       = 587
+	testRecipientAddress = "recipient.com"
+	sendTimeout          = 100 * time.Millisecond
+	cancelTimeout        = 50 * time.Millisecond
+	clientTimeout        = 30 * time.Second
+)
+
 func TestSMTPSender_Comprehensive(t *testing.T) {
 	config := mail.ClientConfig{
-		Host:       "smtp.example.com",
-		Port:       587,
-		From:       "sender@example.com",
+		Host:       smtpTestHost,
+		Port:       submissionPort,
+		From:       testSenderAddress,
 		Auth:       false,
 		Encryption: "NONE",
-		Timeout:    30 * time.Second,
+		Timeout:    clientTimeout,
 		MaxRetries: 0, // Disable retries for faster tests
 		RetryDelay: time.Millisecond,
 	}
@@ -35,8 +45,8 @@ func TestSMTPSender_Comprehensive(t *testing.T) {
 
 func TestSMTPSender_MessageValidation(t *testing.T) {
 	config := mail.ClientConfig{
-		Host:       "smtp.example.com",
-		Port:       587,
+		Host:       smtpTestHost,
+		Port:       submissionPort,
 		From:       "default@example.com",
 		Auth:       false,
 		Encryption: "NONE",
@@ -55,8 +65,8 @@ func TestSMTPSender_MessageValidation(t *testing.T) {
 		{
 			name: "valid message",
 			message: &mail.Message{
-				From:     "sender@example.com",
-				To:       []string{"recipient@example.com"},
+				From:     testSenderAddress,
+				To:       []string{testRecipientAddress},
 				Subject:  "Test Subject",
 				TextBody: "Test message",
 			},
@@ -65,7 +75,7 @@ func TestSMTPSender_MessageValidation(t *testing.T) {
 		{
 			name: "message with config from",
 			message: &mail.Message{
-				To:       []string{"recipient@example.com"},
+				To:       []string{testRecipientAddress},
 				Subject:  "Test Subject",
 				TextBody: "Test message",
 			},
@@ -74,7 +84,7 @@ func TestSMTPSender_MessageValidation(t *testing.T) {
 		{
 			name: "missing recipients",
 			message: &mail.Message{
-				From:     "sender@example.com",
+				From:     testSenderAddress,
 				To:       []string{},
 				Subject:  "Test Subject",
 				TextBody: "Test message",
@@ -84,8 +94,8 @@ func TestSMTPSender_MessageValidation(t *testing.T) {
 		{
 			name: "missing subject",
 			message: &mail.Message{
-				From:     "sender@example.com",
-				To:       []string{"recipient@example.com"},
+				From:     testSenderAddress,
+				To:       []string{testRecipientAddress},
 				Subject:  "",
 				TextBody: "Test message",
 			},
@@ -94,8 +104,8 @@ func TestSMTPSender_MessageValidation(t *testing.T) {
 		{
 			name: "missing body",
 			message: &mail.Message{
-				From:    "sender@example.com",
-				To:      []string{"recipient@example.com"},
+				From:    testSenderAddress,
+				To:      []string{testRecipientAddress},
 				Subject: "Test Subject",
 			},
 			wantError: true,
@@ -103,8 +113,8 @@ func TestSMTPSender_MessageValidation(t *testing.T) {
 		{
 			name: "html body only",
 			message: &mail.Message{
-				From:     "sender@example.com",
-				To:       []string{"recipient@example.com"},
+				From:     testSenderAddress,
+				To:       []string{testRecipientAddress},
 				Subject:  "Test Subject",
 				HTMLBody: "<p>Test message</p>",
 			},
@@ -113,8 +123,8 @@ func TestSMTPSender_MessageValidation(t *testing.T) {
 		{
 			name: "both text and html body",
 			message: &mail.Message{
-				From:     "sender@example.com",
-				To:       []string{"recipient@example.com"},
+				From:     testSenderAddress,
+				To:       []string{testRecipientAddress},
 				Subject:  "Test Subject",
 				TextBody: "Test message",
 				HTMLBody: "<p>Test message</p>",
@@ -125,7 +135,7 @@ func TestSMTPSender_MessageValidation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 			defer cancel()
 
 			err := sender.Send(ctx, tt.message)
@@ -143,16 +153,16 @@ func TestSMTPSender_MessageValidation(t *testing.T) {
 
 func TestSMTPSender_SendAsync_NotSupported(t *testing.T) {
 	config := mail.ClientConfig{
-		Host: "smtp.example.com",
-		Port: 587,
+		Host: smtpTestHost,
+		Port: submissionPort,
 	}
 
 	tm := mail.NewTemplateManager(mail.TemplateConfig{})
 	sender := mail.NewSMTPSender(config, tm)
 
 	message := &mail.Message{
-		From:     "sender@example.com",
-		To:       []string{"recipient@example.com"},
+		From:     testSenderAddress,
+		To:       []string{testRecipientAddress},
 		Subject:  "Test",
 		TextBody: "Test",
 	}
@@ -166,9 +176,9 @@ func TestSMTPSender_SendAsync_NotSupported(t *testing.T) {
 func TestSMTPSender_WithRetries(t *testing.T) {
 	config := mail.ClientConfig{
 		Enabled:    true, // Enable the SMTP sender
-		Host:       "nonexistent.smtp.server",
-		Port:       587,
-		From:       "sender@example.com",
+		Host:       smtpTestHost,
+		Port:       submissionPort,
+		From:       testSenderAddress,
 		MaxRetries: 2,
 		RetryDelay: 10 * time.Millisecond, // Very short for testing
 	}
@@ -177,8 +187,8 @@ func TestSMTPSender_WithRetries(t *testing.T) {
 	sender := mail.NewSMTPSender(config, tm)
 
 	message := &mail.Message{
-		From:     "sender@example.com",
-		To:       []string{"recipient@example.com"},
+		From:     testSenderAddress,
+		To:       []string{testRecipientAddress},
 		Subject:  "Test",
 		TextBody: "Test",
 	}
@@ -211,9 +221,9 @@ func TestSMTPSender_WithTemplate(t *testing.T) {
 	}
 
 	config := mail.ClientConfig{
-		Host:       "smtp.example.com",
-		Port:       587,
-		From:       "sender@example.com",
+		Host:       smtpTestHost,
+		Port:       submissionPort,
+		From:       testSenderAddress,
 		MaxRetries: 0,
 	}
 
@@ -229,8 +239,8 @@ func TestSMTPSender_WithTemplate(t *testing.T) {
 	sender := mail.NewSMTPSender(config, tm)
 
 	message := &mail.Message{
-		From:     "sender@example.com",
-		To:       []string{"recipient@example.com"},
+		From:     testSenderAddress,
+		To:       []string{testRecipientAddress},
 		Subject:  "Test Subject",
 		Template: "test.html",
 		TemplateData: map[string]string{
@@ -239,7 +249,7 @@ func TestSMTPSender_WithTemplate(t *testing.T) {
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
 
 	// This will fail due to network, but template processing should work
@@ -255,18 +265,18 @@ func TestSMTPSender_AuthMethods(t *testing.T) {
 		authMethod string
 		valid      bool
 	}{
-		{"PLAIN", "PLAIN", true},
-		{"LOGIN", "LOGIN", true},
-		{"CRAMMD5", "CRAMMD5", true},
-		{"empty", "", true},
-		{"invalid", "INVALID", true}, // Will be handled by underlying SMTP lib
+		{name: "PLAIN", authMethod: "PLAIN", valid: true},
+		{name: "LOGIN", authMethod: "LOGIN", valid: true},
+		{name: "CRAMMD5", authMethod: "CRAMMD5", valid: true},
+		{name: "empty", authMethod: "", valid: true},
+		{name: "invalid", authMethod: "INVALID", valid: true}, // Will be handled by underlying SMTP lib
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := mail.ClientConfig{
-				Host:       "smtp.example.com",
-				Port:       587,
+				Host:       smtpTestHost,
+				Port:       submissionPort,
 				Username:   "user",
 				Password:   "pass",
 				Auth:       true,
@@ -290,15 +300,15 @@ func TestSMTPSender_EncryptionMethods(t *testing.T) {
 		encryption string
 		port       int
 	}{
-		{"NONE", "NONE", 587},
-		{"STARTTLS", "STARTTLS", 587},
-		{"TLS", "TLS", 465},
+		{name: "NONE", encryption: "NONE", port: 587},
+		{name: "STARTTLS", encryption: "STARTTLS", port: 587},
+		{name: "TLS", encryption: "TLS", port: 465},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			config := mail.ClientConfig{
-				Host:       "smtp.example.com",
+				Host:       smtpTestHost,
 				Port:       tt.port,
 				Encryption: tt.encryption,
 				MaxRetries: 0,
@@ -316,9 +326,9 @@ func TestSMTPSender_EncryptionMethods(t *testing.T) {
 
 func TestSMTPSender_MessageWithAttachments(t *testing.T) {
 	config := mail.ClientConfig{
-		Host:       "smtp.example.com",
-		Port:       587,
-		From:       "sender@example.com",
+		Host:       smtpTestHost,
+		Port:       submissionPort,
+		From:       testSenderAddress,
 		MaxRetries: 0,
 	}
 
@@ -333,14 +343,14 @@ func TestSMTPSender_MessageWithAttachments(t *testing.T) {
 	}
 
 	message := &mail.Message{
-		From:        "sender@example.com",
-		To:          []string{"recipient@example.com"},
+		From:        testSenderAddress,
+		To:          []string{testRecipientAddress},
 		Subject:     "Test with attachment",
 		TextBody:    "Please see attachment",
 		Attachments: []mail.Attachment{attachment},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
 
 	// Will fail due to network, but attachment processing should work
@@ -351,9 +361,9 @@ func TestSMTPSender_MessageWithAttachments(t *testing.T) {
 
 func TestSMTPSender_MessageWithHeaders(t *testing.T) {
 	config := mail.ClientConfig{
-		Host:       "smtp.example.com",
-		Port:       587,
-		From:       "sender@example.com",
+		Host:       smtpTestHost,
+		Port:       submissionPort,
+		From:       testSenderAddress,
 		MaxRetries: 0,
 	}
 
@@ -361,8 +371,8 @@ func TestSMTPSender_MessageWithHeaders(t *testing.T) {
 	sender := mail.NewSMTPSender(config, tm)
 
 	message := &mail.Message{
-		From:     "sender@example.com",
-		To:       []string{"recipient@example.com"},
+		From:     testSenderAddress,
+		To:       []string{testRecipientAddress},
 		Subject:  "Test with headers",
 		TextBody: "Test message",
 		Headers: map[string]string{
@@ -371,7 +381,7 @@ func TestSMTPSender_MessageWithHeaders(t *testing.T) {
 		},
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), sendTimeout)
 	defer cancel()
 
 	// Will fail due to network, but header processing should work
@@ -382,9 +392,9 @@ func TestSMTPSender_MessageWithHeaders(t *testing.T) {
 
 func TestSMTPSender_ContextCancellation(t *testing.T) {
 	config := mail.ClientConfig{
-		Host:       "smtp.example.com",
-		Port:       587,
-		From:       "sender@example.com",
+		Host:       smtpTestHost,
+		Port:       submissionPort,
+		From:       testSenderAddress,
 		MaxRetries: 3,
 		RetryDelay: time.Second, // Long delay to test cancellation
 	}
@@ -393,14 +403,14 @@ func TestSMTPSender_ContextCancellation(t *testing.T) {
 	sender := mail.NewSMTPSender(config, tm)
 
 	message := &mail.Message{
-		From:     "sender@example.com",
-		To:       []string{"recipient@example.com"},
+		From:     testSenderAddress,
+		To:       []string{testRecipientAddress},
 		Subject:  "Test",
 		TextBody: "Test",
 	}
 
 	// Create context that will be cancelled quickly
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	ctx, cancel := context.WithTimeout(context.Background(), cancelTimeout)
 	defer cancel()
 
 	start := time.Now()
@@ -419,12 +429,12 @@ func TestSMTPSender_ContextCancellation(t *testing.T) {
 
 func TestSMTPSender_SendWithTemplateContent(t *testing.T) {
 	config := mail.ClientConfig{
-		Host:       "smtp.example.com",
-		Port:       587,
-		From:       "sender@example.com",
+		Host:       smtpTestHost,
+		Port:       submissionPort,
+		From:       testSenderAddress,
 		Auth:       false,
 		Encryption: "NONE",
-		Timeout:    30 * time.Second,
+		Timeout:    clientTimeout,
 		MaxRetries: 0, // Disable retries for faster tests
 		RetryDelay: time.Millisecond,
 		Enabled:    true, // Enable the SMTP sender

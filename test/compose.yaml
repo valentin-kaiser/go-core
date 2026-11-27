@@ -1,10 +1,12 @@
 # Services for the Redis, RabbitMQ, MySQL and PostgreSQL tests and benchmarks.
 #
 #   docker compose -f test/compose.yaml up -d
-#   go test ./cache ./queue ./database
+#   go test -tags integration ./cache ./queue ./database
+#   docker compose -f test/compose.yaml down
 #
 # The credentials and ports match the defaults of the tests: queue/rabbitmq_test.go,
 # cache/redis_test.go (REDIS_URL) and database/server_test.go (MYSQL_DSN, POSTGRES_DSN).
+# Without the integration tag these tests are not compiled.
 # MySQL and PostgreSQL use uncommon host ports so they do not clash with a local server.
 services:
   redis:

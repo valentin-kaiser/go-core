@@ -7,6 +7,15 @@ import (
 	"github.com/valentin-kaiser/go-core/queue"
 )
 
+const (
+	finishedRetentionLimit = 5
+	retriedRetentionLimit  = 2
+	ringRetentionLimit     = 3
+	finishedJobCount       = 20
+	retriedFillerJobCount  = 5
+	unlimitedJobCount      = 50
+)
+
 func finish(t *testing.T, q *queue.MemoryQueue, id string, status queue.Status) {
 	t.Helper()
 	ctx := t.Context()
@@ -24,10 +33,10 @@ func finish(t *testing.T, q *queue.MemoryQueue, id string, status queue.Status) 
 
 // Finished jobs beyond the limit leave the index but stay in the statistics.
 func TestMemoryQueueFinishedRetention(t *testing.T) {
-	q := queue.NewMemoryQueue().WithFinishedRetention(5)
+	q := queue.NewMemoryQueue().WithFinishedRetention(finishedRetentionLimit)
 	ctx := t.Context()
 
-	for i := range 20 {
+	for i := range finishedJobCount {
 		finish(t, q, fmt.Sprintf("done-%d", i), queue.StatusCompleted)
 	}
 	finish(t, q, "failed-1", queue.StatusFailed)
@@ -46,14 +55,14 @@ func TestMemoryQueueFinishedRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if stats.Completed != 20 || stats.Failed != 1 || stats.DeadLetter != 1 || stats.TotalJobs != 22 {
+	if stats.Completed != finishedJobCount || stats.Failed != 1 || stats.DeadLetter != 1 || stats.TotalJobs != finishedJobCount+2 {
 		t.Fatalf("stats do not add up: %+v", stats)
 	}
 }
 
 // A job that is retried after it failed must not be dropped while it is active again.
 func TestMemoryQueueRetentionKeepsRetriedJobs(t *testing.T) {
-	q := queue.NewMemoryQueue().WithFinishedRetention(2)
+	q := queue.NewMemoryQueue().WithFinishedRetention(retriedRetentionLimit)
 	ctx := t.Context()
 
 	job := queue.NewJob("r").WithID("retry-me").Build()
@@ -72,7 +81,7 @@ func TestMemoryQueueRetentionKeepsRetriedJobs(t *testing.T) {
 		t.Error(err)
 	}
 
-	for i := range 5 {
+	for i := range retriedFillerJobCount {
 		finish(t, q, fmt.Sprintf("other-%d", i), queue.StatusCompleted)
 	}
 	_, err = q.GetJob(ctx, "retry-me")
@@ -83,7 +92,7 @@ func TestMemoryQueueRetentionKeepsRetriedJobs(t *testing.T) {
 
 func TestMemoryQueueUnlimitedRetention(t *testing.T) {
 	q := queue.NewMemoryQueue().WithFinishedRetention(0)
-	for i := range 50 {
+	for i := range unlimitedJobCount {
 		finish(t, q, fmt.Sprintf("done-%d", i), queue.StatusCompleted)
 	}
 	_, err := q.GetJob(t.Context(), "done-0")
@@ -95,7 +104,7 @@ func TestMemoryQueueUnlimitedRetention(t *testing.T) {
 // A job that finishes, is retried and finishes again has a newer ring entry. Evicting the older
 // entry must not drop the job while that newer entry is still retained.
 func TestMemoryQueueRetentionKeepsNewerIncarnation(t *testing.T) {
-	q := queue.NewMemoryQueue().WithFinishedRetention(3)
+	q := queue.NewMemoryQueue().WithFinishedRetention(ringRetentionLimit)
 	ctx := t.Context()
 
 	job := queue.NewJob("r").WithID("again").Build()

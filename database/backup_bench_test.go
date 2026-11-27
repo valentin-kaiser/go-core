@@ -5,10 +5,16 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 
 	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/database"
+)
+
+const (
+	payloadBytes       = 1000
+	createPayloadTable = "CREATE TABLE t (id INTEGER PRIMARY KEY, payload TEXT)"
+	insertPayloadRow   = "INSERT INTO t (payload) VALUES (?)"
+	benchRows          = 30000
 )
 
 // Backup of a file based SQLite database of about 30 MB
@@ -16,12 +22,12 @@ func BenchmarkBackupSQLite(b *testing.B) {
 	dir := b.TempDir()
 	dbPath := filepath.Join(dir, "bench.db")
 	db := database.New[TestQueries](database.DriverSQLite, "bench-backup")
-	db.Connect(100*time.Millisecond, "file:"+dbPath)
-	b.Cleanup(func() { apperror.Catch(db.Disconnect, "disconnecting database failed") })
+	db.Connect(connectInterval, "file:"+dbPath)
+	cleanupDisconnect(b, db)
 	db.AwaitConnection()
 
 	err := db.Execute(func(sqlDB *sql.DB) error {
-		_, err := sqlDB.Exec("CREATE TABLE t (id INTEGER PRIMARY KEY, payload TEXT)")
+		_, err := sqlDB.Exec(createPayloadTable)
 		if err != nil {
 			return err
 		}
@@ -29,12 +35,12 @@ func BenchmarkBackupSQLite(b *testing.B) {
 		if err != nil {
 			return err
 		}
-		payload := make([]byte, 1000)
+		payload := make([]byte, payloadBytes)
 		for i := range payload {
 			payload[i] = 'x'
 		}
-		for range 30000 {
-			_, err := tx.Exec("INSERT INTO t (payload) VALUES (?)", string(payload))
+		for range benchRows {
+			_, err := tx.Exec(insertPayloadRow, string(payload))
 			if err != nil {
 				return apperror.NewError("inserting rows failed").AddError(err).AddError(tx.Rollback())
 			}

@@ -14,6 +14,21 @@ import (
 	"github.com/valentin-kaiser/go-core/security"
 )
 
+const (
+	keyLength             = 32
+	md5HexLength          = 32
+	sha256HexLength       = 64
+	shortPassphraseLength = 16
+	shortPassphrase       = "short"
+	longInputRepeat       = 1000
+	largeInputRepeat      = 10000
+	privateFileMode       = 0600
+	privateDirMode        = 0750
+	missingCertFile       = "nonexistent.crt"
+	missingKeyFile        = "nonexistent.key"
+	missingCAFile         = "nonexistent.ca"
+)
+
 func TestGetRandomBytes(t *testing.T) {
 	testCases := []uint{1, 16, 32, 64, 128}
 
@@ -45,10 +60,10 @@ func TestSHA256(t *testing.T) {
 		input    string
 		expected string
 	}{
-		{"", "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
-		{"hello", "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"},
-		{"Hello, World!", "dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f"},
-		{"The quick brown fox jumps over the lazy dog", "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592"},
+		{input: "", expected: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+		{input: "hello", expected: "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"},
+		{input: "Hello, World!", expected: "dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f"},
+		{input: "The quick brown fox jumps over the lazy dog", expected: "d7a8fbb307d7809469ca9abcb0082e4f8d5651e46d3cdb762d02d0bf37c9e592"},
 	}
 
 	for _, tc := range testCases {
@@ -63,10 +78,10 @@ func TestXX(t *testing.T) {
 	testCases := []struct {
 		input string
 	}{
-		{""},
-		{"hello"},
-		{"Hello, World!"},
-		{"The quick brown fox jumps over the lazy dog"},
+		{input: ""},
+		{input: "hello"},
+		{input: "Hello, World!"},
+		{input: "The quick brown fox jumps over the lazy dog"},
 	}
 
 	for _, tc := range testCases {
@@ -84,11 +99,11 @@ func TestMd5(t *testing.T) {
 		input    any
 		expected string
 	}{
-		{"", "d41d8cd98f00b204e9800998ecf8427e"},
-		{"hello", "5d41402abc4b2a76b9719d911017c592"},
-		{"Hello, World!", "65a8e27d8879283831b664bd8b7f0ad4"},
-		{42, "a1d0c6e83f027327d8461063f4ac58a6"},
-		{true, "b326b5062b2f0e69046810717534cb09"},
+		{input: "", expected: "d41d8cd98f00b204e9800998ecf8427e"},
+		{input: "hello", expected: "5d41402abc4b2a76b9719d911017c592"},
+		{input: "Hello, World!", expected: "65a8e27d8879283831b664bd8b7f0ad4"},
+		{input: 42, expected: "a1d0c6e83f027327d8461063f4ac58a6"},
+		{input: true, expected: "b326b5062b2f0e69046810717534cb09"},
 	}
 
 	for _, tc := range testCases {
@@ -109,7 +124,7 @@ func TestStringToKey32Bytes(t *testing.T) {
 
 	for _, tc := range testCases {
 		key := security.StringToKey32Bytes(tc)
-		if len(key) != 32 {
+		if len(key) != keyLength {
 			t.Errorf("StringToKey32Bytes(%q) returned %d bytes, expected 32", tc, len(key))
 		}
 
@@ -131,7 +146,7 @@ func TestStringToKey32(t *testing.T) {
 
 	for _, tc := range testCases {
 		key := security.StringToKey32(tc)
-		if len(key) != 32 {
+		if len(key) != keyLength {
 			t.Errorf("StringToKey32(%q) returned %d characters, expected 32", tc, len(key))
 		}
 
@@ -180,7 +195,7 @@ func TestGetRandomBytesBase64(t *testing.T) {
 }
 
 func TestGenerateRandomPassword(t *testing.T) {
-	testCases := []int{1, 8, 16, 32, 64}
+	testCases := []int{1, 8, shortPassphraseLength, keyLength, 64}
 
 	for _, length := range testCases {
 		password, err := security.GenerateRandomPassword(length)
@@ -220,17 +235,17 @@ func TestReadOrSavePassphrase(t *testing.T) {
 	testFile := filepath.Join(tempDir, "test_passphrase.txt")
 
 	// Test creating new passphrase
-	passphrase1, err := security.ReadOrSavePassphrase(testFile, 32)
+	passphrase1, err := security.ReadOrSavePassphrase(testFile, keyLength)
 	if err != nil {
 		t.Errorf("ReadOrSavePassphrase() returned error: %v", err)
 	}
 
-	if len(passphrase1) != 32 {
+	if len(passphrase1) != keyLength {
 		t.Errorf("ReadOrSavePassphrase() returned passphrase of length %d, expected 32", len(passphrase1))
 	}
 
 	// Test reading existing passphrase
-	passphrase2, err := security.ReadOrSavePassphrase(testFile, 32)
+	passphrase2, err := security.ReadOrSavePassphrase(testFile, keyLength)
 	if err != nil {
 		t.Errorf("ReadOrSavePassphrase() returned error when reading existing file: %v", err)
 	}
@@ -245,7 +260,7 @@ func TestReadOrSavePassphrase(t *testing.T) {
 		t.Errorf("Failed to read test file: %v", err)
 	}
 
-	if !bytes.Equal(content[:32], passphrase1) {
+	if !bytes.Equal(content[:keyLength], passphrase1) {
 		t.Error("File content doesn't match returned passphrase")
 	}
 }
@@ -255,13 +270,13 @@ func TestReadOrSavePassphraseTooShort(t *testing.T) {
 	tempDir := t.TempDir()
 	testFile := filepath.Join(tempDir, "short_passphrase.txt")
 
-	err := os.WriteFile(testFile, []byte("short"), 0600)
+	err := os.WriteFile(testFile, []byte(shortPassphrase), privateFileMode)
 	if err != nil {
 		t.Fatalf("Failed to create test file: %v", err)
 	}
 
 	// Test reading passphrase that's too short
-	_, err = security.ReadOrSavePassphrase(testFile, 32)
+	_, err = security.ReadOrSavePassphrase(testFile, keyLength)
 	if err == nil {
 		t.Error("ReadOrSavePassphrase() should return error for too short passphrase")
 	}
@@ -273,7 +288,7 @@ func TestReadOrSavePassphraseFilePermissions(t *testing.T) {
 	testFile := filepath.Join(tempDir, "perm_test.txt")
 
 	// Create passphrase file
-	_, err := security.ReadOrSavePassphrase(testFile, 16)
+	_, err := security.ReadOrSavePassphrase(testFile, shortPassphraseLength)
 	if err != nil {
 		t.Errorf("ReadOrSavePassphrase() returned error: %v", err)
 	}
@@ -286,7 +301,7 @@ func TestReadOrSavePassphraseFilePermissions(t *testing.T) {
 
 	if runtime.GOOS != "windows" {
 		mode := info.Mode()
-		if mode.Perm() != 0600 {
+		if mode.Perm() != privateFileMode {
 			t.Errorf("File permissions are %o, expected 0600", mode.Perm())
 		}
 	}
@@ -297,17 +312,17 @@ func TestStringToKey32BytesEdgeCases(t *testing.T) {
 		name  string
 		input string
 	}{
-		{"empty string", ""},
-		{"single character", "a"},
-		{"long string", strings.Repeat("test", 1000)},
-		{"unicode string", "测试中文字符串🚀"},
-		{"special characters", "!@#$%^&*()_+-=[]{}|;':\",./<>?"},
+		{name: "empty string", input: ""},
+		{name: "single character", input: "a"},
+		{name: "long string", input: strings.Repeat("test", longInputRepeat)},
+		{name: "unicode string", input: "测试中文字符串🚀"},
+		{name: "special characters", input: "!@#$%^&*()_+-=[]{}|;':\",./<>?"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := security.StringToKey32Bytes(tt.input)
-			if len(result) != 32 {
+			if len(result) != keyLength {
 				t.Errorf("StringToKey32Bytes() returned %d bytes, expected 32", len(result))
 			}
 
@@ -325,16 +340,16 @@ func TestStringToKey32EdgeCases(t *testing.T) {
 		name  string
 		input string
 	}{
-		{"empty string", ""},
-		{"single character", "a"},
-		{"long string", strings.Repeat("test", 1000)},
-		{"unicode string", "测试中文字符串🚀"},
+		{name: "empty string", input: ""},
+		{name: "single character", input: "a"},
+		{name: "long string", input: strings.Repeat("test", longInputRepeat)},
+		{name: "unicode string", input: "测试中文字符串🚀"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := security.StringToKey32(tt.input)
-			if len(result) != 32 {
+			if len(result) != keyLength {
 				t.Errorf("StringToKey32() returned %d characters, expected 32", len(result))
 			}
 
@@ -352,17 +367,17 @@ func TestSHA256EdgeCases(t *testing.T) {
 		name  string
 		input []byte
 	}{
-		{"empty bytes", []byte{}},
-		{"single byte", []byte{0}},
-		{"null bytes", []byte{0, 0, 0, 0}},
-		{"large input", bytes.Repeat([]byte("test"), 10000)},
-		{"binary data", []byte{0xFF, 0xFE, 0xFD, 0xFC}},
+		{name: "empty bytes", input: []byte{}},
+		{name: "single byte", input: []byte{0}},
+		{name: "null bytes", input: []byte{0, 0, 0, 0}},
+		{name: "large input", input: bytes.Repeat([]byte("test"), largeInputRepeat)},
+		{name: "binary data", input: []byte{0xFF, 0xFE, 0xFD, 0xFC}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := security.SHA256(tt.input)
-			if len(result) != 64 { // SHA256 hex string is 64 characters
+			if len(result) != sha256HexLength { // SHA256 hex string is 64 characters
 				t.Errorf("SHA256() returned %d characters, expected 64", len(result))
 			}
 
@@ -380,10 +395,10 @@ func TestXXHashEdgeCases(t *testing.T) {
 		name  string
 		input []byte
 	}{
-		{"empty bytes", []byte{}},
-		{"single byte", []byte{0}},
-		{"large input", bytes.Repeat([]byte("test"), 10000)},
-		{"binary data", []byte{0xFF, 0xFE, 0xFD, 0xFC}},
+		{name: "empty bytes", input: []byte{}},
+		{name: "single byte", input: []byte{0}},
+		{name: "large input", input: bytes.Repeat([]byte("test"), largeInputRepeat)},
+		{name: "binary data", input: []byte{0xFF, 0xFE, 0xFD, 0xFC}},
 	}
 
 	for _, tt := range tests {
@@ -404,19 +419,19 @@ func TestMd5EdgeCases(t *testing.T) {
 		name  string
 		input any
 	}{
-		{"nil", nil},
-		{"empty string", ""},
-		{"number", 42},
-		{"float", 3.14159},
-		{"bool", true},
-		{"slice", []int{1, 2, 3}},
-		{"struct", struct{ Name string }{"test"}},
+		{name: "nil", input: nil},
+		{name: "empty string", input: ""},
+		{name: "number", input: 42},
+		{name: "float", input: 3.14159},
+		{name: "bool", input: true},
+		{name: "slice", input: []int{1, 2, 3}},
+		{name: "struct", input: struct{ Name string }{Name: "test"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := security.Md5(tt.input)
-			if len(result) != 32 { // MD5 hex string is 32 characters
+			if len(result) != md5HexLength { // MD5 hex string is 32 characters
 				t.Errorf("Md5() returned %d characters, expected 32", len(result))
 			}
 
@@ -435,11 +450,11 @@ func TestGenerateRandomPasswordEdgeCases(t *testing.T) {
 		length int
 		valid  bool
 	}{
-		{"zero length", 0, true},
-		{"small length", 1, true},
-		{"normal length", 16, true},
-		{"large length", 1000, true},
-		{"negative length", -1, false},
+		{name: "zero length", length: 0, valid: true},
+		{name: "small length", length: 1, valid: true},
+		{name: "normal length", length: 16, valid: true},
+		{name: "large length", length: 1000, valid: true},
+		{name: "negative length", length: -1, valid: false},
 	}
 
 	for _, tt := range tests {
@@ -471,25 +486,25 @@ func TestReadOrSavePassphraseFileOperations(t *testing.T) {
 		{
 			name:     "new file",
 			filename: "new_passphrase.txt",
-			length:   32,
+			length:   keyLength,
 			setup:    nil,
 			wantErr:  false,
 		},
 		{
 			name:     "existing file with sufficient length",
 			filename: "existing_passphrase.txt",
-			length:   16,
+			length:   shortPassphraseLength,
 			setup: func(path string) error {
-				return os.WriteFile(path, []byte("this_is_a_long_enough_passphrase"), 0600)
+				return os.WriteFile(path, []byte("this_is_a_long_enough_passphrase"), privateFileMode)
 			},
 			wantErr: false,
 		},
 		{
 			name:     "existing file with insufficient length",
 			filename: "short_passphrase.txt",
-			length:   32,
+			length:   keyLength,
 			setup: func(path string) error {
-				return os.WriteFile(path, []byte("short"), 0600)
+				return os.WriteFile(path, []byte(shortPassphrase), privateFileMode)
 			},
 			wantErr: true,
 		},
@@ -506,10 +521,10 @@ func TestReadOrSavePassphraseFileOperations(t *testing.T) {
 		}{
 			name:     "permission denied directory",
 			filename: "readonly/passphrase.txt",
-			length:   16,
+			length:   shortPassphraseLength,
 			setup: func(path string) error {
 				dir := filepath.Dir(path)
-				err := os.MkdirAll(dir, 0750)
+				err := os.MkdirAll(dir, privateDirMode)
 				if err != nil {
 					return apperror.NewError("creating directory failed").AddError(err)
 				}
@@ -718,7 +733,7 @@ func TestIsCertificateExpired(t *testing.T) {
 func TestLoadCertAndConfig(t *testing.T) {
 	// This test will fail because we don't have actual cert files
 	// but it tests the error handling path
-	_, err := security.LoadCertAndConfig("nonexistent.crt", "nonexistent.key", "nonexistent.ca", tls.NoClientCert)
+	_, err := security.LoadCertAndConfig(missingCertFile, missingKeyFile, missingCAFile, tls.NoClientCert)
 	if err == nil {
 		t.Error("LoadCertAndConfig() should fail with nonexistent files")
 	}
@@ -726,7 +741,7 @@ func TestLoadCertAndConfig(t *testing.T) {
 
 func TestLoadCertificate(t *testing.T) {
 	// Test with nonexistent files
-	_, err := security.LoadCertificate("nonexistent.crt", "nonexistent.key")
+	_, err := security.LoadCertificate(missingCertFile, missingKeyFile)
 	if err == nil {
 		t.Error("LoadCertificate() should fail with nonexistent files")
 	}
@@ -734,7 +749,7 @@ func TestLoadCertificate(t *testing.T) {
 
 func TestLoadCACertPool(t *testing.T) {
 	// Test with nonexistent file
-	_, err := security.LoadCACertPool("nonexistent.ca")
+	_, err := security.LoadCACertPool(missingCAFile)
 	if err == nil {
 		t.Error("LoadCACertPool() should fail with nonexistent file")
 	}
@@ -742,7 +757,7 @@ func TestLoadCACertPool(t *testing.T) {
 	// Test with invalid CA file
 	tempDir := t.TempDir()
 	invalidCAFile := filepath.Join(tempDir, "invalid.ca")
-	err = os.WriteFile(invalidCAFile, []byte("invalid certificate data"), 0600)
+	err = os.WriteFile(invalidCAFile, []byte("invalid certificate data"), privateFileMode)
 	if err != nil {
 		t.Fatalf("Failed to create invalid CA file: %v", err)
 	}
@@ -783,18 +798,18 @@ func BenchmarkMd5(b *testing.B) {
 
 func BenchmarkGetRandomBytes(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		_, err := security.GetRandomBytes(32)
+		_, err := security.GetRandomBytes(keyLength)
 		if err != nil {
-			b.Logf("Failed to get random bytes: %v", err)
+			b.Fatalf("Failed to get random bytes: %v", err)
 		}
 	}
 }
 
 func BenchmarkGenerateRandomPassword(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		_, err := security.GenerateRandomPassword(16)
+		_, err := security.GenerateRandomPassword(shortPassphraseLength)
 		if err != nil {
-			b.Logf("Failed to generate password: %v", err)
+			b.Fatalf("Failed to generate password: %v", err)
 		}
 	}
 }

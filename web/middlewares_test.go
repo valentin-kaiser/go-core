@@ -6,6 +6,14 @@ import (
 	"testing"
 )
 
+const (
+	exampleOrigin   = "https://example.com"
+	appOrigin       = "https://app.example.com"
+	apiOrigin       = "https://api.example.com"
+	evilOrigin      = "https://evil.example.com"
+	localhostOrigin = "https://localhost:4200"
+)
+
 // noopHandler is a simple handler that writes a 200 OK response.
 var noopHandler = http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusOK)
@@ -65,7 +73,7 @@ func TestCORSConfigDefaults(t *testing.T) {
 
 func TestCORSConfigCustomValues(t *testing.T) {
 	config := &CORSConfig{
-		AllowOrigin:   "https://example.com",
+		AllowOrigin:   exampleOrigin,
 		AllowMethods:  []string{"GET", "POST"},
 		AllowHeaders:  []string{"X-Custom"},
 		MaxAge:        3600,
@@ -77,7 +85,7 @@ func TestCORSConfigCustomValues(t *testing.T) {
 
 	handler.ServeHTTP(rec, req)
 
-	assertHeader(t, rec, "Access-Control-Allow-Origin", "https://example.com")
+	assertHeader(t, rec, "Access-Control-Allow-Origin", exampleOrigin)
 	assertHeader(t, rec, "Access-Control-Allow-Methods", "GET, POST")
 	assertHeader(t, rec, "Access-Control-Allow-Headers", "X-Custom")
 	assertHeader(t, rec, "Access-Control-Max-Age", "3600")
@@ -90,7 +98,7 @@ func TestCORSConfigCustomValues(t *testing.T) {
 
 func TestCORSConfigCredentialsEchoesOrigin(t *testing.T) {
 	config := &CORSConfig{
-		AllowOrigin:      "https://app.example.com",
+		AllowOrigin:      appOrigin,
 		AllowMethods:     []string{"GET"},
 		AllowCredentials: true,
 	}
@@ -98,19 +106,19 @@ func TestCORSConfigCredentialsEchoesOrigin(t *testing.T) {
 
 	t.Run("matching Origin is reflected", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req.Header.Set("Origin", "https://app.example.com")
+		req.Header.Set("Origin", appOrigin)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
 
-		assertHeader(t, rec, "Access-Control-Allow-Origin", "https://app.example.com")
+		assertHeader(t, rec, "Access-Control-Allow-Origin", appOrigin)
 		assertHeader(t, rec, "Access-Control-Allow-Credentials", "true")
 		assertHeader(t, rec, "Vary", "Origin")
 	})
 
 	t.Run("non-matching Origin does not get credentials", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req.Header.Set("Origin", "https://evil.example.com")
+		req.Header.Set("Origin", evilOrigin)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -145,7 +153,7 @@ func TestCORSConfigCredentialsEchoesOrigin(t *testing.T) {
 
 func TestCORSConfigCredentialsMultipleOrigins(t *testing.T) {
 	config := &CORSConfig{
-		AllowOrigins:     []string{"https://app.example.com", "https://localhost:4200"},
+		AllowOrigins:     []string{appOrigin, localhostOrigin},
 		AllowMethods:     []string{"GET"},
 		AllowCredentials: true,
 	}
@@ -153,30 +161,30 @@ func TestCORSConfigCredentialsMultipleOrigins(t *testing.T) {
 
 	t.Run("first configured origin is reflected", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req.Header.Set("Origin", "https://app.example.com")
+		req.Header.Set("Origin", appOrigin)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
 
-		assertHeader(t, rec, "Access-Control-Allow-Origin", "https://app.example.com")
+		assertHeader(t, rec, "Access-Control-Allow-Origin", appOrigin)
 		assertHeader(t, rec, "Access-Control-Allow-Credentials", "true")
 		assertHeader(t, rec, "Vary", "Origin")
 	})
 
 	t.Run("second configured origin is reflected", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req.Header.Set("Origin", "https://localhost:4200")
+		req.Header.Set("Origin", localhostOrigin)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
 
-		assertHeader(t, rec, "Access-Control-Allow-Origin", "https://localhost:4200")
+		assertHeader(t, rec, "Access-Control-Allow-Origin", localhostOrigin)
 		assertHeader(t, rec, "Access-Control-Allow-Credentials", "true")
 	})
 
 	t.Run("non-matching Origin does not get credentials", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/", nil)
-		req.Header.Set("Origin", "https://evil.example.com")
+		req.Header.Set("Origin", evilOrigin)
 		rec := httptest.NewRecorder()
 
 		handler.ServeHTTP(rec, req)
@@ -213,7 +221,7 @@ func TestCORSConfigCredentialsWildcardOriginRejected(t *testing.T) {
 
 func TestCORSVaryHeaderDedup(t *testing.T) {
 	config := &CORSConfig{
-		AllowOrigin:      "https://example.com",
+		AllowOrigin:      exampleOrigin,
 		AllowCredentials: true,
 	}
 	handler := corsHeaderMiddlewareWithConfig(config)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -223,7 +231,7 @@ func TestCORSVaryHeaderDedup(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set("Origin", "https://example.com")
+	req.Header.Set("Origin", exampleOrigin)
 	rec := httptest.NewRecorder()
 
 	handler.ServeHTTP(rec, req)
@@ -243,7 +251,7 @@ func TestCORSVaryHeaderDedup(t *testing.T) {
 
 func TestCORSConfigExposeHeadersOmittedWhenEmpty(t *testing.T) {
 	config := &CORSConfig{
-		AllowOrigin:   "https://example.com",
+		AllowOrigin:   exampleOrigin,
 		ExposeHeaders: []string{},
 	}
 	handler := corsHeaderMiddlewareWithConfig(config)(noopHandler)
@@ -359,7 +367,7 @@ func TestRouteHeadersBulk(t *testing.T) {
 
 func TestRouteCORSOverridesServerWide(t *testing.T) {
 	server := New()
-	server.WithCORSHeaders(&CORSConfig{AllowOrigin: "https://example.com"})
+	server.WithCORSHeaders(&CORSConfig{AllowOrigin: exampleOrigin})
 	server.WithRouteCORS("/public-api/", &CORSConfig{AllowOrigin: "*"})
 	if server.Error != nil {
 		t.Fatalf("unexpected error: %v", server.Error)
@@ -377,12 +385,12 @@ func TestRouteCORSOverridesServerWide(t *testing.T) {
 	req = httptest.NewRequest(http.MethodGet, "/other", nil)
 	rec = httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-	assertHeader(t, rec, "Access-Control-Allow-Origin", "https://example.com")
+	assertHeader(t, rec, "Access-Control-Allow-Origin", exampleOrigin)
 }
 
 func TestRouteCORSWithoutServerWideDefault(t *testing.T) {
 	server := New()
-	server.WithRouteCORS("/api/", &CORSConfig{AllowOrigin: "https://api.example.com"})
+	server.WithRouteCORS("/api/", &CORSConfig{AllowOrigin: apiOrigin})
 	if server.Error != nil {
 		t.Fatalf("unexpected error: %v", server.Error)
 	}
@@ -392,7 +400,7 @@ func TestRouteCORSWithoutServerWideDefault(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/api/things", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)
-	assertHeader(t, rec, "Access-Control-Allow-Origin", "https://api.example.com")
+	assertHeader(t, rec, "Access-Control-Allow-Origin", apiOrigin)
 
 	// Unmatched routes get no CORS headers at all since no server-wide default was set
 	req = httptest.NewRequest(http.MethodGet, "/other", nil)

@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/valentin-kaiser/go-core/mail"
 )
@@ -292,9 +291,6 @@ func TestTemplateManager_AutoReload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to update template: %v", err)
 	}
-
-	// Small delay to ensure file modification time changes
-	time.Sleep(100 * time.Millisecond)
 
 	// Force reload
 	err = tm.ReloadTemplates()

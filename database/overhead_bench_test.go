@@ -3,9 +3,7 @@ package database_test
 import (
 	"database/sql"
 	"testing"
-	"time"
 
-	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/database"
 )
 
@@ -18,8 +16,8 @@ func overheadDB(b *testing.B) *database.Database[TestQueries] {
 	b.Helper()
 	db := database.New[TestQueries](database.DriverSQLite, "overhead")
 	db.RegisterQueries(NewTestQueries)
-	db.Connect(100*time.Millisecond, ":memory:")
-	b.Cleanup(func() { apperror.Catch(db.Disconnect, "disconnecting database failed") })
+	db.Connect(connectInterval, memoryDSN)
+	cleanupDisconnect(b, db)
 	db.AwaitConnection()
 	return db
 }
@@ -89,8 +87,8 @@ func typedOverheadDB(b *testing.B) *database.Database[TestQueries] {
 	b.Helper()
 	db := database.New[TestQueries](database.DriverSQLite, "overhead-typed")
 	db.RegisterQueriesFunc(func(c database.DBTX) *TestQueries { return NewTestQueries(c) })
-	db.Connect(100*time.Millisecond, ":memory:")
-	b.Cleanup(func() { apperror.Catch(db.Disconnect, "disconnecting database failed") })
+	db.Connect(connectInterval, memoryDSN)
+	cleanupDisconnect(b, db)
 	db.AwaitConnection()
 	return db
 }

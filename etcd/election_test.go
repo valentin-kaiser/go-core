@@ -7,22 +7,30 @@ import (
 )
 
 func TestElectionLeadershipTransfer(t *testing.T) {
+	const (
+		electionTimeout = 15 * time.Second
+		electionName    = "scheduler"
+		firstNode       = "node-1"
+		secondNode      = "node-2"
+		blockedWait     = 300 * time.Millisecond
+	)
+
 	cli := newTestClient(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), electionTimeout)
 	defer cancel()
 
-	leader, err := cli.Campaign(ctx, "scheduler", "node-1", 5*time.Second)
+	leader, err := cli.Campaign(ctx, electionName, firstNode, leaseTTL)
 	if err != nil {
-		t.Fatalf("Campaign node-1: %v", err)
+		t.Fatalf("Campaign %s: %v", firstNode, err)
 	}
 
 	identity, err := leader.Leader(ctx)
 	if err != nil {
 		t.Fatalf("Leader: %v", err)
 	}
-	if identity != "node-1" {
-		t.Fatalf("expected node-1 as leader, got %q", identity)
+	if identity != firstNode {
+		t.Fatalf("expected %s as leader, got %q", firstNode, identity)
 	}
 
 	// Second candidate must block until first resigns.
@@ -31,33 +39,43 @@ func TestElectionLeadershipTransfer(t *testing.T) {
 		acquired time.Time
 	}
 	got := make(chan result, 1)
+	resigned := make(chan error, 1)
 	go func() {
-		next, err := cli.Campaign(ctx, "scheduler", "node-2", 5*time.Second)
+		next, err := cli.Campaign(ctx, electionName, secondNode, leaseTTL)
 		if err != nil {
 			got <- result{err: err}
 			return
 		}
 		got <- result{acquired: time.Now()}
-		_ = next.Resign(ctx)
+		resigned <- next.Resign(ctx)
 	}()
 
 	select {
 	case <-got:
-		t.Fatal("node-2 acquired leadership while node-1 still leader")
-	case <-time.After(300 * time.Millisecond):
+		t.Fatalf("%s acquired leadership while %s still leader", secondNode, firstNode)
+	case <-time.After(blockedWait):
 	}
 
 	err = leader.Resign(ctx)
 	if err != nil {
-		t.Fatalf("Resign node-1: %v", err)
+		t.Fatalf("Resign %s: %v", firstNode, err)
 	}
 
 	select {
 	case r := <-got:
 		if r.err != nil {
-			t.Fatalf("node-2 Campaign: %v", r.err)
+			t.Fatalf("%s Campaign: %v", secondNode, r.err)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("node-2 never acquired leadership after node-1 resigned")
+	case <-time.After(requestTimeout):
+		t.Fatalf("%s never acquired leadership after %s resigned", secondNode, firstNode)
+	}
+
+	select {
+	case err := <-resigned:
+		if err != nil {
+			t.Fatalf("Resign %s: %v", secondNode, err)
+		}
+	case <-time.After(requestTimeout):
+		t.Fatalf("%s never finished resigning", secondNode)
 	}
 }
