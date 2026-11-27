@@ -47,7 +47,7 @@ func (c *Client) Campaign(ctx context.Context, key, identity string, ttl time.Du
 		return nil, apperror.NewError("creating etcd session failed").AddError(err)
 	}
 
-	fullKey := c.key("elections", key)
+	fullKey := c.key(electionsKeyGroup, key)
 	el := concurrency.NewElection(session, fullKey)
 
 	err = el.Campaign(ctx, identity)

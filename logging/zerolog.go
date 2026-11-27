@@ -15,6 +15,12 @@ import (
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
+// Field names added by the zerolog adapter.
+const (
+	fieldCaller  = "caller"
+	fieldPackage = "package"
+)
+
 // ZerologEvent wraps zerolog.Event to implement our Event interface
 type ZerologEvent struct {
 	event *zerolog.Event
@@ -137,7 +143,7 @@ func (z *ZerologAdapter) event(ev *zerolog.Event) Event {
 	}
 	e := &ZerologEvent{event: ev}
 	if debug.Load() {
-		return e.Field("caller", callerInfo(4))
+		return e.Field(fieldCaller, callerInfo(callerSkipFrames))
 	}
 	return e
 }
@@ -313,7 +319,7 @@ func (z *ZerologAdapter) WithPackage(pkg string) Adapter {
 			return d.adapter
 		}
 	}
-	adapter := newZerologAdapter(st.logger.With().Str("package", pkg).Logger(), st.level)
+	adapter := newZerologAdapter(st.logger.With().Str(fieldPackage, pkg).Logger(), st.level)
 	z.packages.Store(pkg, &derivedAdapter{source: st, adapter: adapter})
 	return adapter
 }

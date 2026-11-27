@@ -46,19 +46,34 @@ import (
 	"github.com/valentin-kaiser/go-core/i18n"
 )
 
+const (
+	defaultTraceDelimiter   = " -> "
+	defaultErrorDelimiter   = " => "
+	defaultTraceFormat      = "%v+%v"
+	defaultErrorFormat      = "%s [%s]"
+	defaultErrorTraceFormat = "%s | %s"
+	defaultFullFormat       = "%s | %s [%s]"
+	messageDetailsFormat    = "%s | %s"
+	detailFormat            = "%s: %v"
+	detailSeparator         = ", "
+	detailsPrefix           = " "
+	maxTraceDepth           = 32
+	unknownLocation         = "unknown"
+)
+
 var (
 	// TraceDelimiter is used to separate trace entries
-	TraceDelimiter = " -> "
+	TraceDelimiter = defaultTraceDelimiter
 	// ErrorDelimiter is used to separate multiple errors
-	ErrorDelimiter = " => "
+	ErrorDelimiter = defaultErrorDelimiter
 	// TraceFormat is the format for displaying trace entries
-	TraceFormat = "%v+%v"
+	TraceFormat = defaultTraceFormat
 	// ErrorFormat is the format for displaying the error message and additional errors
-	ErrorFormat = "%s [%s]"
+	ErrorFormat = defaultErrorFormat
 	// ErrorTraceFormat is the format for displaying the error message with a stack trace
-	ErrorTraceFormat = "%s | %s"
+	ErrorTraceFormat = defaultErrorTraceFormat
 	// FullFormat is the format for displaying the error message with a stack trace and additional errors
-	FullFormat = "%s | %s [%s]"
+	FullFormat = defaultFullFormat
 	// WithDetails is a flag to control whether additional details should be included in the error output
 	WithDetails = false
 	// FormatDetails is a function that formats additional details for the error
@@ -69,9 +84,9 @@ var (
 		var sb strings.Builder
 		for key, value := range details {
 			if sb.Len() > 0 {
-				sb.WriteString(", ")
+				sb.WriteString(detailSeparator)
 			}
-			fmt.Fprintf(&sb, "%s: %v", key, value)
+			fmt.Fprintf(&sb, detailFormat, key, value)
 		}
 		return sb.String()
 	}
@@ -254,11 +269,11 @@ func (e Error) Error() string {
 
 		switch {
 		case errors == "" && details != "":
-			return fmt.Sprintf("%s | %s", trace.String(), details)
+			return fmt.Sprintf(messageDetailsFormat, trace.String(), details)
 		case errors != "" && details == "":
 			return fmt.Sprintf(FullFormat, trace.String(), e.Message, errors)
 		case errors != "" && details != "":
-			return fmt.Sprintf(FullFormat, trace.String(), e.Message, errors) + " " + details
+			return fmt.Sprintf(FullFormat, trace.String(), e.Message, errors) + detailsPrefix + details
 		default:
 			return fmt.Sprintf(ErrorTraceFormat, trace.String(), e.Message)
 		}
@@ -279,7 +294,7 @@ func (e Error) Error() string {
 
 	switch {
 	case errors == "" && details != "":
-		return fmt.Sprintf("%s | %s", e.Message, details)
+		return fmt.Sprintf(messageDetailsFormat, e.Message, details)
 	case errors != "" && details == "":
 		return fmt.Sprintf(ErrorFormat, e.Message, errors)
 	case errors != "" && details != "":
@@ -388,10 +403,10 @@ func CatchCustom(f func() error, msg string, handler func(error, string)) {
 // Where returns the trace location of the caller at the specified level
 // The level parameter indicates how many stack frames to skip
 func Where(level int) string {
-	pc := make([]uintptr, 32)
+	pc := make([]uintptr, maxTraceDepth)
 	n := runtime.Callers(level, pc)
 	if n == 0 {
-		return "unknown"
+		return unknownLocation
 	}
 
 	pc = pc[:n]
@@ -429,7 +444,7 @@ func Trace(skip int) string {
 	// runtime.Callers counts the frame of Callers itself as 0, runtime.Caller counts the caller as 0
 	var pcs [1]uintptr
 	if runtime.Callers(skip+1, pcs[:]) == 0 {
-		return "unknown"
+		return unknownLocation
 	}
 
 	// Turning a program counter into file, function and line is the expensive part and the
@@ -447,7 +462,7 @@ func Trace(skip int) string {
 	case key.anonymous && frame.Function != "":
 		s = frame.Function + ":" + strconv.Itoa(frame.Line)
 	case key.anonymous:
-		s = "unknown"
+		s = unknownLocation
 	default:
 		s = frame.File + ":" + strconv.Itoa(frame.Line)
 	}

@@ -446,32 +446,32 @@ func (router *Router) canonicalRedirect(w http.ResponseWriter, r *http.Request) 
 	}
 
 	host := r.Host
-	if xfh := r.Header.Get("X-Forwarded-Host"); xfh != "" {
-		host = strings.SplitN(xfh, ",", 2)[0]
+	if xfh := r.Header.Get(headerForwardedHost); xfh != "" {
+		host = strings.SplitN(xfh, commaSeparator, splitPartsCount)[0]
 		host = strings.TrimSpace(host)
 	}
 
-	addr := strings.Split(host, ":")
+	addr := strings.Split(host, hostPortSeparator)
 
 	port := ""
 	domain := addr[0]
 	if len(addr) > 1 {
-		port = ":" + addr[1]
+		port = hostPortSeparator + addr[1]
 	}
 
 	if domain != router.canonicalDomain {
-		protocol := "http"
+		protocol := string(ProtocolHTTP)
 		if r.TLS != nil {
-			protocol = "https"
-		} else if xfp := r.Header.Get("X-Forwarded-Proto"); xfp != "" {
-			candidate := strings.ToLower(strings.TrimSpace(strings.SplitN(xfp, ",", 2)[0]))
-			if candidate == "https" || candidate == "http" {
+			protocol = string(ProtocolHTTPS)
+		} else if xfp := r.Header.Get(headerForwardedProto); xfp != "" {
+			candidate := strings.ToLower(strings.TrimSpace(strings.SplitN(xfp, commaSeparator, splitPartsCount)[0]))
+			if candidate == string(ProtocolHTTPS) || candidate == string(ProtocolHTTP) {
 				protocol = candidate
 			}
 		}
 
 		logger.Trace().Fields(logging.F("host", host), logging.F("domain", router.canonicalDomain), logging.F("port", port), logging.F("protocol", protocol)).Msg("redirecting to canonical domain")
-		http.Redirect(w, r, protocol+"://"+router.canonicalDomain+port+r.RequestURI, http.StatusMovedPermanently) //nolint:gosec // target host is the configured canonical domain, only the request path is user-controlled
+		http.Redirect(w, r, protocol+schemeSeparator+router.canonicalDomain+port+r.RequestURI, http.StatusMovedPermanently) //nolint:gosec // target host is the configured canonical domain, only the request path is user-controlled
 		return true
 	}
 	return false
@@ -489,14 +489,14 @@ func (router *Router) honeypot(w http.ResponseWriter, r *http.Request) {
 
 	logger.Trace().Fields(logging.F("ip", ip.String())).Msg("honeypot triggered, checking IP address")
 	if !router.ipInList(ip, router.state.Load().whitelist) {
-		cidr := ip.String() + "/32"
+		cidr := ip.String() + ipv4PrefixSuffix
 		if ip.To4() == nil {
-			cidr = ip.String() + "/128" // Use /128 for IPv6 addresses
+			cidr = ip.String() + ipv6PrefixSuffix // Use /128 for IPv6 addresses
 		}
 
 		_, network, err := net.ParseCIDR(cidr)
 		if err != nil {
-			logger.Error().Fields(logging.F("error", err), logging.F("ip", cidr)).Msg("failed to parse IP address for honeypot")
+			logger.Error().Err(err).Fields(logging.F("ip", cidr)).Msg("parsing IP address for honeypot failed")
 			return
 		}
 
@@ -584,8 +584,8 @@ func (router *Router) setBlacklist(entries []string) error {
 func (router *Router) matchPattern(path string, patterns map[string]struct{}) (matched string) {
 	for pattern := range patterns {
 		if pattern == path ||
-			(strings.HasSuffix(pattern, "/") && strings.HasPrefix(path, pattern)) ||
-			pattern == "/" {
+			(strings.HasSuffix(pattern, pathSeparator) && strings.HasPrefix(path, pattern)) ||
+			pattern == pathSeparator {
 			if len(pattern) > len(matched) {
 				matched = pattern
 			}
@@ -597,15 +597,15 @@ func (router *Router) matchPattern(path string, patterns map[string]struct{}) (m
 func (router *Router) clientIP(r *http.Request) string {
 	// The keys are already in canonical form, so index the map instead of canonicalizing them
 	// again for every request, which is what Header.Get does
-	if values := r.Header["X-Forwarded-For"]; len(values) > 0 && values[0] != "" {
+	if values := r.Header[headerForwardedFor]; len(values) > 0 && values[0] != "" {
 		xff := values[0]
-		if i := strings.IndexByte(xff, ','); i >= 0 {
+		if i := strings.IndexByte(xff, commaSeparator[0]); i >= 0 {
 			xff = xff[:i]
 		}
 		return strings.TrimSpace(xff)
 	}
 
-	if values := r.Header["X-Real-Ip"]; len(values) > 0 && values[0] != "" {
+	if values := r.Header[canonicalHeaderRealIP]; len(values) > 0 && values[0] != "" {
 		return strings.TrimSpace(values[0])
 	}
 
@@ -638,13 +638,13 @@ func (router *Router) ipInList(ip net.IP, list map[string]*net.IPNet) bool {
 func (router *Router) parseIPList(entries []string) ([]*net.IPNet, error) {
 	var list []*net.IPNet
 	for _, entry := range entries {
-		if !strings.Contains(entry, "/") {
+		if !strings.Contains(entry, pathSeparator) {
 			if ip := net.ParseIP(entry); ip != nil {
 				if ip.To4() != nil {
-					entry += "/32" // Use /32 for IPv4 addresses
+					entry += ipv4PrefixSuffix // Use /32 for IPv4 addresses
 				}
 				if ip.To4() == nil {
-					entry += "/128" // Use /128 for IPv6 addresses
+					entry += ipv6PrefixSuffix // Use /128 for IPv6 addresses
 				}
 			}
 		}

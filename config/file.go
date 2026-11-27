@@ -25,11 +25,11 @@ func newFileSource(name, path string) *fileSource {
 }
 
 // Name implements Source.
-func (s *fileSource) Name() string { return "file" }
+func (s *fileSource) Name() string { return fileSourceName }
 
 // configFile returns the absolute path to the YAML file on disk.
 func (s *fileSource) configFile() string {
-	return filepath.Join(s.path, s.name+".yaml")
+	return filepath.Join(s.path, s.name+configFileExtension)
 }
 
 // Load implements Source. It returns ErrNotFound when the YAML file does not
@@ -61,7 +61,7 @@ func (s *fileSource) Load(_ context.Context) (map[string]any, error) {
 // Save implements Source. It writes the configuration to the YAML file,
 // creating the directory if necessary.
 func (s *fileSource) Save(_ context.Context, c Config) error {
-	err := os.MkdirAll(s.path, 0750)
+	err := os.MkdirAll(s.path, configDirMode)
 	if err != nil {
 		return apperror.NewError("creating configuration directory failed").AddError(err)
 	}
@@ -71,7 +71,7 @@ func (s *fileSource) Save(_ context.Context, c Config) error {
 		return apperror.NewError("building absolute path of configuration file failed").AddError(err)
 	}
 
-	file, err := os.OpenFile(filepath.Clean(path), os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0600)
+	file, err := os.OpenFile(filepath.Clean(path), os.O_RDWR|os.O_CREATE|os.O_TRUNC, configFileMode)
 	if err != nil {
 		return apperror.NewError("opening configuration file failed").AddError(err)
 	}
@@ -153,7 +153,7 @@ func (s *fileSource) Watch(ctx context.Context, onChange func(map[string]any)) (
 				if event.Op&(fsnotify.Write|fsnotify.Create) == 0 {
 					continue
 				}
-				debounce.Reset(100 * time.Millisecond)
+				debounce.Reset(reloadDebounce)
 			case <-debounce.C:
 				values, err := s.Load(watchCtx)
 				if err != nil {
@@ -174,7 +174,7 @@ func flattenYAML(data map[string]any, prefix string, out map[string]any) {
 	for key, value := range data {
 		fullKey := key
 		if prefix != "" {
-			fullKey = prefix + "." + key
+			fullKey = prefix + keySeparator + key
 		}
 
 		if nested, ok := value.(map[string]any); ok {

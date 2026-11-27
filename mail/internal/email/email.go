@@ -29,6 +29,51 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
+// Header names, media types and encodings used while building and parsing messages.
+const (
+	headerContentType             = "Content-Type"
+	headerContentTransferEncoding = "Content-Transfer-Encoding"
+	headerContentDisposition      = "Content-Disposition"
+	headerContentID               = "Content-ID"
+	headerTo                      = "To"
+	headerFrom                    = "From"
+	headerCc                      = "Cc"
+	headerBcc                     = "Bcc"
+	headerSubject                 = "Subject"
+	headerReplyTo                 = "Reply-To"
+	headerMessageID               = "Message-Id"
+	headerMIMEVersion             = "MIME-Version"
+	headerDate                    = "Date"
+
+	mimeVersion = "1.0"
+
+	encodingQuotedPrintable = "quoted-printable"
+	encodingBase64          = "base64"
+
+	mediaTypeTextPlain       = "text/plain"
+	mediaTypeTextHTML        = "text/html"
+	mediaTypeOctetStream     = "application/octet-stream"
+	mediaTypeMultipartPrefix = "multipart/"
+
+	multipartMixedBoundary       = "multipart/mixed;\r\n boundary="
+	multipartAlternativeBoundary = "multipart/alternative;\r\n boundary="
+	multipartRelatedBoundary     = "multipart/related;\r\n boundary="
+
+	charsetUTF8       = "UTF-8"
+	charsetUTF8Suffix = "; charset=" + charsetUTF8
+	textHTMLUTF8      = mediaTypeTextHTML + charsetUTF8Suffix
+	textPlainUTF8     = mediaTypeTextPlain + charsetUTF8Suffix
+
+	dispositionInline     = "inline"
+	dispositionAttachment = "attachment"
+
+	paramBoundary = "boundary"
+	paramFilename = "filename"
+
+	networkTCP       = "tcp"
+	fallbackHostname = "localhost.localdomain"
+)
+
 const (
 	// MaxLineLength is the maximum line length per RFC 2045
 	MaxLineLength = 76
@@ -89,26 +134,26 @@ func NewFromReader(r io.Reader) (*Email, error) {
 
 	for h, v := range headers {
 		switch h {
-		case "Subject":
+		case headerSubject:
 			msg.Subject = v[0]
 			subj, err := (&mime.WordDecoder{}).DecodeHeader(msg.Subject)
 			if err == nil && len(subj) > 0 {
 				msg.Subject = subj
 			}
 			delete(headers, h)
-		case "To":
+		case headerTo:
 			msg.To = handleAddressList(v)
 			delete(headers, h)
-		case "Cc":
+		case headerCc:
 			msg.Cc = handleAddressList(v)
 			delete(headers, h)
-		case "Bcc":
+		case headerBcc:
 			msg.Bcc = handleAddressList(v)
 			delete(headers, h)
-		case "Reply-To":
+		case headerReplyTo:
 			msg.ReplyTo = handleAddressList(v)
 			delete(headers, h)
-		case "From":
+		case headerFrom:
 			msg.From = v[0]
 			fr, err := (&mime.WordDecoder{}).DecodeHeader(msg.From)
 			if err == nil && len(fr) > 0 {
@@ -126,23 +171,23 @@ func NewFromReader(r io.Reader) (*Email, error) {
 	}
 
 	for _, p := range parts {
-		contentType := p.header.Get("Content-Type")
+		contentType := p.header.Get(headerContentType)
 		if contentType == "" {
 			return msg, apperror.NewError("no Content-Type found for MIME entity")
 		}
 
-		contentType, _, err = mime.ParseMediaType(p.header.Get("Content-Type"))
+		contentType, _, err = mime.ParseMediaType(p.header.Get(headerContentType))
 		if err != nil {
-			return msg, apperror.NewErrorf("parsing Content-Type header with value %q failed", p.header.Get("Content-Type")).AddError(err)
+			return msg, apperror.NewErrorf("parsing Content-Type header with value %q failed", p.header.Get(headerContentType)).AddError(err)
 		}
 
-		if cd := p.header.Get("Content-Disposition"); cd != "" {
-			cd, params, err := mime.ParseMediaType(p.header.Get("Content-Disposition"))
+		if cd := p.header.Get(headerContentDisposition); cd != "" {
+			cd, params, err := mime.ParseMediaType(p.header.Get(headerContentDisposition))
 			if err != nil {
-				return msg, apperror.NewErrorf("parsing Content-Disposition header with value %q failed", p.header.Get("Content-Disposition")).AddError(err)
+				return msg, apperror.NewErrorf("parsing Content-Disposition header with value %q failed", p.header.Get(headerContentDisposition)).AddError(err)
 			}
-			filename, filenameDefined := params["filename"]
-			if cd == "attachment" || (cd == "inline" && filenameDefined) {
+			filename, filenameDefined := params[paramFilename]
+			if cd == dispositionAttachment || (cd == dispositionInline && filenameDefined) {
 				_, err = msg.Attach(bytes.NewReader(p.body), filename, contentType)
 				if err != nil {
 					return msg, apperror.NewErrorf("attaching MIME part %s failed", filename).AddError(err)
@@ -151,9 +196,9 @@ func NewFromReader(r io.Reader) (*Email, error) {
 			}
 		}
 		switch contentType {
-		case "text/plain":
+		case mediaTypeTextPlain:
 			msg.Text = p.body
-		case "text/html":
+		case mediaTypeTextHTML:
 			msg.HTML = p.body
 		}
 	}
@@ -223,17 +268,17 @@ func (e *Email) Bytes() ([]byte, error) {
 	}
 	switch {
 	case isMixed:
-		headers.Set("Content-Type", "multipart/mixed;\r\n boundary="+w.Boundary())
+		headers.Set(headerContentType, multipartMixedBoundary+w.Boundary())
 	case isAlternative:
-		headers.Set("Content-Type", "multipart/alternative;\r\n boundary="+w.Boundary())
+		headers.Set(headerContentType, multipartAlternativeBoundary+w.Boundary())
 	case isRelated:
-		headers.Set("Content-Type", "multipart/related;\r\n boundary="+w.Boundary())
+		headers.Set(headerContentType, multipartRelatedBoundary+w.Boundary())
 	case len(e.HTML) > 0:
-		headers.Set("Content-Type", "text/html; charset=UTF-8")
-		headers.Set("Content-Transfer-Encoding", "quoted-printable")
+		headers.Set(headerContentType, textHTMLUTF8)
+		headers.Set(headerContentTransferEncoding, encodingQuotedPrintable)
 	default:
-		headers.Set("Content-Type", "text/plain; charset=UTF-8")
-		headers.Set("Content-Transfer-Encoding", "quoted-printable")
+		headers.Set(headerContentType, textPlainUTF8)
+		headers.Set(headerContentTransferEncoding, encodingQuotedPrintable)
 	}
 
 	err = headerToBytes(buf, headers)
@@ -253,7 +298,7 @@ func (e *Email) Bytes() ([]byte, error) {
 		if isMixed && isAlternative {
 			subWriter = multipart.NewWriter(buf)
 			header := textproto.MIMEHeader{
-				"Content-Type": {"multipart/alternative;\r\n boundary=" + subWriter.Boundary()},
+				headerContentType: {multipartAlternativeBoundary + subWriter.Boundary()},
 			}
 			_, err := w.CreatePart(header)
 			if err != nil {
@@ -262,7 +307,7 @@ func (e *Email) Bytes() ([]byte, error) {
 		}
 
 		if len(e.Text) > 0 {
-			err := writeMessage(buf, e.Text, isMixed || isAlternative, "text/plain", subWriter)
+			err := writeMessage(buf, e.Text, isMixed || isAlternative, mediaTypeTextPlain, subWriter)
 			if err != nil {
 				return nil, apperror.NewError("writing text part failed").AddError(err)
 			}
@@ -274,7 +319,7 @@ func (e *Email) Bytes() ([]byte, error) {
 			if (isMixed || isAlternative) && len(htmlAttachments) > 0 {
 				relatedWriter = multipart.NewWriter(buf)
 				header := textproto.MIMEHeader{
-					"Content-Type": {"multipart/related;\r\n boundary=" + relatedWriter.Boundary()},
+					headerContentType: {multipartRelatedBoundary + relatedWriter.Boundary()},
 				}
 				_, err := subWriter.CreatePart(header)
 				if err != nil {
@@ -288,7 +333,7 @@ func (e *Email) Bytes() ([]byte, error) {
 				messageWriter = w
 			}
 
-			err := writeMessage(buf, e.HTML, isMixed || isAlternative || isRelated, "text/html", messageWriter)
+			err := writeMessage(buf, e.HTML, isMixed || isAlternative || isRelated, mediaTypeTextHTML, messageWriter)
 			if err != nil {
 				return nil, apperror.NewError("writing HTML part failed").AddError(err)
 			}
@@ -451,7 +496,7 @@ func (e *Email) SendWithTLS(address string, auth smtp.Auth, config *tls.Config, 
 		return apperror.NewError("building message bytes failed").AddError(err)
 	}
 
-	conn, err := tls.Dial("tcp", address, config)
+	conn, err := tls.Dial(networkTCP, address, config)
 	if err != nil {
 		return apperror.NewError("dialing TLS connection failed").AddError(err)
 	}
@@ -599,39 +644,39 @@ func (e *Email) SendWithStartTLS(address string, auth smtp.Auth, config *tls.Con
 func (e *Email) msgHeaders() (textproto.MIMEHeader, error) {
 	res := make(textproto.MIMEHeader, len(e.Headers)+6)
 	if e.Headers != nil {
-		for _, h := range []string{"Reply-To", "To", "Cc", "From", "Subject", "Date", "Message-Id", "MIME-Version"} {
+		for _, h := range []string{headerReplyTo, headerTo, headerCc, headerFrom, headerSubject, headerDate, headerMessageID, headerMIMEVersion} {
 			if v, ok := e.Headers[h]; ok {
 				res[h] = v
 			}
 		}
 	}
-	if _, ok := res["Reply-To"]; !ok && len(e.ReplyTo) > 0 {
-		res.Set("Reply-To", strings.Join(e.ReplyTo, ", "))
+	if _, ok := res[headerReplyTo]; !ok && len(e.ReplyTo) > 0 {
+		res.Set(headerReplyTo, strings.Join(e.ReplyTo, ", "))
 	}
-	if _, ok := res["To"]; !ok && len(e.To) > 0 {
-		res.Set("To", strings.Join(e.To, ", "))
+	if _, ok := res[headerTo]; !ok && len(e.To) > 0 {
+		res.Set(headerTo, strings.Join(e.To, ", "))
 	}
-	if _, ok := res["Cc"]; !ok && len(e.Cc) > 0 {
-		res.Set("Cc", strings.Join(e.Cc, ", "))
+	if _, ok := res[headerCc]; !ok && len(e.Cc) > 0 {
+		res.Set(headerCc, strings.Join(e.Cc, ", "))
 	}
-	if _, ok := res["Subject"]; !ok && e.Subject != "" {
-		res.Set("Subject", e.Subject)
+	if _, ok := res[headerSubject]; !ok && e.Subject != "" {
+		res.Set(headerSubject, e.Subject)
 	}
-	if _, ok := res["Message-Id"]; !ok {
+	if _, ok := res[headerMessageID]; !ok {
 		id, err := generateMessageID()
 		if err != nil {
 			return nil, apperror.NewError("generating message ID failed").AddError(err)
 		}
-		res.Set("Message-Id", id)
+		res.Set(headerMessageID, id)
 	}
-	if _, ok := res["From"]; !ok {
-		res.Set("From", e.From)
+	if _, ok := res[headerFrom]; !ok {
+		res.Set(headerFrom, e.From)
 	}
-	if _, ok := res["Date"]; !ok {
-		res.Set("Date", time.Now().Format(time.RFC1123Z))
+	if _, ok := res[headerDate]; !ok {
+		res.Set(headerDate, time.Now().Format(time.RFC1123Z))
 	}
-	if _, ok := res["MIME-Version"]; !ok {
-		res.Set("MIME-Version", "1.0")
+	if _, ok := res[headerMIMEVersion]; !ok {
+		res.Set(headerMIMEVersion, mimeVersion)
 	}
 	for field, vals := range e.Headers {
 		if _, ok := res[field]; !ok {
@@ -697,32 +742,32 @@ func (e *Email) estimateSize() int {
 }
 
 func (a *Attachment) setDefaultHeaders() {
-	contentType := "application/octet-stream"
+	contentType := mediaTypeOctetStream
 	if len(a.ContentType) > 0 {
 		contentType = a.ContentType
 	}
-	a.Header.Set("Content-Type", contentType)
+	a.Header.Set(headerContentType, contentType)
 
-	if len(a.Header.Get("Content-Disposition")) == 0 {
-		disposition := "attachment"
+	if len(a.Header.Get(headerContentDisposition)) == 0 {
+		disposition := dispositionAttachment
 		if a.HTMLRelated {
-			disposition = "inline"
+			disposition = dispositionInline
 		}
-		a.Header.Set("Content-Disposition", fmt.Sprintf("%s;\r\n filename=\"%s\"", disposition, a.Filename))
+		a.Header.Set(headerContentDisposition, fmt.Sprintf("%s;\r\n filename=\"%s\"", disposition, a.Filename))
 	}
-	if len(a.Header.Get("Content-ID")) == 0 {
-		a.Header.Set("Content-ID", fmt.Sprintf("<%s>", a.Filename))
+	if len(a.Header.Get(headerContentID)) == 0 {
+		a.Header.Set(headerContentID, fmt.Sprintf("<%s>", a.Filename))
 	}
-	if len(a.Header.Get("Content-Transfer-Encoding")) == 0 {
-		a.Header.Set("Content-Transfer-Encoding", "base64")
+	if len(a.Header.Get(headerContentTransferEncoding)) == 0 {
+		a.Header.Set(headerContentTransferEncoding, encodingBase64)
 	}
 }
 
 func writeMessage(buf io.Writer, msg []byte, multipart bool, mediaType string, w *multipart.Writer) error {
 	if multipart {
 		header := textproto.MIMEHeader{
-			"Content-Type":              {mediaType + "; charset=UTF-8"},
-			"Content-Transfer-Encoding": {"quoted-printable"},
+			headerContentType:             {mediaType + charsetUTF8Suffix},
+			headerContentTransferEncoding: {encodingQuotedPrintable},
 		}
 		_, err := w.CreatePart(header)
 		if err != nil {
@@ -746,18 +791,18 @@ func writeMessage(buf io.Writer, msg []byte, multipart bool, mediaType string, w
 // each (flattened) mime.Part found.
 func parseMIMEParts(hs textproto.MIMEHeader, b io.Reader) ([]*part, error) {
 	var ps []*part
-	if _, ok := hs["Content-Type"]; !ok {
-		hs.Set("Content-Type", DefaultContentType)
+	if _, ok := hs[headerContentType]; !ok {
+		hs.Set(headerContentType, DefaultContentType)
 	}
-	ct, params, err := mime.ParseMediaType(hs.Get("Content-Type"))
+	ct, params, err := mime.ParseMediaType(hs.Get(headerContentType))
 	if err != nil {
-		return ps, apperror.NewErrorf("parsing Content-Type header with value %q failed", hs.Get("Content-Type")).AddError(err)
+		return ps, apperror.NewErrorf("parsing Content-Type header with value %q failed", hs.Get(headerContentType)).AddError(err)
 	}
-	if strings.HasPrefix(ct, "multipart/") {
-		if _, ok := params["boundary"]; !ok {
+	if strings.HasPrefix(ct, mediaTypeMultipartPrefix) {
+		if _, ok := params[paramBoundary]; !ok {
 			return ps, apperror.NewError("no boundary found for multipart entity")
 		}
-		mr := multipart.NewReader(b, params["boundary"])
+		mr := multipart.NewReader(b, params[paramBoundary])
 		for {
 			var buf bytes.Buffer
 			p, err := mr.NextPart()
@@ -767,14 +812,14 @@ func parseMIMEParts(hs textproto.MIMEHeader, b io.Reader) ([]*part, error) {
 			if err != nil {
 				return ps, apperror.NewError("reading multipart part failed").AddError(err)
 			}
-			if _, ok := p.Header["Content-Type"]; !ok {
-				p.Header.Set("Content-Type", DefaultContentType)
+			if _, ok := p.Header[headerContentType]; !ok {
+				p.Header.Set(headerContentType, DefaultContentType)
 			}
-			subct, _, err := mime.ParseMediaType(p.Header.Get("Content-Type"))
+			subct, _, err := mime.ParseMediaType(p.Header.Get(headerContentType))
 			if err != nil {
-				return ps, apperror.NewErrorf("parsing Content-Type header with value %q failed", p.Header.Get("Content-Type")).AddError(err)
+				return ps, apperror.NewErrorf("parsing Content-Type header with value %q failed", p.Header.Get(headerContentType)).AddError(err)
 			}
-			if strings.HasPrefix(subct, "multipart/") {
+			if strings.HasPrefix(subct, mediaTypeMultipartPrefix) {
 				sps, err := parseMIMEParts(p.Header, p)
 				if err != nil {
 					return ps, apperror.NewError("parsing multipart parts failed").AddError(err)
@@ -785,8 +830,7 @@ func parseMIMEParts(hs textproto.MIMEHeader, b io.Reader) ([]*part, error) {
 
 			var reader io.Reader
 			reader = p
-			const cte = "Content-Transfer-Encoding"
-			if p.Header.Get(cte) == "base64" {
+			if p.Header.Get(headerContentTransferEncoding) == encodingBase64 {
 				reader = base64.NewDecoder(base64.StdEncoding, reader)
 			}
 			_, err = io.Copy(&buf, reader)
@@ -798,10 +842,10 @@ func parseMIMEParts(hs textproto.MIMEHeader, b io.Reader) ([]*part, error) {
 		return ps, nil
 	}
 
-	switch hs.Get("Content-Transfer-Encoding") {
-	case "quoted-printable":
+	switch hs.Get(headerContentTransferEncoding) {
+	case encodingQuotedPrintable:
 		b = quotedprintable.NewReader(b)
-	case "base64":
+	case encodingBase64:
 		b = base64.NewDecoder(base64.StdEncoding, b)
 	}
 	var buf bytes.Buffer
@@ -859,18 +903,18 @@ func headerToBytes(buff io.Writer, header textproto.MIMEHeader) error {
 				return apperror.NewError("writing header field separator failed").AddError(err)
 			}
 			switch field {
-			case "Content-Type", "Content-Disposition":
+			case headerContentType, headerContentDisposition:
 				_, err := buff.Write([]byte(subval))
 				if err != nil {
 					return apperror.NewError("writing header field value failed").AddError(err)
 				}
-			case "From", "To", "Cc", "Bcc":
+			case headerFrom, headerTo, headerCc, headerBcc:
 				_, err := buff.Write([]byte(subval))
 				if err != nil {
 					return apperror.NewError("writing header field value failed").AddError(err)
 				}
 			default:
-				_, err := buff.Write([]byte(mime.QEncoding.Encode("UTF-8", subval)))
+				_, err := buff.Write([]byte(mime.QEncoding.Encode(charsetUTF8, subval)))
 				if err != nil {
 					return apperror.NewError("writing header field value failed").AddError(err)
 				}
@@ -894,7 +938,7 @@ func generateMessageID() (string, error) {
 	}
 	h, err := os.Hostname()
 	if err != nil {
-		h = "localhost.localdomain"
+		h = fallbackHostname
 	}
 	msgid := fmt.Sprintf("<%d.%d.%d@%s>", t, pid, rint, h)
 	return msgid, nil

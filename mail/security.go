@@ -11,6 +11,24 @@ import (
 	"golang.org/x/time/rate"
 )
 
+// Security manager constants.
+const (
+	ipv4Bits = 32
+	ipv6Bits = 128
+
+	// heloDNSTimeout bounds the DNS lookup of a HELO hostname.
+	heloDNSTimeout = 5 * time.Second
+	// maxFQDNLength is the maximum accepted length of a HELO hostname.
+	maxFQDNLength = 255
+
+	// cleanupInterval is the interval between cleanups of stale tracking entries.
+	cleanupInterval = 5 * time.Minute
+	// rateLimiterIdleTimeout is the idle time after which a rate limiter is dropped.
+	rateLimiterIdleTimeout = 2 * time.Minute
+	// authTrackerWindowFactor scales the auth failure window after which a tracker is dropped.
+	authTrackerWindowFactor = 2
+)
+
 // FQDNPattern validates a fully qualified domain name (FQDN) with the following rules:
 // - One or more labels separated by dots.
 // - Each label is 1-63 characters: alphanumeric and hyphens, but cannot start or end with a hyphen.
@@ -81,10 +99,10 @@ func parseNetworks(entries []string) []*net.IPNet {
 
 		// Single IP address - convert to a /32 or /128 network
 		if ip4 := ip.To4(); ip4 != nil {
-			networks = append(networks, &net.IPNet{IP: ip4, Mask: net.CIDRMask(32, 32)})
+			networks = append(networks, &net.IPNet{IP: ip4, Mask: net.CIDRMask(ipv4Bits, ipv4Bits)})
 			continue
 		}
-		networks = append(networks, &net.IPNet{IP: ip, Mask: net.CIDRMask(128, 128)})
+		networks = append(networks, &net.IPNet{IP: ip, Mask: net.CIDRMask(ipv6Bits, ipv6Bits)})
 	}
 	return networks
 }
@@ -195,7 +213,7 @@ func (sm *SecurityManager) ValidateHelo(hostname, remoteAddr string) error {
 
 	// DNS validation
 	if sm.config.HeloDNSCheck {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), heloDNSTimeout)
 		defer cancel()
 
 		// Try to resolve the hostname
@@ -363,7 +381,7 @@ func (sm *SecurityManager) isIPBlocked(ip net.IP) bool {
 // isValidFQDN validates if hostname is a proper FQDN
 func (sm *SecurityManager) isValidFQDN(hostname string) bool {
 	// Basic FQDN validation
-	if len(hostname) == 0 || len(hostname) > 255 {
+	if len(hostname) == 0 || len(hostname) > maxFQDNLength {
 		return false
 	}
 
@@ -383,7 +401,7 @@ func (sm *SecurityManager) isValidFQDN(hostname string) bool {
 
 // cleanup periodically cleans up old entries
 func (sm *SecurityManager) cleanup() {
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(cleanupInterval)
 	defer ticker.Stop()
 
 	for range ticker.C {
@@ -392,14 +410,14 @@ func (sm *SecurityManager) cleanup() {
 
 		// Clean up rate limiters
 		for ip, limiter := range sm.ipRateLimit {
-			if time.Since(limiter.last) > 2*time.Minute {
+			if time.Since(limiter.last) > rateLimiterIdleTimeout {
 				delete(sm.ipRateLimit, ip)
 			}
 		}
 
 		// Clean up auth trackers
 		for ip, tracker := range sm.authFailures {
-			if now.Sub(tracker.windowStart) > 2*sm.config.AuthFailureWindow {
+			if now.Sub(tracker.windowStart) > authTrackerWindowFactor*sm.config.AuthFailureWindow {
 				delete(sm.authFailures, ip)
 			}
 		}

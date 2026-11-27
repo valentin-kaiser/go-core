@@ -8,15 +8,20 @@ import (
 // ContextKey is the type used for context keys in this package. Using a distinct type helps avoid collisions with other context keys in the application.
 type ContextKey string
 
+const (
+	languageContextKeyName = "Language"
+	requestContextKeyName  = "Request"
+)
+
 var (
 	// LanguageKey is the context key used to store and retrieve the resolved
 	// Language directly. It takes priority over the request key when both are set.
-	LanguageKey any = ContextKey("Language")
+	LanguageKey any = ContextKey(languageContextKeyName)
 
 	// RequestKey is the context key used to store and retrieve an *http.Request.
 	// The request's Accept-Language header is parsed to determine the language
 	// when no direct Language is found in the context.
-	RequestKey any = ContextKey("Request")
+	RequestKey any = ContextKey(requestContextKeyName)
 )
 
 // WithLanguage returns a new context that carries the given Language.

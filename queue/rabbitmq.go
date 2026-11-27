@@ -15,6 +15,35 @@ import (
 // maxDequeuePause is the longest pause between two polls of an empty queue
 const maxDequeuePause = 100 * time.Millisecond
 
+// RabbitMQ topology, message header and encoding constants.
+const (
+	defaultMaxPriority = 10
+	// initialDequeuePause is the first pause between two polls of an empty queue, it doubles up to maxDequeuePause.
+	initialDequeuePause = 5 * time.Millisecond
+	dequeuePauseFactor  = 2
+
+	scheduleQueueSuffix = "_schedule"
+	exchangeTypeDirect  = "direct"
+
+	queueArgMaxPriority          = "x-max-priority"
+	queueArgDeadLetterExchange   = "x-dead-letter-exchange"
+	queueArgDeadLetterRoutingKey = "x-dead-letter-routing-key"
+
+	headerJobID       = "job_id"
+	headerJobType     = "job_type"
+	headerPriority    = "priority"
+	headerMaxAttempts = "max_attempts"
+	headerAttempts    = "attempts"
+	headerStatus      = "status"
+	headerMetaPrefix  = "meta_"
+
+	contentTypeJSON = "application/json"
+
+	metadataDeliveryTag = "delivery_tag"
+
+	uint64Bits = 64
+)
+
 // ErrNoJobAvailable is returned when no job is available in the queue
 var ErrNoJobAvailable = apperror.NewError("no job available")
 
@@ -100,7 +129,7 @@ func NewRabbitMQ(config RabbitMQConfig) (*RabbitMQ, error) {
 		return nil, apperror.NewError("routing key is required")
 	}
 	if config.MaxPriority == 0 {
-		config.MaxPriority = 10 // Default to 10 priority levels
+		config.MaxPriority = defaultMaxPriority
 	}
 
 	conn, err := amqp.Dial(config.URL)
@@ -121,7 +150,7 @@ func NewRabbitMQ(config RabbitMQConfig) (*RabbitMQ, error) {
 		return nil, apperror.NewError("declaring rabbitmq topology failed").AddError(err)
 	}
 
-	delayedQueueName := config.QueueName + "_schedule"
+	delayedQueueName := config.QueueName + scheduleQueueSuffix
 	rq := &RabbitMQ{
 		topology:     config,
 		conn:         conn,
@@ -143,7 +172,7 @@ func NewRabbitMQ(config RabbitMQConfig) (*RabbitMQ, error) {
 func declareTopology(channel *amqp.Channel, config RabbitMQConfig) error {
 	err := channel.ExchangeDeclare(
 		config.ExchangeName, // name
-		"direct",            // type
+		exchangeTypeDirect,  // type
 		config.Durable,      // durable
 		config.AutoDelete,   // auto-deleted
 		config.Exclusive,    // exclusive
@@ -156,7 +185,7 @@ func declareTopology(channel *amqp.Channel, config RabbitMQConfig) error {
 
 	queueArgs := amqp.Table{}
 	if config.MaxPriority > 0 {
-		queueArgs["x-max-priority"] = config.MaxPriority
+		queueArgs[queueArgMaxPriority] = config.MaxPriority
 	}
 
 	_, err = channel.QueueDeclare(
@@ -187,14 +216,14 @@ func declareTopology(channel *amqp.Channel, config RabbitMQConfig) error {
 	// the expiration. It has its own name: a queue declared earlier under the old name has
 	// different arguments, and redeclaring it with other arguments is refused by the broker.
 	_, err = channel.QueueDeclare(
-		config.QueueName+"_schedule", // name
-		config.Durable,               // durable
-		config.AutoDelete,            // delete when unused
-		config.Exclusive,             // exclusive
-		config.NoWait,                // no-wait
+		config.QueueName+scheduleQueueSuffix, // name
+		config.Durable,                       // durable
+		config.AutoDelete,                    // delete when unused
+		config.Exclusive,                     // exclusive
+		config.NoWait,                        // no-wait
 		map[string]any{
-			"x-dead-letter-exchange":    config.ExchangeName,
-			"x-dead-letter-routing-key": config.RoutingKey,
+			queueArgDeadLetterExchange:   config.ExchangeName,
+			queueArgDeadLetterRoutingKey: config.RoutingKey,
 		},
 	)
 	if err != nil {
@@ -206,11 +235,17 @@ func declareTopology(channel *amqp.Channel, config RabbitMQConfig) error {
 
 // NewRabbitMQFromURL creates a new RabbitMQ queue with a simple URL
 func NewRabbitMQFromURL(url string) (*RabbitMQ, error) {
+	const (
+		defaultQueueName    = "jobs"
+		defaultExchangeName = "jobs_exchange"
+		defaultRoutingKey   = "jobs"
+	)
+
 	config := RabbitMQConfig{
 		URL:          url,
-		QueueName:    "jobs",
-		ExchangeName: "jobs_exchange",
-		RoutingKey:   "jobs",
+		QueueName:    defaultQueueName,
+		ExchangeName: defaultExchangeName,
+		RoutingKey:   defaultRoutingKey,
 		Durable:      true,
 		AutoDelete:   false,
 		Exclusive:    false,
@@ -238,21 +273,21 @@ func (rq *RabbitMQ) Enqueue(ctx context.Context, job *Job) error {
 	}
 
 	headers := amqp.Table{
-		"job_id":       job.ID,
-		"job_type":     job.Type,
-		"priority":     int32(job.Priority),
-		"max_attempts": int32(job.MaxAttempts),
-		"attempts":     int32(job.Attempts),
-		"status":       int32(job.Status),
+		headerJobID:       job.ID,
+		headerJobType:     job.Type,
+		headerPriority:    int32(job.Priority),
+		headerMaxAttempts: int32(job.MaxAttempts),
+		headerAttempts:    int32(job.Attempts),
+		headerStatus:      int32(job.Status),
 	}
 
 	for key, value := range job.Metadata {
-		headers["meta_"+key] = value
+		headers[headerMetaPrefix+key] = value
 	}
 
 	message := amqp.Publishing{
 		Headers:         headers,
-		ContentType:     "application/json",
+		ContentType:     contentTypeJSON,
 		ContentEncoding: "",
 		Body:            jobData,
 		DeliveryMode:    amqp.Persistent, // Make message persistent
@@ -284,7 +319,7 @@ func (rq *RabbitMQ) scheduleJob(ctx context.Context, message amqp.Publishing, ru
 	// Per message expiration in milliseconds. Published through the default exchange
 	// straight into the schedule queue. RabbitMQ expires messages only at the head of a queue,
 	// so a job with a long delay holds back jobs behind it that are due earlier.
-	message.Expiration = strconv.FormatInt(max(time.Until(runAt).Milliseconds(), 0), 10)
+	message.Expiration = strconv.FormatInt(max(time.Until(runAt).Milliseconds(), 0), decimalBase)
 	err := rq.channel.PublishWithContext(
 		ctx,
 		"",
@@ -326,7 +361,7 @@ func (rq *RabbitMQ) next(ctx context.Context) (amqp.Delivery, error) {
 
 	// basic.get does not wait, so poll until the timeout. Start with short pauses so a job that
 	// arrives right away is picked up quickly, then back off to spare the broker.
-	for pause := 5 * time.Millisecond; !ok; pause = min(pause*2, maxDequeuePause) {
+	for pause := initialDequeuePause; !ok; pause = min(pause*dequeuePauseFactor, maxDequeuePause) {
 		select {
 		case <-ctx.Done():
 			return amqp.Delivery{}, ErrNoJobAvailable
@@ -408,7 +443,7 @@ func (rq *RabbitMQ) Dequeue(ctx context.Context, timeout time.Duration) (*Job, e
 	if job.Metadata == nil {
 		job.Metadata = make(map[string]string)
 	}
-	job.Metadata["delivery_tag"] = strconv.FormatUint(msg.DeliveryTag, 10)
+	job.Metadata[metadataDeliveryTag] = strconv.FormatUint(msg.DeliveryTag, decimalBase)
 
 	rq.jobsMutex.Lock()
 	rq.jobs[job.ID] = &job
@@ -436,8 +471,8 @@ func (rq *RabbitMQ) UpdateJob(_ context.Context, job *Job) error {
 	rq.finished.record(rq.jobs, job)
 
 	if job.Metadata != nil {
-		if deliveryTagStr, exists := job.Metadata["delivery_tag"]; exists {
-			deliveryTag, err := strconv.ParseUint(deliveryTagStr, 10, 64)
+		if deliveryTagStr, exists := job.Metadata[metadataDeliveryTag]; exists {
+			deliveryTag, err := strconv.ParseUint(deliveryTagStr, decimalBase, uint64Bits)
 			if err == nil {
 				var settleErr error
 				switch job.Status {

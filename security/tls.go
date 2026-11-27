@@ -16,6 +16,17 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
+// Generated certificate constants.
+const (
+	pemTypeCertificate = "CERTIFICATE"
+	pemTypeRSAPrivate  = "RSA PRIVATE KEY"
+
+	caKeyBits = 4096
+	// caValidYears is the validity of generated CA certificates.
+	caValidYears = 1
+	certDirMode  = 0o700
+)
+
 // NewTLSConfig creates a *tls.Config from a certificate and optional CA pool.
 func NewTLSConfig(cert tls.Certificate, caPool *x509.CertPool, clientAuth tls.ClientAuthType) *tls.Config {
 	return &tls.Config{
@@ -121,14 +132,14 @@ func GenerateSelfSignedCertificate(subject pkix.Name) (tls.Certificate, *x509.Ce
 		SerialNumber:          big.NewInt(time.Now().Unix()),
 		Subject:               subject,
 		NotBefore:             time.Now(),
-		NotAfter:              time.Now().AddDate(1, 0, 0),
+		NotAfter:              time.Now().AddDate(caValidYears, 0, 0),
 		IsCA:                  true,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
 		BasicConstraintsValid: true,
 	}
 
-	priv, err := rsa.GenerateKey(rand.Reader, 4096)
+	priv, err := rsa.GenerateKey(rand.Reader, caKeyBits)
 	if err != nil {
 		return tls.Certificate{}, nil, apperror.NewError("generating private key failed").AddError(err)
 	}
@@ -140,7 +151,7 @@ func GenerateSelfSignedCertificate(subject pkix.Name) (tls.Certificate, *x509.Ce
 
 	caPEM := new(bytes.Buffer)
 	err = pem.Encode(caPEM, &pem.Block{
-		Type:  "CERTIFICATE",
+		Type:  pemTypeCertificate,
 		Bytes: caBytes,
 	})
 	if err != nil {
@@ -149,7 +160,7 @@ func GenerateSelfSignedCertificate(subject pkix.Name) (tls.Certificate, *x509.Ce
 
 	keyPEM := new(bytes.Buffer)
 	err = pem.Encode(keyPEM, &pem.Block{
-		Type:  "RSA PRIVATE KEY",
+		Type:  pemTypeRSAPrivate,
 		Bytes: x509.MarshalPKCS1PrivateKey(priv),
 	})
 	if err != nil {
@@ -170,12 +181,12 @@ func GenerateSelfSignedCertificate(subject pkix.Name) (tls.Certificate, *x509.Ce
 
 // WriteCertificate writes the given certificate and key to the specified file paths.
 func WriteCertificate(cert tls.Certificate, certPath, keyPath string) error {
-	err := os.MkdirAll(filepath.Dir(certPath), 0700)
+	err := os.MkdirAll(filepath.Dir(certPath), certDirMode)
 	if err != nil {
 		return apperror.NewError("creating certificate directory failed").AddError(err)
 	}
 
-	err = os.MkdirAll(filepath.Dir(keyPath), 0700)
+	err = os.MkdirAll(filepath.Dir(keyPath), certDirMode)
 	if err != nil {
 		return apperror.NewError("creating key directory failed").AddError(err)
 	}
@@ -188,7 +199,7 @@ func WriteCertificate(cert tls.Certificate, certPath, keyPath string) error {
 
 	for _, c := range cert.Certificate {
 		err = pem.Encode(certOut, &pem.Block{
-			Type:  "CERTIFICATE",
+			Type:  pemTypeCertificate,
 			Bytes: c,
 		})
 		if err != nil {
@@ -196,7 +207,7 @@ func WriteCertificate(cert tls.Certificate, certPath, keyPath string) error {
 		}
 	}
 
-	keyOut, err := os.OpenFile(filepath.Clean(keyPath), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	keyOut, err := os.OpenFile(filepath.Clean(keyPath), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, secretFileMode)
 	if err != nil {
 		return apperror.NewError("creating key file failed").AddError(err)
 	}
@@ -208,7 +219,7 @@ func WriteCertificate(cert tls.Certificate, certPath, keyPath string) error {
 	}
 
 	err = pem.Encode(keyOut, &pem.Block{
-		Type:  "PRIVATE KEY",
+		Type:  pemTypePrivateKey,
 		Bytes: privBytes,
 	})
 	if err != nil {

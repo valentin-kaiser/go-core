@@ -16,6 +16,23 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
+// RSA and PKCS#8 encryption constants.
+const (
+	// rsaMinKeyBits is the smallest accepted RSA key size.
+	rsaMinKeyBits = 2048
+
+	pemTypeEncryptedPrivateKey = "ENCRYPTED PRIVATE KEY"
+	pemTypePrivateKey          = "PRIVATE KEY"
+	pemTypeRSAPublicKey        = "RSA PUBLIC KEY"
+
+	publicKeyFileMode = 0o644
+
+	pbkdf2SaltBytes  = 16
+	pbkdf2Iterations = 100000
+	// pbkdf2KeyBytes is the AES-256 key length derived by PBKDF2.
+	pbkdf2KeyBytes = 32
+)
+
 // RSACipher provides RSA encryption, decryption, signing, and verification operations.
 // It supports key sizes from 2048 to 4096 bits and uses SHA-256 for hashing.
 type RSACipher struct {
@@ -36,7 +53,7 @@ func (r *RSACipher) GenerateKeyPair(bits int) *RSACipher {
 		return r
 	}
 
-	if bits < 2048 {
+	if bits < rsaMinKeyBits {
 		r.Error = apperror.NewError("RSA key size must be at least 2048 bits")
 		return r
 	}
@@ -69,7 +86,7 @@ func (r *RSACipher) LoadPrivateKey(pemData []byte, passphrase []byte) *RSACipher
 	var err error
 
 	switch block.Type {
-	case "ENCRYPTED PRIVATE KEY":
+	case pemTypeEncryptedPrivateKey:
 		if len(passphrase) == 0 {
 			r.Error = apperror.NewError("encrypted private key requires a passphrase")
 			return r
@@ -93,7 +110,7 @@ func (r *RSACipher) LoadPrivateKey(pemData []byte, passphrase []byte) *RSACipher
 			r.Error = apperror.NewError("decrypted key is not an RSA private key")
 			return r
 		}
-	case "PRIVATE KEY":
+	case pemTypePrivateKey:
 		// Unencrypted PKCS#8
 		keyInterface, err := x509.ParsePKCS8PrivateKey(block.Bytes)
 		if err != nil {
@@ -209,7 +226,7 @@ func (r *RSACipher) ExportPrivateKey(passphrase []byte) ([]byte, error) {
 		}
 
 		block = &pem.Block{
-			Type:  "ENCRYPTED PRIVATE KEY",
+			Type:  pemTypeEncryptedPrivateKey,
 			Bytes: encryptedBytes,
 		}
 	} else {
@@ -219,7 +236,7 @@ func (r *RSACipher) ExportPrivateKey(passphrase []byte) ([]byte, error) {
 			return nil, apperror.NewError("marshaling private key failed").AddError(err)
 		}
 		block = &pem.Block{
-			Type:  "PRIVATE KEY",
+			Type:  pemTypePrivateKey,
 			Bytes: privateKeyBytes,
 		}
 	}
@@ -239,7 +256,7 @@ func (r *RSACipher) ExportPublicKey() ([]byte, error) {
 
 	publicKeyBytes := x509.MarshalPKCS1PublicKey(r.publicKey)
 	block := &pem.Block{
-		Type:  "RSA PUBLIC KEY",
+		Type:  pemTypeRSAPublicKey,
 		Bytes: publicKeyBytes,
 	}
 
@@ -258,7 +275,7 @@ func (r *RSACipher) SavePrivateKey(path string, passphrase []byte) *RSACipher {
 		return r
 	}
 
-	err = os.WriteFile(path, pemData, 0600)
+	err = os.WriteFile(path, pemData, secretFileMode)
 	if err != nil {
 		r.Error = apperror.NewError("writing private key file failed").AddError(err)
 		return r
@@ -279,7 +296,7 @@ func (r *RSACipher) SavePublicKey(path string) *RSACipher {
 		return r
 	}
 
-	err = os.WriteFile(path, pemData, 0644) //nolint:gosec // public keys are meant to be world-readable
+	err = os.WriteFile(path, pemData, publicKeyFileMode) //nolint:gosec // public keys are meant to be world-readable
 	if err != nil {
 		r.Error = apperror.NewError("writing public key file failed").AddError(err)
 		return r
@@ -423,7 +440,7 @@ var (
 // Uses PBKDF2-HMAC-SHA256 with 100,000 iterations and AES-256-CBC for encryption.
 func encryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 	// Generate salt for PBKDF2
-	salt := make([]byte, 16)
+	salt := make([]byte, pbkdf2SaltBytes)
 	_, err := rand.Read(salt)
 	if err != nil {
 		return nil, apperror.NewError("generating salt failed").AddError(err)
@@ -437,7 +454,7 @@ func encryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 	}
 
 	// Derive key using PBKDF2 with SHA-256 and 100,000 iterations (NIST recommendation)
-	key := pbkdf2.Key(passphrase, salt, 100000, 32, sha256.New)
+	key := pbkdf2.Key(passphrase, salt, pbkdf2Iterations, pbkdf2KeyBytes, sha256.New)
 
 	// Encrypt using AES-256-CBC
 	block, err := aes.NewCipher(key)
@@ -460,8 +477,8 @@ func encryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 	// Encode PBKDF2 parameters
 	pbkdf2ParamsBytes, err := asn1.Marshal(pbkdf2Params{
 		Salt:           salt,
-		IterationCount: 100000,
-		KeyLength:      32,
+		IterationCount: pbkdf2Iterations,
+		KeyLength:      pbkdf2KeyBytes,
 		PRF: algorithmIdentifier{
 			Algorithm: oidHMACSHA256,
 		},
@@ -552,7 +569,7 @@ func decryptPKCS8PrivateKey(data []byte, passphrase []byte) ([]byte, error) {
 	// Derive the key using PBKDF2
 	keyLen := pbkdf2Params.KeyLength
 	if keyLen == 0 {
-		keyLen = 32 // Default for AES-256
+		keyLen = pbkdf2KeyBytes // Default for AES-256
 	}
 	key := pbkdf2.Key(passphrase, pbkdf2Params.Salt, pbkdf2Params.IterationCount, keyLen, sha256.New)
 

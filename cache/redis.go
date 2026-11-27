@@ -10,6 +10,13 @@ import (
 	"github.com/valentin-kaiser/go-core/config"
 )
 
+// Redis INFO output parsing constants.
+const (
+	infoLineSeparator     = "\r\n"
+	infoKeyValueSeparator = ":"
+	infoKeyValueParts     = 2
+)
+
 // RedisCache implements a Redis-backed cache
 type RedisCache struct {
 	*BaseCache
@@ -33,17 +40,27 @@ type RedisConfig struct {
 
 // DefaultRedisConfig returns a default Redis configuration
 func DefaultRedisConfig() RedisConfig {
+	const (
+		defaultAddr         = "localhost:6379"
+		defaultPoolSize     = 10
+		defaultMinIdleConns = 1
+		defaultMaxRetries   = 3
+		defaultDialTimeout  = 5 * time.Second
+		defaultIOTimeout    = 3 * time.Second
+		defaultIdleTimeout  = 5 * time.Minute
+	)
+
 	return RedisConfig{
-		Addr:         "localhost:6379",
+		Addr:         defaultAddr,
 		Password:     "",
 		DB:           0,
-		PoolSize:     10,
-		MinIdleConns: 1,
-		MaxRetries:   3,
-		DialTimeout:  time.Second * 5,
-		ReadTimeout:  time.Second * 3,
-		WriteTimeout: time.Second * 3,
-		IdleTimeout:  time.Minute * 5,
+		PoolSize:     defaultPoolSize,
+		MinIdleConns: defaultMinIdleConns,
+		MaxRetries:   defaultMaxRetries,
+		DialTimeout:  defaultDialTimeout,
+		ReadTimeout:  defaultIOTimeout,
+		WriteTimeout: defaultIOTimeout,
+		IdleTimeout:  defaultIdleTimeout,
 	}
 }
 
@@ -147,7 +164,7 @@ func (rc *RedisCache) Get(ctx context.Context, key string, dest any) (bool, erro
 		}
 		rc.recordError(err)
 		rc.emitEvent(EventGet, key, nil, err)
-		return false, NewCacheError("get", key, err)
+		return false, NewCacheError(opGet, key, err)
 	}
 
 	// Deserialize the value
@@ -155,7 +172,7 @@ func (rc *RedisCache) Get(ctx context.Context, key string, dest any) (bool, erro
 	if err != nil {
 		rc.recordError(err)
 		rc.emitEvent(EventGet, key, nil, err)
-		return false, NewCacheError("get", key, err)
+		return false, NewCacheError(opGet, key, err)
 	}
 
 	rc.recordHit()
@@ -173,14 +190,14 @@ func (rc *RedisCache) Set(ctx context.Context, key string, value any, ttl time.D
 	if err != nil {
 		rc.recordError(err)
 		rc.emitEvent(EventSet, key, value, err)
-		return NewCacheError("set", key, err)
+		return NewCacheError(opSet, key, err)
 	}
 
 	err = rc.client.Set(ctx, formattedKey, data, effectiveTTL).Err()
 	if err != nil {
 		rc.recordError(err)
 		rc.emitEvent(EventSet, key, value, err)
-		return NewCacheError("set", key, err)
+		return NewCacheError(opSet, key, err)
 	}
 
 	rc.updateStats(func(s *Stats) { s.Sets++ })
@@ -196,7 +213,7 @@ func (rc *RedisCache) Delete(ctx context.Context, key string) error {
 	if err != nil {
 		rc.recordError(err)
 		rc.emitEvent(EventDelete, key, nil, err)
-		return NewCacheError("delete", key, err)
+		return NewCacheError(opDelete, key, err)
 	}
 
 	rc.updateStats(func(s *Stats) { s.Deletes++ })
@@ -211,7 +228,7 @@ func (rc *RedisCache) Exists(ctx context.Context, key string) (bool, error) {
 	count, err := rc.client.Exists(ctx, formattedKey).Result()
 	if err != nil {
 		rc.recordError(err)
-		return false, NewCacheError("exists", key, err)
+		return false, NewCacheError(opExists, key, err)
 	}
 
 	return count > 0, nil
@@ -223,12 +240,12 @@ func (rc *RedisCache) Clear(ctx context.Context) error {
 		return apperror.NewError("clear operation requires a namespace to avoid deleting all Redis keys")
 	}
 
-	pattern := rc.config.Namespace + ":*"
+	pattern := rc.config.Namespace + namespaceSeparator + "*"
 	keys, err := rc.client.Keys(ctx, pattern).Result()
 	if err != nil {
 		rc.recordError(err)
 		rc.emitEvent(EventClear, "", nil, err)
-		return NewCacheError("clear", "", err)
+		return NewCacheError(opClear, "", err)
 	}
 
 	if len(keys) > 0 {
@@ -236,7 +253,7 @@ func (rc *RedisCache) Clear(ctx context.Context) error {
 		if err != nil {
 			rc.recordError(err)
 			rc.emitEvent(EventClear, "", nil, err)
-			return NewCacheError("clear", "", err)
+			return NewCacheError(opClear, "", err)
 		}
 	}
 
@@ -258,7 +275,7 @@ func (rc *RedisCache) GetMulti(ctx context.Context, keys []string) (map[string]a
 	values, err := rc.client.MGet(ctx, formattedKeys...).Result()
 	if err != nil {
 		rc.recordError(err)
-		return nil, NewCacheError("getmulti", "", err)
+		return nil, NewCacheError(opGetMulti, "", err)
 	}
 
 	result := make(map[string]any, len(values))
@@ -303,7 +320,7 @@ func (rc *RedisCache) SetMulti(ctx context.Context, items map[string]any, ttl ti
 	_, err := pipe.Exec(ctx)
 	if err != nil {
 		rc.recordError(err)
-		return NewCacheError("setmulti", "", err)
+		return NewCacheError(opSetMulti, "", err)
 	}
 
 	rc.updateStats(func(s *Stats) { s.Sets += int64(len(items)) })
@@ -324,7 +341,7 @@ func (rc *RedisCache) DeleteMulti(ctx context.Context, keys []string) error {
 	err := rc.client.Del(ctx, formattedKeys...).Err()
 	if err != nil {
 		rc.recordError(err)
-		return NewCacheError("deletemulti", "", err)
+		return NewCacheError(opDeleteMulti, "", err)
 	}
 
 	rc.updateStats(func(s *Stats) { s.Deletes += int64(len(keys)) })
@@ -338,7 +355,7 @@ func (rc *RedisCache) GetTTL(ctx context.Context, key string) (time.Duration, er
 	ttl, err := rc.client.TTL(ctx, formattedKey).Result()
 	if err != nil {
 		rc.recordError(err)
-		return 0, NewCacheError("getttl", key, err)
+		return 0, NewCacheError(opGetTTL, key, err)
 	}
 
 	if ttl == -2 {
@@ -366,7 +383,7 @@ func (rc *RedisCache) SetTTL(ctx context.Context, key string, ttl time.Duration)
 
 	if err != nil {
 		rc.recordError(err)
-		return NewCacheError("setttl", key, err)
+		return NewCacheError(opSetTTL, key, err)
 	}
 
 	return nil
@@ -386,15 +403,15 @@ func (rc *RedisCache) GetClient() *redis.Client {
 func (rc *RedisCache) GetInfo(ctx context.Context) (map[string]string, error) {
 	info, err := rc.client.Info(ctx).Result()
 	if err != nil {
-		return nil, NewCacheError("info", "", err)
+		return nil, NewCacheError(opInfo, "", err)
 	}
 
 	result := make(map[string]string)
-	lines := strings.SplitSeq(info, "\r\n")
+	lines := strings.SplitSeq(info, infoLineSeparator)
 	for line := range lines {
-		if strings.Contains(line, ":") {
-			parts := strings.SplitN(line, ":", 2)
-			if len(parts) == 2 {
+		if strings.Contains(line, infoKeyValueSeparator) {
+			parts := strings.SplitN(line, infoKeyValueSeparator, infoKeyValueParts)
+			if len(parts) == infoKeyValueParts {
 				result[parts[0]] = parts[1]
 			}
 		}
@@ -408,7 +425,7 @@ func (rc *RedisCache) FlushDB(ctx context.Context) error {
 	err := rc.client.FlushDB(ctx).Err()
 	if err != nil {
 		rc.recordError(err)
-		return NewCacheError("flushdb", "", err)
+		return NewCacheError(opFlushDB, "", err)
 	}
 
 	rc.emitEvent(EventClear, "", nil, nil)
@@ -422,7 +439,7 @@ func (rc *RedisCache) Increment(ctx context.Context, key string, delta int64) (i
 	result, err := rc.client.IncrBy(ctx, formattedKey, delta).Result()
 	if err != nil {
 		rc.recordError(err)
-		return 0, NewCacheError("increment", key, err)
+		return 0, NewCacheError(opIncrement, key, err)
 	}
 
 	return result, nil
@@ -435,7 +452,7 @@ func (rc *RedisCache) Decrement(ctx context.Context, key string, delta int64) (i
 	result, err := rc.client.DecrBy(ctx, formattedKey, delta).Result()
 	if err != nil {
 		rc.recordError(err)
-		return 0, NewCacheError("decrement", key, err)
+		return 0, NewCacheError(opDecrement, key, err)
 	}
 
 	return result, nil
@@ -449,13 +466,13 @@ func (rc *RedisCache) SetNX(ctx context.Context, key string, value any, ttl time
 	data, err := rc.config.Serializer.Serialize(value)
 	if err != nil {
 		rc.recordError(err)
-		return false, NewCacheError("setnx", key, err)
+		return false, NewCacheError(opSetNX, key, err)
 	}
 
 	success, err := rc.client.SetNX(ctx, formattedKey, data, effectiveTTL).Result()
 	if err != nil {
 		rc.recordError(err)
-		return false, NewCacheError("setnx", key, err)
+		return false, NewCacheError(opSetNX, key, err)
 	}
 
 	if success {
@@ -473,7 +490,7 @@ func (rc *RedisCache) GetSet(ctx context.Context, key string, value any) (any, b
 	data, err := rc.config.Serializer.Serialize(value)
 	if err != nil {
 		rc.recordError(err)
-		return nil, false, NewCacheError("getset", key, err)
+		return nil, false, NewCacheError(opGetSet, key, err)
 	}
 
 	oldData, err := rc.client.SetArgs(ctx, formattedKey, data, redis.SetArgs{Get: true}).Result()
@@ -484,14 +501,14 @@ func (rc *RedisCache) GetSet(ctx context.Context, key string, value any) (any, b
 			return nil, false, nil
 		}
 		rc.recordError(err)
-		return nil, false, NewCacheError("getset", key, err)
+		return nil, false, NewCacheError(opGetSet, key, err)
 	}
 
 	var oldValue any
 	err = rc.config.Serializer.Deserialize([]byte(oldData), &oldValue)
 	if err != nil {
 		rc.recordError(err)
-		return nil, false, NewCacheError("getset", key, err)
+		return nil, false, NewCacheError(opGetSet, key, err)
 	}
 
 	rc.updateStats(func(s *Stats) { s.Sets++; s.Hits++ })

@@ -84,6 +84,34 @@ import (
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
+const (
+	bufferSizeBytes = 1024
+
+	methodSeparator  = "."
+	pathValueService = "service"
+	pathValueMethod  = "method"
+
+	unaryArgCount     = 2 // context and input message
+	unaryResultCount  = 2 // output message and error
+	streamArgCount    = 3 // context, input and output channel
+	streamOutArgIndex = 2
+
+	headerConnection  = "Connection"
+	headerUpgrade     = "Upgrade"
+	headerContentType = "Content-Type"
+	headerAccept      = "Accept"
+	headerUserAgent   = "User-Agent"
+
+	connectionUpgrade      = "upgrade"
+	connectionUpgradeValue = "Upgrade"
+	upgradeWebSocket       = "websocket"
+	mediaTypeJSON          = "application/json"
+
+	writeDeadline = 10 * time.Second
+	// maxCloseReasonBytes is the limit of a websocket close frame reason.
+	maxCloseReasonBytes = 123
+)
+
 // Common error messages to avoid repeated allocations
 var (
 	logger = logging.GetPackageLogger("jrpc")
@@ -113,7 +141,7 @@ var upgrader = websocket.Upgrader{
 // bufferPool provides a pool of byte buffers for JSON operations
 var bufferPool = sync.Pool{
 	New: func() any {
-		buf := make([]byte, 0, 1024) // Pre-allocate 1KB buffers
+		buf := make([]byte, 0, bufferSizeBytes)
 		return &buf
 	},
 }
@@ -188,7 +216,7 @@ func Register(s Server) *Service {
 			mn := string(md.Name())
 			sn := string(sd.Name())
 
-			key := sn + "." + mn
+			key := sn + methodSeparator + mn
 
 			rm := sv.MethodByName(mn)
 			if !rm.IsValid() {
@@ -205,7 +233,7 @@ func Register(s Server) *Service {
 			service.types[md.Input().FullName()] = pm
 
 			var it, ot reflect.Type
-			if mt.NumIn() >= 2 {
+			if mt.NumIn() >= unaryArgCount {
 				it = mt.In(1)
 			}
 			if mt.NumOut() >= 1 {
@@ -303,7 +331,7 @@ func (s *Service) HandlerFunc(w http.ResponseWriter, r *http.Request) {
 	if s.isWebSocketRequest(r) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			log.Error().Err(err).Msg("failed to upgrade connection to websocket")
+			log.Error().Err(err).Msg("upgrading connection to websocket failed")
 			http.Error(w, "Failed to upgrade to WebSocket", http.StatusBadRequest)
 			return
 		}
@@ -324,8 +352,8 @@ func (s *Service) Handles(service, method string) bool {
 // isWebSocketRequest checks if the HTTP request is requesting a WebSocket upgrade
 // Optimized version with reduced string allocations
 func (s *Service) isWebSocketRequest(r *http.Request) bool {
-	return strings.Contains(strings.ToLower(r.Header.Get("Connection")), "upgrade") &&
-		strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+	return strings.Contains(strings.ToLower(r.Header.Get(headerConnection)), connectionUpgrade) &&
+		strings.EqualFold(r.Header.Get(headerUpgrade), upgradeWebSocket)
 }
 
 // unary processes HTTP POST requests to API endpoints.
@@ -342,8 +370,8 @@ func (s *Service) isWebSocketRequest(r *http.Request) bool {
 func (s *Service) unary(w http.ResponseWriter, r *http.Request) {
 	ctx := WithHTTPContext(r.Context(), w, r)
 
-	service := r.PathValue("service")
-	method := r.PathValue("method")
+	service := r.PathValue(pathValueService)
+	method := r.PathValue(pathValueMethod)
 	md, err := s.find(service, method)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusNotFound)
@@ -351,8 +379,8 @@ func (s *Service) unary(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if md.descriptor != nil && (md.descriptor.IsStreamingClient() || md.descriptor.IsStreamingServer()) {
-		w.Header().Set("Connection", "Upgrade")
-		w.Header().Set("Upgrade", "websocket")
+		w.Header().Set(headerConnection, connectionUpgradeValue)
+		w.Header().Set(headerUpgrade, upgradeWebSocket)
 		http.Error(w, "this endpoint is a streaming method and only supports WebSocket connections; retry with a WebSocket upgrade request", http.StatusUpgradeRequired)
 		return
 	}
@@ -411,11 +439,11 @@ func (s *Service) unary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set(headerContentType, mediaTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	_, err = w.Write(out)
 	if err != nil {
-		log.Error().Err(err).Msg("failed to write response")
+		log.Error().Err(err).Msg("writing response failed")
 	}
 }
 
@@ -435,8 +463,8 @@ func (s *Service) unary(w http.ResponseWriter, r *http.Request) {
 //   - r: HTTP Request from the WebSocket upgrade
 //   - conn: Established WebSocket connection
 func (s *Service) websocket(w http.ResponseWriter, r *http.Request, conn *websocket.Conn) {
-	service := r.PathValue("service")
-	method := r.PathValue("method")
+	service := r.PathValue(pathValueService)
+	method := r.PathValue(pathValueMethod)
 
 	md, err := s.find(service, method)
 	if err != nil {
@@ -565,7 +593,7 @@ func (s *Service) invoke(ctx context.Context, methodInfo *methodInfo, service, m
 
 	// Validate method signature if not already validated
 	if !methodInfo.validated.Load() {
-		if mt.NumIn() != 2 || mt.NumOut() != 2 {
+		if mt.NumIn() != unaryArgCount || mt.NumOut() != unaryResultCount {
 			return nil, apperror.Wrap(errInvalidMethodSignature)
 		}
 		if !mt.In(0).Implements(contextType) {
@@ -644,7 +672,7 @@ func (s *Service) invoke(ctx context.Context, methodInfo *methodInfo, service, m
 }
 
 func (s *Service) find(service, method string) (*methodInfo, error) {
-	key := service + "." + method
+	key := service + methodSeparator + method
 	if s.caseInsensitive {
 		key = strings.ToLower(key)
 	}
@@ -686,7 +714,7 @@ func (s *Service) marshal(m any) ([]byte, error) {
 
 // handleBidirectionalStream handles bidirectional streaming WebSocket connections
 func (s *Service) handleBidirectionalStream(ctx context.Context, conn *websocket.Conn, m reflect.Value, mt reflect.Type) {
-	inType, outType := mt.In(1), mt.In(2)
+	inType, outType := mt.In(1), mt.In(streamOutArgIndex)
 	inPtr, outPtr := inType.Elem(), outType.Elem()
 	in := reflect.MakeChan(reflect.ChanOf(reflect.BothDir, inPtr), 0)
 	out := reflect.MakeChan(reflect.ChanOf(reflect.BothDir, outPtr), 0)
@@ -729,7 +757,7 @@ func (s *Service) handleBidirectionalStream(ctx context.Context, conn *websocket
 
 // handleServerStream handles server streaming WebSocket connections
 func (s *Service) handleServerStream(ctx context.Context, conn *websocket.Conn, m reflect.Value, mt reflect.Type, md *methodInfo) {
-	outType := mt.In(2)
+	outType := mt.In(streamOutArgIndex)
 	outPtr := outType.Elem()
 	out := reflect.MakeChan(reflect.ChanOf(reflect.BothDir, outPtr), 0)
 
@@ -834,13 +862,13 @@ func (s *Service) handleClientStream(ctx context.Context, conn *websocket.Conn, 
 			done <- struct {
 				resp any
 				err  error
-			}{nil, err}
+			}{resp: nil, err: err}
 			return
 		}
 		done <- struct {
 			resp any
 			err  error
-		}{res, nil}
+		}{resp: res, err: nil}
 	}()
 
 	var final struct {
@@ -945,7 +973,7 @@ func (s *Service) writeWSMessage(conn *websocket.Conn, val reflect.Value, t refl
 		return apperror.NewError("marshaling websocket message failed").AddError(err)
 	}
 
-	err = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	err = conn.SetWriteDeadline(time.Now().Add(writeDeadline))
 	if err != nil {
 		return apperror.NewError("setting websocket write deadline failed").AddError(err)
 	}
@@ -1028,16 +1056,16 @@ func (s *Service) closeWS(conn *websocket.Conn, code int, err error) {
 		reason, _, _ = apperror.Split(err)
 		log.Trace().Field("code", code).Err(err).Msg("websocket connection closing with error")
 	}
-	if len(reason) > 123 {
-		reason = reason[:123] // Close reason must be <= 123 bytes
+	if len(reason) > maxCloseReasonBytes {
+		reason = reason[:maxCloseReasonBytes]
 	}
 	err = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(time.Second))
 	if err != nil && !errors.Is(err, websocket.ErrCloseSent) && !errors.Is(err, net.ErrClosed) && !isExpectedCloseError(err) {
-		log.Trace().Err(err).Msg("failed to send websocket close message")
+		log.Trace().Err(err).Msg("sending websocket close message failed")
 	}
 	err = conn.Close()
 	if err != nil && !errors.Is(err, net.ErrClosed) && !isExpectedCloseError(err) {
-		log.Trace().Err(err).Msg("failed to close websocket connection")
+		log.Trace().Err(err).Msg("closing websocket connection failed")
 	}
 }
 
@@ -1077,7 +1105,7 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 	switch {
 	case isServerStreaming && isClientStreaming:
 		// Bidirectional streaming: func(ctx, chan *InputMsg, chan OutputMsg) error
-		if mt.NumIn() != 3 || mt.NumOut() != 1 {
+		if mt.NumIn() != streamArgCount || mt.NumOut() != 1 {
 			return StreamingTypeInvalid, apperror.NewError("bidirectional streaming method must have signature: func(context.Context, chan *InputMsg, chan OutputMsg) error")
 		}
 
@@ -1091,23 +1119,23 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 		}
 
 		// Validate output channel type: chan OutputMsg
-		if mt.In(2).Kind() != reflect.Chan {
+		if mt.In(streamOutArgIndex).Kind() != reflect.Chan {
 			return StreamingTypeInvalid, apperror.NewError("third parameter must be chan OutputMsg")
 		}
-		actualOutputType := mt.In(2).Elem() // chan T -> T
+		actualOutputType := mt.In(streamOutArgIndex).Elem() // chan T -> T
 		// For output, we need to handle both *T and T cases
 		if actualOutputType.Kind() == reflect.Pointer {
 			actualOutputType = actualOutputType.Elem()
 		}
 		if !s.typesMatch(actualOutputType, outputType) {
-			return StreamingTypeInvalid, apperror.NewError("output channel type mismatch: expected chan " + outputType.String() + ", got " + mt.In(2).String())
+			return StreamingTypeInvalid, apperror.NewError("output channel type mismatch: expected chan " + outputType.String() + ", got " + mt.In(streamOutArgIndex).String())
 		}
 
 		return StreamingTypeBidirectional, nil
 
 	case isServerStreaming && !isClientStreaming:
 		// Server streaming: func(ctx, *InputMsg, chan OutputMsg) error
-		if mt.NumIn() != 3 || mt.NumOut() != 1 {
+		if mt.NumIn() != streamArgCount || mt.NumOut() != 1 {
 			return StreamingTypeInvalid, apperror.NewError("server streaming method must have signature: func(context.Context, *InputMsg, chan OutputMsg) error")
 		}
 
@@ -1121,22 +1149,22 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 		}
 
 		// Validate output channel type: chan OutputMsg
-		if mt.In(2).Kind() != reflect.Chan || mt.In(2).ChanDir()&reflect.SendDir == 0 {
+		if mt.In(streamOutArgIndex).Kind() != reflect.Chan || mt.In(streamOutArgIndex).ChanDir()&reflect.SendDir == 0 {
 			return StreamingTypeInvalid, apperror.NewError("third parameter must be send chan OutputMsg")
 		}
-		actualOutputType := mt.In(2).Elem() // chan T -> T
+		actualOutputType := mt.In(streamOutArgIndex).Elem() // chan T -> T
 		if actualOutputType.Kind() == reflect.Pointer {
 			actualOutputType = actualOutputType.Elem()
 		}
 		if !s.typesMatch(actualOutputType, outputType) {
-			return StreamingTypeInvalid, apperror.NewError("output channel type mismatch: expected chan " + outputType.String() + ", got " + mt.In(2).String())
+			return StreamingTypeInvalid, apperror.NewError("output channel type mismatch: expected chan " + outputType.String() + ", got " + mt.In(streamOutArgIndex).String())
 		}
 
 		return StreamingTypeServerStream, nil
 
 	case !isServerStreaming && isClientStreaming:
 		// Client streaming: func(ctx, chan *InputMsg) (OutputMsg, error)
-		if mt.NumIn() != 2 || mt.NumOut() != 2 {
+		if mt.NumIn() != unaryArgCount || mt.NumOut() != unaryResultCount {
 			return StreamingTypeInvalid, apperror.NewError("client streaming method must have signature: func(context.Context, chan *InputMsg) (OutputMsg, error)")
 		}
 
@@ -1162,7 +1190,7 @@ func (s *Service) validateMethodSignature(mt reflect.Type, md protoreflect.Metho
 
 	default:
 		// Unary: func(ctx, *InputMsg) (OutputMsg, error)
-		if mt.NumIn() != 2 || mt.NumOut() != 2 {
+		if mt.NumIn() != unaryArgCount || mt.NumOut() != unaryResultCount {
 			return StreamingTypeInvalid, apperror.NewError("unary method must have signature: func(context.Context, *InputMsg) (OutputMsg, error)")
 		}
 

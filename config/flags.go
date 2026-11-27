@@ -4,11 +4,55 @@ import (
 	"reflect"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/spf13/pflag"
 	"github.com/valentin-kaiser/go-core/apperror"
 	"github.com/valentin-kaiser/go-core/flag"
+)
+
+const (
+	defaultName    = "config"
+	fileSourceName = "file"
+
+	configFileExtension = ".yaml"
+	configDirMode       = 0o750
+	configFileMode      = 0o600
+	reloadDebounce      = 100 * time.Millisecond
+
+	keySeparator       = "."
+	dashSeparator      = "-"
+	envKeySeparator    = "_"
+	listSeparator      = ","
+	tagOptionSeparator = ","
+	tagIgnore          = "-"
+	yamlTagName        = "yaml"
+	usageTagName       = "usage"
+
+	flagTypeString      = "string"
+	flagTypeInt         = "int"
+	flagTypeInt8        = "int8"
+	flagTypeInt16       = "int16"
+	flagTypeInt32       = "int32"
+	flagTypeInt64       = "int64"
+	flagTypeUint        = "uint"
+	flagTypeUint8       = "uint8"
+	flagTypeUint16      = "uint16"
+	flagTypeUint32      = "uint32"
+	flagTypeUint64      = "uint64"
+	flagTypeFloat32     = "float32"
+	flagTypeFloat64     = "float64"
+	flagTypeBool        = "bool"
+	flagTypeStringArray = "stringArray"
+	flagTypeStringSlice = "stringSlice"
+
+	decimalBase   = 10
+	bitSizeNative = 0
+	bitSize8      = 8
+	bitSize16     = 16
+	bitSize32     = 32
+	bitSize64     = 64
 )
 
 func (m *manager) setDefault(key string, value any) {
@@ -26,100 +70,100 @@ func (m *manager) bind(key string, flag *pflag.Flag) error {
 }
 
 func (m *manager) getFlagKey(key string) string {
-	key = strings.ReplaceAll(key, ".", "_")
-	key = strings.ReplaceAll(key, "-", "_")
+	key = strings.ReplaceAll(key, keySeparator, envKeySeparator)
+	key = strings.ReplaceAll(key, dashSeparator, envKeySeparator)
 	key = strings.ToUpper(key)
 
 	if m.prefix == "" {
 		return key
 	}
-	return m.prefix + "_" + key
+	return m.prefix + envKeySeparator + key
 }
 
 func (m *manager) getFlagValue(flag *pflag.Flag) any {
 	switch flag.Value.Type() {
-	case "string":
+	case flagTypeString:
 		return flag.Value.String()
-	case "int":
+	case flagTypeInt:
 		val, err := strconv.Atoi(flag.Value.String())
 		if err != nil {
 			return flag.Value.String()
 		}
 		return val
-	case "int8":
-		val, err := strconv.ParseInt(flag.Value.String(), 10, 8)
+	case flagTypeInt8:
+		val, err := strconv.ParseInt(flag.Value.String(), decimalBase, bitSize8)
 		if err != nil {
 			return flag.Value.String()
 		}
 		return int8(val)
-	case "int16":
-		val, err := strconv.ParseInt(flag.Value.String(), 10, 16)
+	case flagTypeInt16:
+		val, err := strconv.ParseInt(flag.Value.String(), decimalBase, bitSize16)
 		if err != nil {
 			return flag.Value.String()
 		}
 		return int16(val)
-	case "int32":
-		val, err := strconv.ParseInt(flag.Value.String(), 10, 32)
+	case flagTypeInt32:
+		val, err := strconv.ParseInt(flag.Value.String(), decimalBase, bitSize32)
 		if err != nil {
 			return flag.Value.String()
 		}
 		return int32(val)
-	case "int64":
-		val, err := strconv.ParseInt(flag.Value.String(), 10, 64)
+	case flagTypeInt64:
+		val, err := strconv.ParseInt(flag.Value.String(), decimalBase, bitSize64)
 		if err != nil {
 			return flag.Value.String()
 		}
 		return val
-	case "uint":
-		val, err := strconv.ParseUint(flag.Value.String(), 10, 0)
+	case flagTypeUint:
+		val, err := strconv.ParseUint(flag.Value.String(), decimalBase, bitSizeNative)
 		if err != nil {
 			return flag.Value.String()
 		}
 		return uint(val)
-	case "uint8":
-		val, err := strconv.ParseUint(flag.Value.String(), 10, 8)
+	case flagTypeUint8:
+		val, err := strconv.ParseUint(flag.Value.String(), decimalBase, bitSize8)
 		if err != nil {
 			return flag.Value.String()
 		}
 		return uint8(val)
-	case "uint16":
-		val, err := strconv.ParseUint(flag.Value.String(), 10, 16)
+	case flagTypeUint16:
+		val, err := strconv.ParseUint(flag.Value.String(), decimalBase, bitSize16)
 		if err != nil {
 			return flag.Value.String()
 		}
 		return uint16(val)
-	case "uint32":
-		val, err := strconv.ParseUint(flag.Value.String(), 10, 32)
+	case flagTypeUint32:
+		val, err := strconv.ParseUint(flag.Value.String(), decimalBase, bitSize32)
 		if err != nil {
 			return flag.Value.String()
 		}
 		return uint32(val)
-	case "uint64":
-		val, err := strconv.ParseUint(flag.Value.String(), 10, 64)
+	case flagTypeUint64:
+		val, err := strconv.ParseUint(flag.Value.String(), decimalBase, bitSize64)
 		if err != nil {
 			return flag.Value.String()
 		}
 		return val
-	case "float32":
-		val, err := strconv.ParseFloat(flag.Value.String(), 32)
+	case flagTypeFloat32:
+		val, err := strconv.ParseFloat(flag.Value.String(), bitSize32)
 		if err != nil {
 			return flag.Value.String()
 		}
 		return float32(val)
-	case "float64":
-		val, err := strconv.ParseFloat(flag.Value.String(), 64)
+	case flagTypeFloat64:
+		val, err := strconv.ParseFloat(flag.Value.String(), bitSize64)
 		if err != nil {
 			return flag.Value.String()
 		}
 		return val
-	case "bool":
+	case flagTypeBool:
 		val, err := strconv.ParseBool(flag.Value.String())
 		if err != nil {
 			return flag.Value.String()
 		}
 		return val
-	case "stringArray", "stringSlice":
-		return strings.Split(flag.Value.String(), ",")
+	case flagTypeStringArray, flagTypeStringSlice:
+		return strings.Split(flag.Value.String(), listSeparator)
 	}
 	return flag.Value.String()
 }
@@ -223,7 +267,7 @@ func (m *manager) parseStructTags(v reflect.Value, labelBase string) error {
 		}
 
 		tag := buildLabel(labelBase, fieldName)
-		err := m.declareFlag(tag, field.Tag.Get("usage"), v.Field(i).Interface())
+		err := m.declareFlag(tag, field.Tag.Get(usageTagName), v.Field(i).Interface())
 		if err != nil {
 			return apperror.NewErrorf("declaring flag %s failed", tag).AddError(err)
 		}
@@ -242,12 +286,12 @@ func kebabCase(s string) string {
 	}
 
 	// Handle dot-separated segments (e.g., "Server.ARCHost")
-	if strings.Contains(s, ".") {
-		parts := strings.Split(s, ".")
+	if strings.Contains(s, keySeparator) {
+		parts := strings.Split(s, keySeparator)
 		for i, part := range parts {
 			parts[i] = kebabCase(part)
 		}
-		return strings.Join(parts, ".")
+		return strings.Join(parts, keySeparator)
 	}
 
 	runes := []rune(s)
@@ -267,7 +311,7 @@ func kebabCase(s string) string {
 				nextIsLower := i+1 < len(runes) && unicode.IsLower(runes[i+1])
 
 				if prevIsLower || nextIsLower {
-					result.WriteByte('-')
+					result.WriteString(dashSeparator)
 				}
 			}
 			result.WriteRune(unicode.ToLower(r))
@@ -281,12 +325,12 @@ func kebabCase(s string) string {
 
 // getFieldName extracts the field name from struct field, preferring yaml tag over field name
 func getFieldName(field reflect.StructField) string {
-	yamlTag := field.Tag.Get("yaml")
-	if yamlTag == "" || yamlTag == "-" {
+	yamlTag := field.Tag.Get(yamlTagName)
+	if yamlTag == "" || yamlTag == tagIgnore {
 		return field.Name
 	}
 
-	if before, _, ok := strings.Cut(yamlTag, ","); ok {
+	if before, _, ok := strings.Cut(yamlTag, tagOptionSeparator); ok {
 		return before
 	}
 	return yamlTag
@@ -297,5 +341,5 @@ func buildLabel(base, fieldName string) string {
 	if base == "" {
 		return fieldName
 	}
-	return base + "." + fieldName
+	return base + keySeparator + fieldName
 }

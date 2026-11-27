@@ -50,7 +50,27 @@ var (
 	errMissingStreamID = apperror.NewError("missing stream id")
 )
 
-const defaultMaxBody = 4 << 20
+const (
+	defaultMaxBody = 4 << 20
+
+	headerContentType = "Content-Type"
+	headerAccept      = "Accept"
+	headerUserAgent   = "User-Agent"
+	headerVary        = "Vary"
+	headerAllow       = "Allow"
+	headerAcceptPost  = "Accept-Post"
+
+	mediaTypeJSON        = "application/json"
+	mediaTypeJSONRPC     = "application/json-rpc"
+	mediaTypeJSONRequest = "application/jsonrequest"
+	mediaTypeXML         = "application/xml"
+	mediaTypeTextXML     = "text/xml"
+	mediaTypeGRPC        = "application/grpc"
+
+	allowedMethods     = "POST, OPTIONS"
+	acceptedMediaTypes = "application/json, application/xml, application/grpc"
+	http2Major         = 2
+)
 
 // Server is a service implementation; Descriptor is provided by the generated code.
 type Server interface {
@@ -98,16 +118,16 @@ func Register(servers ...Server) *Service {
 
 				m, err := bind(fn, md)
 				if err != nil {
-					logger.Error().Err(err).Field("method", string(sd.FullName())+"/"+string(md.Name())).Msg("skipping method with invalid signature")
+					logger.Error().Err(err).Field("method", string(sd.FullName())+pathSeparator+string(md.Name())).Msg("skipping method with invalid signature")
 					continue
 				}
 				m.service = string(sd.Name())
 				m.full = string(sd.FullName())
 
-				if _, dup := s.methods[m.full+"/"+m.name]; dup {
+				if _, dup := s.methods[m.full+pathSeparator+m.name]; dup {
 					continue
 				}
-				for _, key := range []string{m.full + "." + m.name, m.full + "/" + m.name} {
+				for _, key := range []string{m.full + nameSeparator + m.name, m.full + pathSeparator + m.name} {
 					s.methods[key] = m
 				}
 
@@ -150,7 +170,7 @@ func (s *Service) WithFieldNamesQuery(param string) *Service {
 func (s *Service) codecFor(w http.ResponseWriter, r *http.Request) codec {
 	c := s.codec
 	if s.namesHdr != "" {
-		w.Header().Add("Vary", s.namesHdr)
+		w.Header().Add(headerVary, s.namesHdr)
 		if v := r.Header.Get(s.namesHdr); v != "" {
 			names, err := strconv.ParseBool(v)
 			if err == nil {
@@ -213,14 +233,14 @@ func (s *Service) find(name string) *method {
 
 // Handles reports whether the service has a handler for the given service and method name.
 func (s *Service) Handles(service, method string) bool {
-	return s.find(service+"."+method) != nil || s.find(service+"/"+method) != nil
+	return s.find(service+nameSeparator+method) != nil || s.find(service+pathSeparator+method) != nil
 }
 
 // Paths returns the gRPC request paths ("/pkg.Service/Method") served by this service.
 func (s *Service) Paths() []string {
 	paths := make([]string, 0, len(s.list))
 	for _, m := range s.list {
-		paths = append(paths, "/"+m.full+"/"+m.name)
+		paths = append(paths, pathSeparator+m.full+pathSeparator+m.name)
 	}
 	if s.reflect {
 		paths = append(paths, reflectionPaths...)
@@ -290,7 +310,7 @@ func withProtocol(ctx context.Context, p Protocol) context.Context {
 }
 
 func mediaType(r *http.Request) string {
-	mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	mt, _, err := mime.ParseMediaType(r.Header.Get(headerContentType))
 	if err != nil {
 		return ""
 	}
@@ -298,7 +318,7 @@ func mediaType(r *http.Request) string {
 }
 
 func isGRPC(r *http.Request) bool {
-	return r.ProtoMajor == 2 && strings.HasPrefix(mediaType(r), "application/grpc")
+	return r.ProtoMajor == http2Major && strings.HasPrefix(mediaType(r), mediaTypeGRPC)
 }
 
 // ServeHTTP selects the protocol from the request and serves it.
@@ -313,16 +333,16 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case isGRPC(r):
 		s.serveGRPC(w, r)
 	case r.Method != http.MethodPost:
-		w.Header().Set("Allow", "POST, OPTIONS")
+		w.Header().Set(headerAllow, allowedMethods)
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	default:
 		switch mediaType(r) {
-		case "application/json", "application/json-rpc", "application/jsonrequest":
+		case mediaTypeJSON, mediaTypeJSONRPC, mediaTypeJSONRequest:
 			s.serveHTTP(w, r, newWire(ProtocolJSON, s.codecFor(w, r)))
-		case "application/xml", "text/xml":
+		case mediaTypeXML, mediaTypeTextXML:
 			s.serveHTTP(w, r, newWire(ProtocolXML, s.codecFor(w, r)))
 		default:
-			w.Header().Set("Accept-Post", "application/json, application/xml, application/grpc")
+			w.Header().Set(headerAcceptPost, acceptedMediaTypes)
 			http.Error(w, "unsupported content type", http.StatusUnsupportedMediaType)
 		}
 	}
@@ -359,7 +379,7 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request, wr wire) {
 
 	out, err := wr.encodeReplies(replies, batch)
 	if err != nil {
-		logger.Error().Err(err).Msg("failed to encode response")
+		logger.Error().Err(err).Msg("encoding response failed")
 		http.Error(w, "failed to encode response", http.StatusInternalServerError)
 		return
 	}
@@ -371,11 +391,11 @@ func (s *Service) serveHTTP(w http.ResponseWriter, r *http.Request, wr wire) {
 	if !batch && status.code != 0 {
 		code = status.code
 	}
-	w.Header().Set("Content-Type", wr.contentType())
+	w.Header().Set(headerContentType, wr.contentType())
 	w.WriteHeader(code)
 	_, err = w.Write(out) //nolint:gosec // out is wire-encoded JSON or XML served with a matching non-HTML Content-Type
 	if err != nil {
-		logger.Error().Err(err).Msg("failed to write response")
+		logger.Error().Err(err).Msg("writing response failed")
 	}
 }
 
@@ -425,7 +445,7 @@ func (s *Service) handle(ctx context.Context, e *envelope) *reply {
 	if err != nil {
 		l = logger.Warn().Err(err)
 	}
-	l.Field("method", m.full+"/"+m.name).Msg("xrpc method called")
+	l.Field("method", m.full+pathSeparator+m.name).Msg("xrpc method called")
 
 	if err != nil {
 		return fail(toError(err))

@@ -104,7 +104,7 @@ import (
 var (
 	mutex = &sync.RWMutex{}
 	cm    = &manager{
-		name:     "config",
+		name:     defaultName,
 		defaults: make(map[string]any),
 		values:   make(map[string]any),
 		flags:    make(map[string]*pflag.Flag),
@@ -153,7 +153,7 @@ func (m *manager) WithName(name string) *manager {
 	mutex.Lock()
 	defer mutex.Unlock()
 	m.name = name
-	m.prefix = strings.ToUpper(strings.ReplaceAll(name, "-", "_"))
+	m.prefix = strings.ToUpper(strings.ReplaceAll(name, dashSeparator, envKeySeparator))
 	flag.Prefix = m.prefix
 	return m
 }
@@ -307,7 +307,7 @@ func Reset() {
 	}
 
 	cm = &manager{
-		name:     "config",
+		name:     defaultName,
 		defaults: make(map[string]any),
 		values:   make(map[string]any),
 		flags:    make(map[string]*pflag.Flag),

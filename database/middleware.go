@@ -18,6 +18,9 @@ import (
 	"github.com/valentin-kaiser/go-core/logging"
 )
 
+// hashLength is the number of hex characters of the middleware hash used in the driver name.
+const hashLength = 8
+
 var (
 	registeredDrivers   = make(map[string]bool)
 	registeredDriversMu sync.Mutex
@@ -328,7 +331,7 @@ func (m *LoggingMiddleware) AfterExec(ctx context.Context, query string, args []
 		if m.trace.Load() {
 			l = l.Field("caller", apperror.Where(2))
 		}
-		l.Msgf("\n%s", query)
+		l.Field("query", query).Msg("executing statement failed")
 		return
 	}
 
@@ -348,7 +351,7 @@ func (m *LoggingMiddleware) AfterExec(ctx context.Context, query string, args []
 	if m.trace.Load() {
 		l = l.Field("caller", apperror.Where(2))
 	}
-	l.Msgf("\n%s", query)
+	l.Field("query", query).Msg("statement executed")
 }
 
 // BeforeQuery remembers when the query started, if logging is enabled
@@ -392,7 +395,7 @@ func (m *LoggingMiddleware) AfterQuery(ctx context.Context, query string, args [
 		if m.trace.Load() {
 			l = l.Field("caller", apperror.Where(2))
 		}
-		l.Msgf("\n%s", query)
+		l.Field("query", query).Msg("query failed")
 		return
 	}
 
@@ -403,7 +406,7 @@ func (m *LoggingMiddleware) AfterQuery(ctx context.Context, query string, args [
 	if m.trace.Load() {
 		l = l.Field("caller", apperror.Where(2))
 	}
-	l.Msgf("\n%s", query)
+	l.Field("query", query).Msg("query executed")
 }
 
 // BeginTx is a no-op implementation to satisfy the Middleware interface
@@ -483,8 +486,8 @@ func computeMiddlewareHash(middlewares []Middleware) string {
 		// Include the pointer address to distinguish between different instances
 		// of the same middleware type with different configurations
 		ptr := reflect.ValueOf(mw).Pointer()
-		h.Write([]byte(strconv.FormatUint(uint64(ptr), 10)))
+		h.Write([]byte(strconv.FormatUint(uint64(ptr), decimalBase)))
 	}
 	// Return first 8 characters of the hex hash for brevity
-	return hex.EncodeToString(h.Sum(nil))[:8]
+	return hex.EncodeToString(h.Sum(nil))[:hashLength]
 }

@@ -64,6 +64,17 @@ import (
 	"github.com/spf13/pflag"
 )
 
+const (
+	pathFlagName    = "path"
+	helpFlagName    = "help"
+	versionFlagName = "version"
+	debugFlagName   = "debug"
+
+	keySeparator  = "."
+	dashSeparator = "-"
+	envSeparator  = "_"
+)
+
 var (
 	// Path is the default path for the application data
 	Path string
@@ -102,10 +113,10 @@ type cachedEnvName struct {
 
 func init() {
 	Path = DefaultDataPath()
-	pflag.StringVar(&Path, "path", Path, "Sets the application working directory")
-	pflag.BoolVar(&Help, "help", false, "Prints the help page")
-	pflag.BoolVar(&Version, "version", false, "Prints the software version")
-	pflag.BoolVar(&Debug, "debug", false, "Enables debug mode")
+	pflag.StringVar(&Path, pathFlagName, Path, "Sets the application working directory")
+	pflag.BoolVar(&Help, helpFlagName, false, "Prints the help page")
+	pflag.BoolVar(&Version, versionFlagName, false, "Prints the software version")
+	pflag.BoolVar(&Debug, debugFlagName, false, "Enables debug mode")
 }
 
 // DefaultDataPath returns the OS-specific application data path for the current executable.
@@ -151,12 +162,12 @@ func EnvVarName(name string) string {
 		env = name
 	}
 
-	env = strings.ReplaceAll(env, ".", "_")
-	env = strings.ReplaceAll(env, "-", "_")
+	env = strings.ReplaceAll(env, keySeparator, envSeparator)
+	env = strings.ReplaceAll(env, dashSeparator, envSeparator)
 	env = strings.ToUpper(env)
 
 	if prefix != "" {
-		env = prefix + "_" + env
+		env = prefix + envSeparator + env
 	}
 	envNameCache.Store(name, cachedEnvName{prefix: prefix, env: env})
 	return env

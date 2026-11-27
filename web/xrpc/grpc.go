@@ -73,7 +73,7 @@ func unaryHandler(m *method) func(any, context.Context, func(any) error, grpc.Un
 		if interceptor == nil {
 			return call(ctx, in)
 		}
-		return interceptor(ctx, in, &grpc.UnaryServerInfo{FullMethod: "/" + m.full + "/" + m.name}, call)
+		return interceptor(ctx, in, &grpc.UnaryServerInfo{FullMethod: pathSeparator + m.full + pathSeparator + m.name}, call)
 	}
 }
 

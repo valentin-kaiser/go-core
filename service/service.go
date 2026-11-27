@@ -150,7 +150,7 @@ func init() {
 
 	flag.Path, err = filepath.Abs(flag.Path)
 	if err != nil {
-		logger.Error().Fields(logging.F("error", err)).Msg("determining absolute path failed")
+		logger.Error().Err(err).Msg("determining absolute path failed")
 		return
 	}
 }

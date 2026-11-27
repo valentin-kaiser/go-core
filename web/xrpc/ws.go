@@ -13,10 +13,11 @@ import (
 )
 
 const (
-	subprotocolJSON = "xrpc.json"
-	subprotocolXML  = "xrpc.xml"
-	maxInflight     = 128
-	writeTimeout    = 10 * time.Second
+	subprotocolJSON   = "xrpc.json"
+	subprotocolXML    = "xrpc.xml"
+	maxInflight       = 128
+	streamInputBuffer = 16
+	writeTimeout      = 10 * time.Second
 )
 
 type wsConn struct {
@@ -54,7 +55,7 @@ func (s *Service) serveWS(w http.ResponseWriter, r *http.Request) {
 	up.Subprotocols = []string{subprotocolJSON, subprotocolXML}
 	conn, err := up.Upgrade(w, r, nil)
 	if err != nil {
-		logger.Debug().Err(err).Msg("failed to upgrade connection to websocket")
+		logger.Debug().Err(err).Msg("upgrading connection to websocket failed")
 		return
 	}
 
@@ -93,12 +94,12 @@ func (c *wsConn) send(data []byte) error {
 func (c *wsConn) sendReplies(replies []*reply, batch bool) {
 	out, err := c.wire.encodeReplies(replies, batch)
 	if err != nil {
-		logger.Error().Err(err).Msg("failed to encode response")
+		logger.Error().Err(err).Msg("encoding response failed")
 		return
 	}
 	err = c.send(out)
 	if err != nil {
-		logger.Trace().Err(err).Msg("failed to write websocket message")
+		logger.Trace().Err(err).Msg("writing websocket message failed")
 	}
 }
 
@@ -123,7 +124,7 @@ func (c *wsConn) serve(ctx context.Context) {
 		err := c.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second))
 		c.wmu.Unlock()
 		if err != nil {
-			logger.Trace().Err(err).Msg("failed to write websocket close message")
+			logger.Trace().Err(err).Msg("writing websocket close message failed")
 		}
 		apperror.Catch(c.conn.Close, "closing websocket connection failed")
 	}()
@@ -214,7 +215,7 @@ func (c *wsConn) control(e *envelope) {
 		case <-st.ctx.Done():
 		default:
 			// the handler is not consuming input; never block the shared read loop
-			logger.Warn().Field("method", st.m.full+"/"+st.m.name).Msg("xrpc stream input buffer full, cancelling stream")
+			logger.Warn().Field("method", st.m.full+pathSeparator+st.m.name).Msg("xrpc stream input buffer full, cancelling stream")
 			st.cancel()
 		}
 	}
@@ -243,7 +244,7 @@ func (c *wsConn) startStream(parent context.Context, m *method, e *envelope) {
 
 	key := e.id.key()
 	ctx, cancel := context.WithCancel(parent)
-	st := &wsStream{m: m, in: make(chan proto.Message, 16), ctx: ctx, cancel: cancel}
+	st := &wsStream{m: m, in: make(chan proto.Message, streamInputBuffer), ctx: ctx, cancel: cancel}
 
 	c.smu.Lock()
 	if _, dup := c.stream[key]; dup {
@@ -277,7 +278,7 @@ func (c *wsConn) startStream(parent context.Context, m *method, e *envelope) {
 		switch {
 		case err != nil:
 			r.err = toError(err)
-			logger.Warn().Err(err).Field("method", m.full+"/"+m.name).Msg("xrpc stream failed")
+			logger.Warn().Err(err).Field("method", m.full+pathSeparator+m.name).Msg("xrpc stream failed")
 		case m.kind == kindClientStream:
 			r.result = res
 		}

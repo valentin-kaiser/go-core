@@ -28,7 +28,7 @@ func (m *manager) getValue(key string) any {
 		return val
 	}
 
-	prefix := lowerKey + "."
+	prefix := lowerKey + keySeparator
 	reconstructedMap := make(map[string]any)
 	for k, v := range m.values {
 		if strings.HasPrefix(k, prefix) {
@@ -77,8 +77,8 @@ func (m *manager) unmarshalStruct(v reflect.Value, prefix string) error {
 			continue
 		}
 
-		yamlTag := field.Tag.Get("yaml")
-		if yamlTag == "-" {
+		yamlTag := field.Tag.Get(yamlTagName)
+		if yamlTag == tagIgnore {
 			continue
 		}
 
@@ -141,7 +141,7 @@ func (m *manager) setFieldValue(field reflect.Value, value any) error {
 			return nil
 		}
 		if str, ok := value.(string); ok {
-			i, err := strconv.ParseInt(str, 10, 64)
+			i, err := strconv.ParseInt(str, decimalBase, bitSize64)
 			if err == nil {
 				field.SetInt(i)
 			}
@@ -205,7 +205,7 @@ func (m *manager) setFieldValue(field reflect.Value, value any) error {
 			return nil
 		}
 		if str, ok := value.(string); ok {
-			i, err := strconv.ParseUint(str, 10, 64)
+			i, err := strconv.ParseUint(str, decimalBase, bitSize64)
 			if err == nil {
 				field.SetUint(i)
 			}
@@ -261,7 +261,7 @@ func (m *manager) setFieldValue(field reflect.Value, value any) error {
 			return nil
 		}
 		if str, ok := value.(string); ok {
-			f, err := strconv.ParseFloat(str, 64)
+			f, err := strconv.ParseFloat(str, bitSize64)
 			if err == nil {
 				field.SetFloat(f)
 			}
@@ -396,8 +396,8 @@ func (m *manager) unmarshalMapToStruct(v reflect.Value, data map[string]any) err
 			continue
 		}
 
-		yamlTag := field.Tag.Get("yaml")
-		if yamlTag == "-" {
+		yamlTag := field.Tag.Get(yamlTagName)
+		if yamlTag == tagIgnore {
 			continue
 		}
 
@@ -581,11 +581,11 @@ func (m *manager) setStructValue(field reflect.Value, value any) error {
 			continue
 		}
 
-		fieldName := fieldInfo.Tag.Get("yaml")
-		if fieldName == "" || fieldName == "-" {
+		fieldName := fieldInfo.Tag.Get(yamlTagName)
+		if fieldName == "" || fieldName == tagIgnore {
 			fieldName = strings.ToLower(fieldInfo.Name)
 		} else {
-			if idx := strings.Index(fieldName, ","); idx != -1 {
+			if idx := strings.Index(fieldName, tagOptionSeparator); idx != -1 {
 				fieldName = fieldName[:idx]
 			}
 		}

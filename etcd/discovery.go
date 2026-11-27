@@ -28,13 +28,13 @@ const (
 func (t ServiceEventType) String() string {
 	switch t {
 	case ServiceAdded:
-		return "added"
+		return eventNameAdded
 	case ServiceModified:
-		return "modified"
+		return eventNameModified
 	case ServiceRemoved:
-		return "removed"
+		return eventNameRemoved
 	}
-	return "unknown"
+	return eventNameUnknown
 }
 
 // ServiceEvent describes a single change in the service registry.
@@ -49,7 +49,7 @@ func (c *Client) Discover(ctx context.Context, name string) ([]Descriptor, error
 	if strings.TrimSpace(name) == "" {
 		return nil, apperror.NewError("service name must not be empty")
 	}
-	prefix := c.key("services", name) + "/"
+	prefix := c.key(servicesKeyGroup, name) + keySeparator
 	resp, err := c.raw.Get(ctx, prefix, clientv3.WithPrefix())
 	if err != nil {
 		return nil, apperror.NewError("listing services from etcd failed").AddError(err)
@@ -77,7 +77,7 @@ func (c *Client) WatchService(ctx context.Context, name string, handler func(Ser
 		return nil, apperror.NewError("service watch handler must not be nil")
 	}
 
-	prefix := c.key("services", name) + "/"
+	prefix := c.key(servicesKeyGroup, name) + keySeparator
 	watchCtx, cancel := context.WithCancel(ctx)
 	ch := c.raw.Watch(watchCtx, prefix, clientv3.WithPrefix(), clientv3.WithPrevKV())
 
@@ -126,10 +126,10 @@ func emit(ev *clientv3.Event, handler func(ServiceEvent)) {
 			}
 		}
 		// Fall back to the key for identification when prev-kv is absent.
-		segments := strings.Split(string(ev.Kv.Key), "/")
-		if len(segments) >= 2 {
+		segments := strings.Split(string(ev.Kv.Key), keySeparator)
+		if len(segments) >= minKeySegments {
 			info.ID = segments[len(segments)-1]
-			info.Name = segments[len(segments)-2]
+			info.Name = segments[len(segments)-minKeySegments]
 		}
 		handler(ServiceEvent{Type: ServiceRemoved, Info: info})
 	}

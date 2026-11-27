@@ -119,7 +119,29 @@ func (c *Config) Validate() error {
 	return nil
 }
 
-const defaultPrefix = "/go-core"
+const (
+	defaultPrefix = "/go-core"
+
+	keySeparator       = "/"
+	configKeySeparator = "."
+	trailingNewline    = "\n"
+	minKeySegments     = 2
+
+	configKeyGroup    = "config"
+	servicesKeyGroup  = "services"
+	locksKeyGroup     = "locks"
+	electionsKeyGroup = "elections"
+
+	defaultConfigName = "config"
+	sourceName        = "etcd"
+
+	defaultDialTimeout = 5 * time.Second
+
+	eventNameAdded    = "added"
+	eventNameModified = "modified"
+	eventNameRemoved  = "removed"
+	eventNameUnknown  = "unknown"
+)
 
 // Client wraps a *clientv3.Client together with the resolved key prefix and
 // a lifecycle context shared by all helpers in this package.
@@ -139,7 +161,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 
 	dialTimeout := cfg.DialTimeout
 	if dialTimeout == 0 {
-		dialTimeout = 5 * time.Second
+		dialTimeout = defaultDialTimeout
 	}
 
 	cli, err := clientv3.New(clientv3.Config{
@@ -155,7 +177,7 @@ func New(ctx context.Context, cfg Config) (*Client, error) {
 		return nil, apperror.NewError("dialing etcd failed").AddError(err)
 	}
 
-	prefix := strings.TrimRight(cfg.Prefix, "/")
+	prefix := strings.TrimRight(cfg.Prefix, keySeparator)
 	if prefix == "" {
 		prefix = defaultPrefix
 	}
@@ -189,11 +211,11 @@ func (c *Client) key(parts ...string) string {
 	var b strings.Builder
 	b.WriteString(c.prefix)
 	for _, p := range parts {
-		p = strings.Trim(p, "/")
+		p = strings.Trim(p, keySeparator)
 		if p == "" {
 			continue
 		}
-		b.WriteByte('/')
+		b.WriteString(keySeparator)
 		b.WriteString(p)
 	}
 	return b.String()

@@ -181,17 +181,25 @@ type Manager struct {
 
 // NewManager creates a new queue manager with default settings
 func NewManager() *Manager {
+	const (
+		defaultMaxRetries       = 3
+		defaultRetryDelay       = 2 * time.Second
+		defaultRetryBackoff     = 2.0
+		defaultScheduleInterval = 10 * time.Second
+		progressChanSize        = 100
+	)
+
 	return &Manager{
 		queue:            NewMemoryQueue(),
 		handlers:         make(map[string]JobHandler),
 		workerCount:      1,
-		maxRetries:       3,
-		retryDelay:       time.Second * 2,
-		retryBackoff:     2.0,
-		scheduleInterval: time.Second * 10,
+		maxRetries:       defaultMaxRetries,
+		retryDelay:       defaultRetryDelay,
+		retryBackoff:     defaultRetryBackoff,
+		scheduleInterval: defaultScheduleInterval,
 		shutdownChan:     make(chan struct{}),
 		stats:            &Stats{},
-		progressChan:     make(chan progressUpdate, 100),
+		progressChan:     make(chan progressUpdate, progressChanSize),
 	}
 }
 
@@ -337,6 +345,8 @@ func (m *Manager) Stop() error {
 		return apperror.NewError("manager is not running")
 	}
 
+	const stopTimeout = 5 * time.Second
+
 	logger.Debug().Msg("stopping queue manager")
 	if m.scheduleTicker != nil {
 		m.scheduleTicker.Stop()
@@ -353,7 +363,7 @@ func (m *Manager) Stop() error {
 	select {
 	case <-done:
 		logger.Debug().Msg("queue manager stopped")
-	case <-time.After(time.Second * 5):
+	case <-time.After(stopTimeout):
 		logger.Warn().Msg("timeout waiting for workers to stop")
 	}
 
@@ -439,6 +449,8 @@ func (m *Manager) IsRunning() bool {
 
 // worker processes jobs from the queue
 func (m *Manager) worker(ctx context.Context, workerID int) {
+	const dequeueTimeout = 5 * time.Second
+
 	defer m.workerWg.Done()
 
 	logger.Trace().Field("worker_id", workerID).Msg("worker started")
@@ -455,7 +467,7 @@ func (m *Manager) worker(ctx context.Context, workerID int) {
 			logger.Trace().Field("worker_id", workerID).Msg("worker stopped due to shutdown signal")
 			return
 		default:
-			job, err := m.queue.Dequeue(ctx, time.Second*5)
+			job, err := m.queue.Dequeue(ctx, dequeueTimeout)
 			if err != nil {
 				continue
 			}
@@ -482,7 +494,7 @@ func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
 	job.UpdatedAt = time.Now()
 	err := m.queue.UpdateJob(ctx, job)
 	if err != nil {
-		logger.Error().Err(err).Field("job_id", job.ID).Msg("failed to update job status to running")
+		logger.Error().Err(err).Field("job_id", job.ID).Msg("updating job status to running failed")
 	}
 
 	m.handlerMutex.RLock()
@@ -495,7 +507,7 @@ func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
 		job.UpdatedAt = time.Now()
 		err = m.queue.UpdateJob(ctx, job)
 		if err != nil {
-			logger.Error().Err(err).Field("job_id", job.ID).Msg("failed to update job status to failed")
+			logger.Error().Err(err).Field("job_id", job.ID).Msg("updating job status to failed failed")
 		}
 		atomic.AddInt64(&m.stats.JobsFailed, 1)
 		logger.Error().Field("job_id", job.ID).Field("job_type", job.Type).Msg("no handler found")
@@ -511,7 +523,7 @@ func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
 			job.UpdatedAt = time.Now()
 			err = m.queue.UpdateJob(ctx, job)
 			if err != nil {
-				logger.Error().Err(err).Field("job_id", job.ID).Msg("failed to update job status to retrying")
+				logger.Error().Err(err).Field("job_id", job.ID).Msg("updating job status to retrying failed")
 			}
 			atomic.AddInt64(&m.stats.JobsRetried, 1)
 
@@ -527,7 +539,7 @@ func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
 				job.RetryAt = time.Time{}
 				enqueueErr := m.queue.Enqueue(ctx, job)
 				if enqueueErr != nil {
-					logger.Error().Err(enqueueErr).Field("job_id", job.ID).Msg("failed to re-enqueue job for retry")
+					logger.Error().Err(enqueueErr).Field("job_id", job.ID).Msg("re-enqueueing job for retry failed")
 				}
 			})
 			return
@@ -538,7 +550,7 @@ func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
 		job.UpdatedAt = time.Now()
 		updateErr := m.queue.UpdateJob(ctx, job)
 		if updateErr != nil {
-			logger.Error().Err(updateErr).Field("job_id", job.ID).Msg("failed to update job status to failed")
+			logger.Error().Err(updateErr).Field("job_id", job.ID).Msg("updating job status to failed failed")
 		}
 		atomic.AddInt64(&m.stats.JobsFailed, 1)
 
@@ -557,7 +569,7 @@ func (m *Manager) processJob(ctx context.Context, job *Job, workerID int) {
 	job.UpdatedAt = time.Now()
 	err = m.queue.UpdateJob(ctx, job)
 	if err != nil {
-		logger.Error().Err(err).Field("job_id", job.ID).Msg("failed to update job status to completed")
+		logger.Error().Err(err).Field("job_id", job.ID).Msg("updating job status to completed failed")
 	}
 	atomic.AddInt64(&m.stats.JobsProcessed, 1)
 
@@ -580,6 +592,9 @@ func (m *Manager) calculateRetryDelay(attempt int) time.Duration {
 
 // scheduleProcessor processes scheduled jobs
 func (m *Manager) scheduleProcessor(ctx context.Context) {
+	// scheduledBatchSize is the maximum number of scheduled jobs fetched per tick.
+	const scheduledBatchSize = 100
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -587,9 +602,9 @@ func (m *Manager) scheduleProcessor(ctx context.Context) {
 		case <-m.shutdownChan:
 			return
 		case <-m.scheduleTicker.C:
-			jobs, err := m.queue.GetJobs(ctx, StatusScheduled, 100)
+			jobs, err := m.queue.GetJobs(ctx, StatusScheduled, scheduledBatchSize)
 			if err != nil {
-				logger.Error().Err(err).Msg("failed to get scheduled jobs")
+				logger.Error().Err(err).Msg("getting scheduled jobs failed")
 				continue
 			}
 
@@ -600,7 +615,7 @@ func (m *Manager) scheduleProcessor(ctx context.Context) {
 					job.ScheduleAt = time.Time{}
 					enqueueErr := m.queue.Enqueue(ctx, job)
 					if enqueueErr != nil {
-						logger.Error().Err(enqueueErr).Field("job_id", job.ID).Msg("failed to enqueue scheduled job")
+						logger.Error().Err(enqueueErr).Field("job_id", job.ID).Msg("enqueueing scheduled job failed")
 					}
 				}
 			}

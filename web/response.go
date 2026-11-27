@@ -121,8 +121,8 @@ func (rw *ResponseWriter) flush() {
 // copyTrailers forwards trailers set after the headers were sent, either announced via the Trailer header or prefixed with http.TrailerPrefix.
 func (rw *ResponseWriter) copyTrailers() {
 	declared := make(map[string]struct{})
-	for _, v := range rw.w.Header().Values("Trailer") {
-		for name := range strings.SplitSeq(v, ",") {
+	for _, v := range rw.w.Header().Values(headerTrailer) {
+		for name := range strings.SplitSeq(v, commaSeparator) {
 			declared[http.CanonicalHeaderKey(strings.TrimSpace(name))] = struct{}{}
 		}
 	}

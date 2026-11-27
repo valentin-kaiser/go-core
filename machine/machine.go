@@ -46,6 +46,20 @@ import (
 	"github.com/valentin-kaiser/go-core/apperror"
 )
 
+const (
+	identifierSeparator = "|"
+	lineSeparator       = "\n"
+
+	cpuPrefix         = "cpu:"
+	uuidPrefix        = "uuid:"
+	macPrefix         = "mac:"
+	diskPrefix        = "disk:"
+	motherboardPrefix = "mb:"
+
+	zeroMAC           = "00:00:00:00:00:00"
+	placeholderSerial = "To be filled by O.E.M."
+)
+
 type generator struct {
 	salt               string
 	includeCPU         bool
@@ -133,9 +147,9 @@ func (g *generator) Validate(id string) (bool, error) {
 // hashIdentifiers processes and hashes the hardware identifiers with optional salt
 func hashIdentifiers(identifiers []string, salt string) string {
 	sort.Strings(identifiers)
-	combined := strings.Join(identifiers, "|")
+	combined := strings.Join(identifiers, identifierSeparator)
 	if salt != "" {
-		combined = salt + "|" + combined
+		combined = salt + identifierSeparator + combined
 	}
 
 	// Generate SHA256 hash

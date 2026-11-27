@@ -86,6 +86,26 @@ import (
 	"golang.org/x/time/rate"
 )
 
+const (
+	defaultReadTimeout       = 15 * time.Second
+	defaultReadHeaderTimeout = 5 * time.Second
+	defaultWriteTimeout      = 15 * time.Second
+	defaultIdleTimeout       = 120 * time.Second
+	shutdownTimeout          = 10 * time.Second
+
+	decimalBase        = 10
+	serverKeySeparator = ":"
+	pathSeparator      = "/"
+	jrpcPathSuffix     = "/{service}/{method}"
+	pathValueService   = "service"
+	pathValueMethod    = "method"
+
+	minRedirectCode = http.StatusMultipleChoices
+	maxRedirectCode = 399
+	httpsPort       = 443
+	httpsAltPort    = 8443
+)
+
 var (
 	mutex    sync.Mutex
 	instance *Server
@@ -171,10 +191,10 @@ func New() *Server {
 				return true
 			},
 		},
-		readTimeout:       15 * time.Second,
-		readHeaderTimeout: 5 * time.Second,
-		writeTimeout:      15 * time.Second,
-		idleTimeout:       120 * time.Second,
+		readTimeout:       defaultReadTimeout,
+		readHeaderTimeout: defaultReadHeaderTimeout,
+		writeTimeout:      defaultWriteTimeout,
+		idleTimeout:       defaultIdleTimeout,
 		errorLog:          l.New(io.Discard, "", 0),
 		handler:           make(map[string]http.Handler),
 		websockets:        make(map[string]func(http.ResponseWriter, *http.Request, *websocket.Conn)),
@@ -208,10 +228,10 @@ func (s *Server) Start() *Server {
 	s.mutex.Lock()
 	s.servers = make(map[string]*http.Server)
 	for _, config := range s.ports {
-		serverKey := fmt.Sprintf("%s:%d", config.Protocol, config.Port)
+		serverKey := fmt.Sprintf("%s%s%d", config.Protocol, serverKeySeparator, config.Port)
 
 		server := &http.Server{
-			Addr:              net.JoinHostPort(s.host, strconv.FormatUint(uint64(config.Port), 10)),
+			Addr:              net.JoinHostPort(s.host, strconv.FormatUint(uint64(config.Port), decimalBase)),
 			ErrorLog:          s.errorLog,
 			ReadTimeout:       s.readTimeout,
 			ReadHeaderTimeout: s.readHeaderTimeout,
@@ -248,7 +268,7 @@ func (s *Server) Start() *Server {
 
 					h, _, err := net.SplitHostPort(r.Host)
 					if err != nil {
-						logger.Error().Fields(logging.F("error", err)).Msg("failed to split host and port from request")
+						logger.Error().Err(err).Msg("splitting host and port from request failed")
 						http.Error(w, "Bad Request", http.StatusBadRequest)
 						return
 					}
@@ -285,13 +305,13 @@ func (s *Server) Start() *Server {
 
 	for key, server := range s.servers {
 		group.Go(func() error {
-			protocol, _, _ := strings.Cut(key, ":")
+			protocol, _, _ := strings.Cut(key, serverKeySeparator)
 			addr := server.Addr
 
-			logger.Info().Fields(logging.F("addr", addr), logging.F("protocol", protocol)).Msgf("listening on %s", protocol)
+			logger.Info().Fields(logging.F("addr", addr), logging.F("protocol", protocol)).Msg("listening")
 
 			var err error
-			if protocol == "https" {
+			if protocol == string(ProtocolHTTPS) {
 				err = server.ListenAndServeTLS("", "")
 				if err != nil && !errors.Is(err, http.ErrServerClosed) {
 					return apperror.NewError("starting https server failed").AddError(err)
@@ -365,7 +385,7 @@ func (s *Server) Shutdown() error {
 	defer s.mutex.RUnlock()
 	if len(s.servers) > 0 {
 		logger.Trace().Msg("shutting down webservers...")
-		shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer shutdownRelease()
 
 		for serverKey, server := range s.servers {
@@ -388,7 +408,7 @@ func (s *Server) Restart() error {
 	s.mutex.RLock()
 	if len(s.servers) > 0 {
 		logger.Trace().Msg("restarting webservers...")
-		shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer shutdownRelease()
 
 		for key, server := range s.servers {
@@ -419,7 +439,7 @@ func (s *Server) RestartAsync(done chan error) {
 	s.mutex.RLock()
 	if len(s.servers) > 0 {
 		logger.Trace().Msg("restarting webservers...")
-		shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), 10*time.Second)
+		shutdownCtx, shutdownRelease := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer shutdownRelease()
 
 		for key, server := range s.servers {
@@ -546,7 +566,7 @@ func (s *Server) WithWebsocket(path string, handler func(http.ResponseWriter, *h
 	s.router.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 		conn, err := s.upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			logger.Error().Fields(logging.F("error", err)).Msg("could not upgrade websocket connection")
+			logger.Error().Err(err).Msg("upgrading websocket connection failed")
 			return
 		}
 
@@ -564,7 +584,7 @@ func (s *Server) WithJRPC(path string, services ...*jrpc.Service) *Server {
 		return s
 	}
 
-	path = strings.TrimSuffix(path, "/") + "/{service}/{method}"
+	path = strings.TrimSuffix(path, pathSeparator) + jrpcPathSuffix
 	if len(services) == 0 {
 		s.Error = apperror.NewError("no jRPC services provided")
 		return s
@@ -587,8 +607,8 @@ func (s *Server) WithJRPC(path string, services ...*jrpc.Service) *Server {
 		return s
 	}
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		serviceName := r.PathValue("service")
-		methodName := r.PathValue("method")
+		serviceName := r.PathValue(pathValueService)
+		methodName := r.PathValue(pathValueMethod)
 		for _, service := range services {
 			if service.Handles(serviceName, methodName) {
 				service.HandlerFunc(w, r)
@@ -616,7 +636,7 @@ func (s *Server) WithXRPC(path string, service *xrpc.Service) *Server {
 	}
 
 	if path == "" {
-		path = "/"
+		path = pathSeparator
 	}
 	servicePaths := service.Paths()
 	paths := make([]string, 0, len(servicePaths)+1)
@@ -765,7 +785,7 @@ func (s *Server) WithRedirect(rule RedirectRule) *Server {
 		return s
 	}
 
-	if rule.Code == 0 || (rule.Code < 300 || rule.Code > 399) {
+	if rule.Code == 0 || (rule.Code < minRedirectCode || rule.Code > maxRedirectCode) {
 		rule.Code = http.StatusMovedPermanently
 	}
 
@@ -808,10 +828,10 @@ func (s *Server) getProtocolForPort(port uint16) string {
 		}
 	}
 	// Default fallback
-	if port == 443 || port == 8443 {
-		return "https"
+	if port == httpsPort || port == httpsAltPort {
+		return string(ProtocolHTTPS)
 	}
-	return "http"
+	return string(ProtocolHTTP)
 }
 
 // WithTLS sets the TLS configuration for the web server

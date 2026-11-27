@@ -14,6 +14,16 @@ import (
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
+const (
+	pathSeparator = "/"
+	nameSeparator = "."
+
+	callArgCount      = 2 // context and input message, or context and input channel
+	callResultCount   = 2 // output message and error
+	streamArgCount    = 3 // context, input and output channel
+	streamOutArgIndex = 2
+)
+
 type kind int
 
 const (
@@ -80,7 +90,7 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 	switch cs, ss := md.IsStreamingClient(), md.IsStreamingServer(); {
 	case !cs && !ss:
 		m.kind = kindUnary
-		if t.NumIn() != 2 || t.NumOut() != 2 || t.Out(1) != errorType {
+		if t.NumIn() != callArgCount || t.NumOut() != callResultCount || t.Out(1) != errorType {
 			return nil, apperror.NewError("unary method must be func(context.Context, *In) (*Out, error)")
 		}
 		m.in, err = messageOf(t.In(1), md.Input())
@@ -90,17 +100,17 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 		m.out, err = messageOf(t.Out(0), md.Output())
 	case !cs && ss:
 		m.kind = kindServerStream
-		if t.NumIn() != 3 || t.NumOut() != 1 || t.Out(0) != errorType {
+		if t.NumIn() != streamArgCount || t.NumOut() != 1 || t.Out(0) != errorType {
 			return nil, apperror.NewError("server streaming method must be func(context.Context, *In, chan<- *Out) error")
 		}
 		m.in, err = messageOf(t.In(1), md.Input())
 		if err != nil {
 			return nil, apperror.NewErrorf("binding signature of method %s failed", m.name).AddError(err)
 		}
-		m.out, err = chanOf(t.In(2), reflect.SendDir, md.Output())
+		m.out, err = chanOf(t.In(streamOutArgIndex), reflect.SendDir, md.Output())
 	case cs && !ss:
 		m.kind = kindClientStream
-		if t.NumIn() != 2 || t.NumOut() != 2 || t.Out(1) != errorType {
+		if t.NumIn() != callArgCount || t.NumOut() != callResultCount || t.Out(1) != errorType {
 			return nil, apperror.NewError("client streaming method must be func(context.Context, <-chan *In) (*Out, error)")
 		}
 		m.in, err = chanOf(t.In(1), reflect.RecvDir, md.Input())
@@ -110,14 +120,14 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 		m.out, err = messageOf(t.Out(0), md.Output())
 	default:
 		m.kind = kindBidi
-		if t.NumIn() != 3 || t.NumOut() != 1 || t.Out(0) != errorType {
+		if t.NumIn() != streamArgCount || t.NumOut() != 1 || t.Out(0) != errorType {
 			return nil, apperror.NewError("bidirectional streaming method must be func(context.Context, <-chan *In, chan<- *Out) error")
 		}
 		m.in, err = chanOf(t.In(1), reflect.RecvDir, md.Input())
 		if err != nil {
 			return nil, apperror.NewErrorf("binding signature of method %s failed", m.name).AddError(err)
 		}
-		m.out, err = chanOf(t.In(2), reflect.SendDir, md.Output())
+		m.out, err = chanOf(t.In(streamOutArgIndex), reflect.SendDir, md.Output())
 	}
 	if err != nil {
 		return nil, apperror.NewErrorf("binding signature of method %s failed", m.name).AddError(err)
@@ -129,7 +139,7 @@ func bind(fn reflect.Value, md protoreflect.MethodDescriptor) (*method, error) {
 func (m *method) call(args []reflect.Value) (res proto.Message, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			logger.Error().Field("method", m.full+"/"+m.name).Field("panic", fmt.Sprint(r)).Field("stack", string(debug.Stack())).Msg("handler panicked")
+			logger.Error().Field("method", m.full+pathSeparator+m.name).Field("panic", fmt.Sprint(r)).Field("stack", string(debug.Stack())).Msg("handler panicked")
 			res, err = nil, NewError(CodeInternalError, "internal error")
 		}
 	}()
@@ -139,7 +149,7 @@ func (m *method) call(args []reflect.Value) (res proto.Message, err error) {
 	if !last.IsNil() {
 		return nil, last.Interface().(error) //nolint:forcetypeassert // validated at registration
 	}
-	if len(outs) == 2 && !outs[0].IsNil() {
+	if len(outs) == callResultCount && !outs[0].IsNil() {
 		return outs[0].Interface().(proto.Message), nil //nolint:forcetypeassert // validated at registration
 	}
 	return nil, nil //nolint:nilnil // a nil message means the handler has no response body
@@ -222,7 +232,7 @@ func (m *method) invoke(ctx context.Context, first proto.Message, recv recvFunc,
 		if out.IsValid() {
 			closeSafe(out)
 		}
-		done <- result{msg, err}
+		done <- result{msg: msg, err: err}
 	}()
 
 	var sendErr error

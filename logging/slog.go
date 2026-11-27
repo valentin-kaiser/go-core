@@ -6,6 +6,9 @@ import (
 	"strings"
 )
 
+// groupSeparator joins the names of nested slog groups into one field key.
+const groupSeparator = "."
+
 // SLogger returns a slog logger backed by the current global logging adapter.
 func SLogger() *slog.Logger {
 	return NewSlogLogger(GetGlobalAdapterInterface())
@@ -132,11 +135,11 @@ func appendSlogAttr(event Event, groups []string, attr slog.Attr) {
 
 	key := attr.Key
 	if len(groups) > 0 {
-		prefix := strings.Join(groups, ".")
+		prefix := strings.Join(groups, groupSeparator)
 		if key == "" {
 			key = prefix
 		} else {
-			key = prefix + "." + key
+			key = prefix + groupSeparator + key
 		}
 	}
 

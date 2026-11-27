@@ -79,12 +79,18 @@ type TaskScheduler struct {
 
 // NewTaskScheduler creates a new task scheduler with default settings
 func NewTaskScheduler() *TaskScheduler {
+	const (
+		defaultCheckInterval = 10 * time.Second
+		defaultTaskTimeout   = 5 * time.Minute
+		defaultRetryDelay    = 5 * time.Second
+	)
+
 	return &TaskScheduler{
 		tasks:          make(map[string]*Task),
 		shutdownChan:   make(chan struct{}),
-		checkInterval:  time.Second * 10,
-		defaultTimeout: time.Minute * 5,
-		retryDelay:     time.Second * 5,
+		checkInterval:  defaultCheckInterval,
+		defaultTimeout: defaultTaskTimeout,
+		retryDelay:     defaultRetryDelay,
 	}
 }
 
@@ -565,7 +571,7 @@ func (s *TaskScheduler) runTask(ctx context.Context, task *Task) {
 			logger.Error().
 				Err(err).
 				Field("task_name", task.Name).
-				Msg("failed to update next run time before execution")
+				Msg("updating next run time before execution failed")
 		}
 	}
 
@@ -624,7 +630,7 @@ func (s *TaskScheduler) runTask(ctx context.Context, task *Task) {
 					logger.Error().
 						Err(err).
 						Field("task_name", task.Name).
-						Msg("failed to update next run time")
+						Msg("updating next run time failed")
 				}
 				// Read the values for logging after update
 				task.mutex.RLock()
@@ -683,7 +689,7 @@ func (s *TaskScheduler) runTask(ctx context.Context, task *Task) {
 			logger.Error().
 				Err(err).
 				Field("task_name", task.Name).
-				Msg("failed to update next run time after retries")
+				Msg("updating next run time after retries failed")
 		}
 		// Read next run time for logging
 		task.mutex.RLock()

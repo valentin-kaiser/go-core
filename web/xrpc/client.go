@@ -20,6 +20,16 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
+const (
+	defaultTimeout   = 30 * time.Second
+	defaultUserAgent = "xrpc-client/1.0"
+
+	schemeHTTP  = "http"
+	schemeHTTPS = "https"
+	schemeWS    = "ws"
+	schemeWSS   = "wss"
+)
+
 // Client calls xrpc services over JSON-RPC 2.0, XML or gRPC.
 //
 // Methods are named "pkg.Service/Method". JSON and XML calls use HTTP POST on the
@@ -69,8 +79,8 @@ func WithGRPCConn(conn *grpc.ClientConn) ClientOption {
 func NewClient(endpoint string, opts ...ClientOption) (*Client, error) {
 	c := &Client{
 		protocol:  ProtocolJSON,
-		http:      &http.Client{Timeout: 30 * time.Second},
-		userAgent: "xrpc-client/1.0",
+		http:      &http.Client{Timeout: defaultTimeout},
+		userAgent: defaultUserAgent,
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -97,13 +107,13 @@ func NewClient(endpoint string, opts ...ClientOption) (*Client, error) {
 }
 
 func grpcPath(method string) string {
-	if strings.Contains(method, "/") {
-		return "/" + strings.TrimPrefix(method, "/")
+	if strings.Contains(method, pathSeparator) {
+		return pathSeparator + strings.TrimPrefix(method, pathSeparator)
 	}
 	if before, after, ok := strings.CutLast(method, "."); ok {
-		return "/" + before + "/" + after
+		return pathSeparator + before + pathSeparator + after
 	}
-	return "/" + method
+	return pathSeparator + method
 }
 
 func (c *Client) grpcContext(ctx context.Context) context.Context {
@@ -144,10 +154,10 @@ func (c *Client) Call(ctx context.Context, method string, in, out proto.Message)
 			req.Header.Add(k, v)
 		}
 	}
-	req.Header.Set("Content-Type", w.contentType())
-	req.Header.Set("Accept", w.contentType())
+	req.Header.Set(headerContentType, w.contentType())
+	req.Header.Set(headerAccept, w.contentType())
 	if c.userAgent != "" {
-		req.Header.Set("User-Agent", c.userAgent)
+		req.Header.Set(headerUserAgent, c.userAgent)
 	}
 
 	resp, err := c.http.Do(req)
@@ -265,10 +275,10 @@ func (c *Client) streamGRPC(ctx context.Context, method string, k kind, first pr
 func (c *Client) dial(ctx context.Context) (*websocket.Conn, wire, error) {
 	u := *c.endpoint
 	switch u.Scheme {
-	case "http":
-		u.Scheme = "ws"
-	case "https":
-		u.Scheme = "wss"
+	case schemeHTTP:
+		u.Scheme = schemeWS
+	case schemeHTTPS:
+		u.Scheme = schemeWSS
 	}
 
 	sub := subprotocolJSON
@@ -284,7 +294,7 @@ func (c *Client) dial(ctx context.Context) (*websocket.Conn, wire, error) {
 	d := websocket.Dialer{
 		Subprotocols:     []string{sub},
 		TLSClientConfig:  tlsCfg,
-		HandshakeTimeout: 30 * time.Second,
+		HandshakeTimeout: defaultTimeout,
 		Proxy:            http.ProxyFromEnvironment,
 	}
 
@@ -293,7 +303,7 @@ func (c *Client) dial(ctx context.Context) (*websocket.Conn, wire, error) {
 		header = make(http.Header)
 	}
 	if c.userAgent != "" {
-		header.Set("User-Agent", c.userAgent)
+		header.Set(headerUserAgent, c.userAgent)
 	}
 
 	conn, resp, err := d.DialContext(ctx, u.String(), header)

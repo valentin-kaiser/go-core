@@ -12,14 +12,19 @@ type JobBuilder struct {
 
 // NewJob creates a new job builder
 func NewJob(jobType string) *JobBuilder {
+	const (
+		defaultMaxAttempts = 3
+		emptyJSONObject    = "{}"
+	)
+
 	return &JobBuilder{
 		job: &Job{
 			Type:        jobType,
-			Payload:     json.RawMessage("{}"),
+			Payload:     json.RawMessage(emptyJSONObject),
 			Priority:    PriorityNormal,
 			Status:      StatusPending,
 			CreatedAt:   time.Now(),
-			MaxAttempts: 3,
+			MaxAttempts: defaultMaxAttempts,
 			Metadata:    make(map[string]string),
 		},
 	}

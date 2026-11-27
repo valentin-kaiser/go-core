@@ -47,7 +47,11 @@ func SizeOf(value any) (int64, error) {
 
 // ToByteString returns the number of bytes as a string with a unit
 func ToByteString(b int64) string {
-	const unit = 1000
+	const (
+		unit = 1000
+		// unitPrefixes are the SI prefixes of kilo, mega, giga, tera, peta and exa bytes.
+		unitPrefixes = "kMGTPE"
+	)
 	if b < unit {
 		return fmt.Sprintf("%d B", b)
 	}
@@ -57,7 +61,7 @@ func ToByteString(b int64) string {
 		exp++
 	}
 	return fmt.Sprintf("%.1f %cB",
-		float64(b)/float64(div), "kMGTPE"[exp])
+		float64(b)/float64(div), unitPrefixes[exp])
 }
 
 // InterfaceIsNullPointer returns true if the interface is nil or if the interface is a pointer, map, chan, or slice and is nil
