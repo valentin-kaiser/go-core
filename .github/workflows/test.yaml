@@ -37,7 +37,11 @@ jobs:
         run: |
           # Exclude machine package on Linux as it requires hardware access not available in CI
           packages=$(go list ./... | grep -v '/machine$')
-          go test -v $packages
+          go test -v $packages 2>&1 | tee test.log
+
+      - name: Report test failures
+        if: failure()
+        run: bash .github/scripts/test-report.sh test.log Linux
 
       - name: Run race detector on concurrency-sensitive packages
         run: go test -race ./logging/... ./cache ./config ./web/... ./i18n ./flag ./security ./version ./apperror ./queue ./database ./etcd ./mail
@@ -69,10 +73,16 @@ jobs:
         run: go mod download
 
       - name: Run tests
+        shell: bash
         run: |
           # Exclude machine package on Windows as it requires hardware access not available in CI
-          $packages = go list ./... | Where-Object { $_ -notmatch '/machine$' }
-          go test -v $packages
+          packages=$(go list ./... | grep -v '/machine$')
+          go test -v $packages 2>&1 | tee test.log
+
+      - name: Report test failures
+        if: failure()
+        shell: bash
+        run: bash .github/scripts/test-report.sh test.log Windows
 
   test-macos:
     name: Test on macOS
@@ -93,4 +103,8 @@ jobs:
         run: |
           # Exclude machine package on macOS as it requires hardware access not available in CI
           packages=$(go list ./... | grep -v '/machine$')
-          go test -v $packages
+          go test -v $packages 2>&1 | tee test.log
+
+      - name: Report test failures
+        if: failure()
+        run: bash .github/scripts/test-report.sh test.log macOS
