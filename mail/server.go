@@ -55,6 +55,11 @@ const (
 	// plainAuthParts is the number of NUL separated fields (authzid, authcid, password) of PLAIN auth.
 	plainAuthParts     = 3
 	plainAuthSeparator = "\x00"
+	// authMechanisms lists the mechanisms the server offers after EHLO.
+	authMechanisms = "PLAIN LOGIN"
+	// loginPromptUsername and loginPromptPassword are the base64 encoded prompts "Username:" and "Password:".
+	loginPromptUsername = "VXNlcm5hbWU6"
+	loginPromptPassword = "UGFzc3dvcmQ6"
 
 	commandHelo     = "HELO"
 	commandEhlo     = "EHLO"
@@ -996,7 +1001,9 @@ func (s *smtpServer) handleHelo(conn *Conn, hostname string, extended bool) {
 		if s.config.TLS && !conn.TLS() {
 			responses = append(responses, commandStartTLS)
 		}
-		responses = append(responses, "AUTH PLAIN")
+		if s.config.Auth {
+			responses = append(responses, "AUTH "+authMechanisms)
+		}
 		if s.config.MaxMessageBytes > 0 {
 			responses = append(responses, fmt.Sprintf("SIZE %d", s.config.MaxMessageBytes))
 		}
@@ -1049,6 +1056,8 @@ func (s *smtpServer) handleAuth(conn *Conn, session Session, args string) {
 	switch method {
 	case string(AuthMethodPlain):
 		s.handleAuthPlain(conn, session, parts)
+	case string(AuthMethodLogin):
+		s.handleAuthLogin(conn, session, parts)
 	default:
 		s.writeResponse(conn, StatusNotImplemented, "Authentication method not supported")
 	}
@@ -1078,6 +1087,53 @@ func (s *smtpServer) handleAuthPlain(conn *Conn, session Session, parts []string
 		username, password = decoded[0], decoded[1]
 	}
 
+	s.finishAuth(conn, session, username, password)
+}
+
+// handleAuthLogin handles LOGIN authentication: the server asks for the username and then the password, both base64
+// encoded. The username may already come with the command.
+func (s *smtpServer) handleAuthLogin(conn *Conn, session Session, parts []string) {
+	var username string
+	if len(parts) == commandSplitParts {
+		decoded, err := base64.StdEncoding.DecodeString(parts[1])
+		if err != nil {
+			s.writeResponse(conn, StatusBadSyntax, "Invalid authentication data")
+			return
+		}
+		username = string(decoded)
+	} else {
+		s.writeResponse(conn, StatusAuthContinue, loginPromptUsername)
+		user, ok := s.readLoginAnswer(conn)
+		if !ok {
+			return
+		}
+		username = user
+	}
+
+	s.writeResponse(conn, StatusAuthContinue, loginPromptPassword)
+	password, ok := s.readLoginAnswer(conn)
+	if !ok {
+		return
+	}
+
+	s.finishAuth(conn, session, username, password)
+}
+
+// readLoginAnswer reads one base64 encoded answer of the LOGIN exchange.
+func (s *smtpServer) readLoginAnswer(conn *Conn) (string, bool) {
+	if !conn.scanner.Scan() {
+		return "", false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(conn.scanner.Text()))
+	if err != nil {
+		s.writeResponse(conn, StatusBadSyntax, "Invalid authentication data")
+		return "", false
+	}
+	return string(decoded), true
+}
+
+// finishAuth checks the credentials of a PLAIN or LOGIN exchange and answers the client.
+func (s *smtpServer) finishAuth(conn *Conn, session Session, username, password string) {
 	err := session.AuthPlain(username, password)
 	if err != nil {
 		switch {

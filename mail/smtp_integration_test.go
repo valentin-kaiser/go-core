@@ -1,8 +1,10 @@
 package mail_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +27,7 @@ const (
 	testRcptAddress         = "rcpt@example.com"
 	smtpIOTimeout           = 5 * time.Second
 	defaultMaxMessageBytes  = 1 << 20
+	smtpReplyMinLen         = 4
 	smtpMaxRecipients       = 10
 	smtpMaxHandlers         = 8
 	refusedMessageLimit     = 10 * 1024
@@ -354,5 +357,113 @@ func TestSMTPServerAuthRequiredForData(t *testing.T) {
 	}
 	if n := len(messages()); n != 0 {
 		t.Fatalf("%d messages were delivered without authentication", n)
+	}
+}
+
+// dialSMTP opens a connection and returns a function that sends one line and returns the reply.
+func dialSMTP(t *testing.T, addr string) func(line string) string {
+	t.Helper()
+
+	conn, err := net.Dial("tcp", addr)
+	if err != nil {
+		t.Fatalf("connecting to the test server failed: %v", err)
+	}
+	t.Cleanup(func() {
+		err := conn.Close()
+		if err != nil {
+			t.Logf("closing connection failed: %v", err)
+		}
+	})
+	err = conn.SetDeadline(time.Now().Add(5 * time.Second))
+	if err != nil {
+		t.Fatalf("setting the deadline failed: %v", err)
+	}
+
+	reader := bufio.NewReader(conn)
+	// A reply ends with the first line whose fourth character is a space (multi-line replies use a dash).
+	read := func() string {
+		var reply strings.Builder
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				t.Fatalf("reading reply failed: %v", err)
+			}
+			reply.WriteString(line)
+			if len(line) < smtpReplyMinLen || line[3] == ' ' {
+				return reply.String()
+			}
+		}
+	}
+	read() // greeting
+	return func(line string) string {
+		_, err := io.WriteString(conn, line+"\r\n")
+		if err != nil {
+			t.Fatalf("sending %q failed: %v", line, err)
+		}
+		return read()
+	}
+}
+
+func TestSMTPServerAuthLogin(t *testing.T) {
+	const (
+		username = "user"
+		password = "secret"
+	)
+	b64 := func(s string) string { return base64.StdEncoding.EncodeToString([]byte(s)) }
+	tests := []struct {
+		name     string
+		commands []string
+		want     string
+	}{
+		{name: "username after prompt", commands: []string{"AUTH LOGIN", b64(username), b64(password)}, want: "235"},
+		{name: "username with command", commands: []string{"AUTH LOGIN " + b64(username), b64(password)}, want: "235"},
+		{name: "wrong password", commands: []string{"AUTH LOGIN", b64(username), b64("wrong")}, want: "535"},
+		{name: "invalid base64", commands: []string{"AUTH LOGIN", "***"}, want: "501"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			addr, _ := startSMTP(t, func(c *mail.ServerConfig) {
+				c.Auth = true
+				c.Username = username
+				c.Password = password
+			})
+			send := dialSMTP(t, addr)
+
+			ehlo := send("EHLO client.example")
+			if !strings.Contains(ehlo, "AUTH PLAIN LOGIN") {
+				t.Fatalf("EHLO reply %q does not offer PLAIN and LOGIN", ehlo)
+			}
+
+			var reply string
+			for _, command := range tt.commands {
+				reply = send(command)
+			}
+			if !strings.HasPrefix(reply, tt.want) {
+				t.Fatalf("last reply %q, want status %s", reply, tt.want)
+			}
+		})
+	}
+}
+
+// A server without authentication must not offer it and must take mail without a login.
+func TestSMTPServerWithoutAuth(t *testing.T) {
+	addr, messages := startSMTP(t, nil)
+	send := dialSMTP(t, addr)
+
+	ehlo := send("EHLO client.example")
+	if strings.Contains(ehlo, "AUTH") {
+		t.Fatalf("EHLO reply %q offers authentication although it is off", ehlo)
+	}
+	send("MAIL FROM:<a@example.com>")
+	send("RCPT TO:<b@example.com>")
+	if reply := send("DATA"); !strings.HasPrefix(reply, "354") {
+		t.Fatalf("DATA reply %q, want 354", reply)
+	}
+	reply := send("Subject: x\r\n\r\nbody\r\n.")
+	if !strings.HasPrefix(reply, "250") {
+		t.Fatalf("message reply %q, want 250", reply)
+	}
+	if got := len(messages()); got != 1 {
+		t.Fatalf("received %d messages, want 1", got)
 	}
 }
